@@ -1,0 +1,387 @@
+﻿<!doctype html>
+<html lang="fa" dir="rtl">
+<head>
+<meta charset="utf-8">
+<title>GXT 3.7.5 workbench editor regressions</title>
+<style>
+  #gxtResults {
+    position: fixed; inset-block-start: 0; inset-inline-end: 0; z-index: 99999;
+    max-width: 460px; max-height: 100vh; overflow: auto;
+    font: 12px/1.6 Consolas, monospace; background: #06080c; color: #eee;
+    padding: 10px; border-inline-start: 2px solid #38b0ff;
+  }
+  #gxtResults .pass { color: #0f8; }
+  #gxtResults .fail { color: #f44; font-weight: bold; }
+  #gxtResults h3 { margin: 0 0 6px; font-size: 13px; }
+</style>
+</head>
+<body>
+<div id="gxtResults"><h3>running…</h3></div>
+
+<script>
+/**
+ * End-to-end harness for pages/subtitles.html.
+ *
+ * The real page markup is FETCHED and injected rather than copied, so this
+ * harness can never drift from the page it is testing.
+ *
+ * The chrome mock is installed with a non-overridable property (the
+ * dev/popup-preview.html technique) because the Browser pane injects its own
+ * `chrome` after load and would otherwise clobber it.
+ *
+ * TRANSLATE_WORKSHOP answers with stable cue IDs (the intentional 3.7.5
+ * file-only contract). The 27 existing lifecycle/audio assertions remain.
+ * TTS_SPEAK answers with a REAL, decodable WAV whose length is proportional to
+ * the text — and which honours the `rate` parameter — so the dub builder's
+ * time-fitting logic is exercised for real, not stubbed out.
+ */
+(() => {
+  const SAMPLE_RATE = 24000;
+  const MS_PER_CHAR = 62;   // ~16 characters/second of Persian speech
+  const sent = [];
+
+  function toneWav(ms) {
+    const samples = Math.max(1, Math.round((ms / 1000) * SAMPLE_RATE));
+    const buffer = new ArrayBuffer(44 + samples * 2);
+    const view = new DataView(buffer);
+    const ascii = (o, s) => { for (let i = 0; i < s.length; i++) view.setUint8(o + i, s.charCodeAt(i)); };
+    ascii(0, 'RIFF'); view.setUint32(4, 36 + samples * 2, true); ascii(8, 'WAVE');
+    ascii(12, 'fmt '); view.setUint32(16, 16, true); view.setUint16(20, 1, true);
+    view.setUint16(22, 1, true); view.setUint32(24, SAMPLE_RATE, true);
+    view.setUint32(28, SAMPLE_RATE * 2, true); view.setUint16(32, 2, true); view.setUint16(34, 16, true);
+    ascii(36, 'data'); view.setUint32(40, samples * 2, true);
+    for (let i = 0; i < samples; i++) {
+      view.setInt16(44 + i * 2, Math.round(Math.sin((i / SAMPLE_RATE) * 2 * Math.PI * 220) * 12000), true);
+    }
+    let binary = '';
+    const bytes = new Uint8Array(buffer);
+    for (let i = 0; i < bytes.length; i += 0x8000) {
+      binary += String.fromCharCode.apply(null, bytes.subarray(i, i + 0x8000));
+    }
+    return btoa(binary);
+  }
+
+  const store = { settings: { provider: 'gemini', uiTheme: 'graphite', ttsEngine: 'bing', ttsRate: 1 } };
+  const storageListeners = [];
+  const mock = {
+    runtime: {
+      id: 'mock-subs',
+      getURL: (path) => `../${path}`,
+      async sendMessage(message) {
+        sent.push(message);
+        if (message.type === 'LIST_MODELS') return { ok: true, models: [{ id: 'provider-custom-model-2026', displayName: 'Exact provider model' }], groups: { text: [{ id: 'provider-custom-model-2026' }] } };
+        if (message.type === 'CANCEL_WORKSHOP') return { ok: true, cancelled: true };
+        if (message.type === 'TRANSLATE_WORKSHOP') {
+          if (globalThis.__gxtTranslateHandler) return globalThis.__gxtTranslateHandler(message);
+          if (globalThis.__gxtHoldTranslations) {
+            return new Promise((resolve) => (globalThis.__gxtPendingTranslations ||= []).push({ message, resolve }));
+          }
+          // Echo a marker plus the placeholders, so token restoration is
+          // verifiable and the text is unmistakably "translated".
+          return {
+            ok: true,
+            entries: message.cues.map((cue) => {
+              const t = cue.text;
+              const tokens = (t.match(/⟦\d+⟧/g) || []).join('');
+              return { id: cue.id, text: `ترجمه ${t.replace(/⟦\d+⟧/g, '').trim()}${tokens}` };
+            }),
+          };
+        }
+        if (message.type === 'TTS_SPEAK') {
+          if (globalThis.__gxtHoldSpeech) return new Promise(resolve => (globalThis.__gxtPendingSpeech ||= []).push({message, resolve}));
+          const rate = typeof message.rate === 'number' ? message.rate : 1;
+          return { ok: true, mime: 'audio/wav', engine: 'bing', voice: 'mock',
+                   data: toneWav((message.text.length * MS_PER_CHAR) / rate) };
+        }
+        return { ok: false, code: 'MOCK', error: 'unhandled ' + message.type };
+      },
+    },
+    storage: {
+      local: {
+        async get(query) {
+          if (query == null) return { ...store };
+          if (typeof query === 'string') return { [query]: store[query] };
+          if (Array.isArray(query)) { const o = {}; for (const k of query) o[k] = store[k]; return o; }
+          const o = {}; for (const [k, v] of Object.entries(query)) o[k] = store[k] ?? v; return o;
+        },
+        async set(patch) { Object.assign(store, patch); const changes=Object.fromEntries(Object.entries(patch).map(([k,v])=>[k,{newValue:v}])); storageListeners.forEach(fn=>fn(changes,'local')); },
+        async remove(keys) { for (const k of [].concat(keys)) delete store[k]; },
+      },
+      onChanged: { addListener(fn) { storageListeners.push(fn); } },
+    },
+    permissions: { async request() { return true; } },
+  };
+  Object.defineProperty(globalThis, 'chrome', { value: mock, writable: false, configurable: false });
+  globalThis.__gxtSent = sent;
+  globalThis.__gxtMsPerChar = MS_PER_CHAR;
+})();
+</script>
+
+<script>
+(async () => {
+  // Inject the REAL page markup so the harness cannot drift from the page.
+  const html = await (await fetch('../pages/subtitles.html?v=3300')).text();
+  const parsed = new DOMParser().parseFromString(html, 'text/html');
+  const results = document.getElementById('gxtResults');
+  for (const node of [...parsed.body.children]) {
+    if (node.tagName === 'SCRIPT') continue;
+    document.body.insertBefore(node, results);
+  }
+  const link = document.createElement('link');
+  link.rel = 'stylesheet';
+  link.href = '../pages/subtitles.css?v=3300';
+  document.head.appendChild(link);
+
+  const load = (src) => new Promise((resolve, reject) => {
+    const s = document.createElement('script');
+    s.src = src;
+    s.onload = resolve;
+    s.onerror = () => reject(new Error('failed to load ' + src));
+    document.body.appendChild(s);
+  });
+  for (const src of ['../shared/settings.js', '../shared/theme.js', '../shared/subtitles.js', '../shared/workshop.js', '../pages/subtitles.js']) {
+    await load(`${src}?v=3300`);
+  }
+
+  const $ = (id) => document.getElementById(id);
+  const sent = globalThis.__gxtSent;
+  const checks = [];
+  const check = async (name, fn) => {
+    let ok = false; let detail = '';
+    try { ok = !!(await fn()); } catch (e) { detail = String(e && e.message || e); }
+    checks.push([name, ok, detail]);
+    console.log(`GXT-TEST ${ok ? 'PASS' : 'FAIL'} ${name}${detail ? ' — ' + detail : ''}`);
+  };
+  const wait = (ms) => new Promise((r) => setTimeout(r, ms));
+  const until = async (fn, timeout = 8000) => {
+    const end = Date.now() + timeout;
+    for (;;) {
+      if (fn()) return true;
+      if (Date.now() > end) return false;
+      await wait(60);
+    }
+  };
+
+  function dropFile(name, text) {
+    const dt = new DataTransfer();
+    dt.items.add(new File([text], name, { type: 'text/plain' }));
+    const picker = $('picker');
+    picker.files = dt.files;
+    picker.dispatchEvent(new Event('change'));
+  }
+
+
+  const input = (id,value) => {$(id).value=value;$(id).dispatchEvent(new Event('input',{bubbles:true}));};
+  const rows=()=>[...document.querySelectorAll('#editorRows .editor-row')];
+  const editor=()=>document.querySelector('#editorRows textarea');
+  const source=Array.from({length:70},(_,i)=>`${i+1}\n${GXT.subs._internal.formatTime(i*2500,'srt')} --> ${GXT.subs._internal.formatTime(i*2500+2200,'srt')}\n${i===0?'Alice uses API.':'A complete sentence '+i+'.'}\n`).join('\n');
+  const answer=m=>({ok:true,entries:m.cues.map(c=>({id:c.id,text:'ترجمه '+c.text}))});
+
+  await check('large editor renders only 30 rows and paginates without losing source IDs',async()=>{
+    dropFile('workshop.srt',source);if(!await until(()=>$('fileName').textContent==='workshop.srt'))return false;
+    const first=rows()[0].dataset.id;if(rows().length!==30)return false;
+    $('nextPage').click();if(rows().length!==30||rows()[0].dataset.id===first)return false;
+    $('previousPage').click();return rows()[0].dataset.id===first;
+  });
+  await check('manual typing locks a cue immediately and wins over its pending response',async()=>{
+    globalThis.__gxtHoldTranslations=true;$('translateBtn').click();
+    if(!await until(()=>globalThis.__gxtPendingTranslations?.length))return false;
+    const pending=globalThis.__gxtPendingTranslations.splice(0);
+    editor().focus();editor().value='ویرایش دستی امن';editor().dispatchEvent(new Event('input',{bubbles:true}));editor().blur();
+    globalThis.__gxtHoldTranslations=false;pending.forEach(({message,resolve})=>resolve(answer(message)));
+    if(!await until(()=>!$('translateBtn').disabled))return false;
+    return editor().value==='ویرایش دستی امن'&&rows()[0].querySelector('[data-action="lock"]').checked;
+  });
+  await check('retranslate selection omits locked cues and sends exactly the unlocked selection',async()=>{
+    for (let i=0;i<2;i++) {const c=rows()[i].querySelector('[data-action="select"]');c.checked=true;c.dispatchEvent(new Event('change',{bubbles:true}));}
+    const secondId=rows()[1].dataset.id;sent.length=0;$('retranslateSelectionBtn').click();await until(()=>!$('translateBtn').disabled);
+    const calls=sent.filter(m=>m.type==='TRANSLATE_WORKSHOP');return calls.length===1&&calls[0].cues.length===1&&calls[0].cues[0].id===secondId&&editor().value==='ویرایش دستی امن';
+  });
+  await check('glossary character rules and register reach scoped file translation',async()=>{
+    input('glossary','API = رابط');input('characters','Alice = آلیس');input('workshopStyle','formal');
+    const row=rows()[0],lock=row.querySelector('[data-action="lock"]');lock.checked=false;lock.dispatchEvent(new Event('change',{bubbles:true}));
+    sent.length=0;rows()[0].querySelector('[data-action="translate"]').click();await until(()=>!$('translateBtn').disabled);
+    const m=sent.find(m=>m.type==='TRANSLATE_WORKSHOP');return m?.rules.glossary[0].target==='رابط'&&m.rules.characters[0].target==='آلیس'&&m.rules.style==='formal';
+  });
+  await check('partial UI response retries only the missing cue without restarting the project',async()=>{
+    dropFile('partial.srt','1\n00:00:00,000 --> 00:00:02,000\nA sentence\n\n2\n00:00:02,100 --> 00:00:04,000\ncontinued.\n\n3\n00:00:04,100 --> 00:00:06,000\nLast.\n');
+    await until(()=>$('fileName').textContent==='partial.srt');const calls=[];
+    globalThis.__gxtTranslateHandler=m=>{calls.push(m);return {ok:true,entries:(calls.length===1?m.cues.slice(0,2):m.cues).map(c=>({id:c.id,text:'ترجمهٔ کامل'}))};};
+    $('translateBtn').click();await until(()=>!$('translateBtn').disabled);globalThis.__gxtTranslateHandler=null;
+    return calls.length===2&&calls[1].cues.length===1&&calls[1].repair&&rows().every(r=>r.querySelector('textarea').value==='ترجمهٔ کامل');
+  });
+  await check('cancel sends real transport cancellation and rejects late output immediately',async()=>{
+    globalThis.__gxtHoldTranslations=true;sent.length=0;$('translateBtn').click();await until(()=>globalThis.__gxtPendingTranslations?.length);
+    const pending=globalThis.__gxtPendingTranslations.splice(0);$('cancelBtn').click();
+    const immediate=!$('translateBtn').disabled&&$('progress').classList.contains('hidden');
+    pending.forEach(({message,resolve})=>resolve({ok:true,entries:message.cues.map(c=>({id:c.id,text:'پاسخ لغوشده'}))}));globalThis.__gxtHoldTranslations=false;await wait(60);
+    return immediate&&sent.some(m=>m.type==='CANCEL_WORKSHOP')&&!$('editorRows').textContent.includes('پاسخ لغوشده')&&editor().value!=='پاسخ لغوشده';
+  });
+  await check('resume after failure sends only unfinished cues',async()=>{
+    dropFile('resume.srt','1\n00:00:00,000 --> 00:00:02,000\nHello.\n\n2\n00:00:10,000 --> 00:00:12,000\nLater.\n');await until(()=>$('fileName').textContent==='resume.srt');
+    let n=0;globalThis.__gxtTranslateHandler=m=>++n===1?answer(m):{ok:false,error:'OFFLINE'};
+    $('translateBtn').click();await until(()=>!$('translateBtn').disabled);globalThis.__gxtTranslateHandler=null;sent.length=0;
+    $('resumeBtn').click();await until(()=>!$('translateBtn').disabled);
+    const calls=sent.filter(m=>m.type==='TRANSLATE_WORKSHOP');return calls.length===1&&calls[0].cues.length===1&&calls[0].cues[0].text==='Later.';
+  });
+  await check('literal replacement locks edits and one undo restores its exact text',async()=>{
+    const previous=editor().value;input('replaceFind','ترجمه');input('replaceWith','جایگزین');$('replaceBtn').click();
+    if(!editor().value.includes('جایگزین')||!rows()[0].querySelector('[data-action="lock"]').checked)return false;
+    $('undoBtn').click();return editor().value===previous&&!rows()[0].querySelector('[data-action="lock"]').checked;
+  });
+  await check('source and translation search filters actual editor rows',()=>{
+    input('searchText','Later');const ok=rows().length===1&&rows()[0].querySelector('.cue-source').textContent.includes('Later');input('searchText','');return ok&&rows().length===2;
+  });
+  await check('atomic IndexedDB autosave contains source and locked manual edit without API settings',async()=>{
+    editor().focus();editor().value='ذخیرهٔ واقعی';editor().dispatchEvent(new Event('input',{bubbles:true}));editor().blur();
+    if(!await until(()=>$('saveStatus').textContent.includes('ذخیره شد'),5000))return false;
+    const db=await new Promise((resolve,reject)=>{const r=indexedDB.open('gxt-subtitle-projects',1);r.onsuccess=()=>resolve(r.result);r.onerror=()=>reject(r.error);});
+    const values=await new Promise((resolve,reject)=>{const r=db.transaction('projects').objectStore('projects').getAll();r.onsuccess=()=>resolve(r.result);r.onerror=()=>reject(r.error);});db.close();
+    const saved=values.find(v=>v.name==='resume.srt');globalThis.__savedWorkshop=saved;
+    return saved?.rows[0].translation==='ذخیرهٔ واقعی'&&saved.rows[0].locked&&saved.doc.cues[0].text==='Hello.'&&!JSON.stringify(saved).includes('apiKey');
+  });
+  await check('saved project recovery restores the manual lock and source without translation calls',async()=>{
+    $('clearFile').click();await wait(80);const saved=globalThis.__savedWorkshop;
+    $('savedProjects').value=saved.id;$('savedProjects').dispatchEvent(new Event('change'));sent.length=0;$('restoreProjectBtn').click();
+    if(!await until(()=>$('fileName').textContent==='resume.srt'&&!$('editorCard').classList.contains('hidden')))return false;
+    return editor().value==='ذخیرهٔ واقعی'&&rows()[0].querySelector('[data-action="lock"]').checked&&!sent.some(m=>m.type==='TRANSLATE_WORKSHOP');
+  });
+  await check('autosave quota failure is visible and the next save recovers its writer queue',async()=>{
+    const nativePut=IDBObjectStore.prototype.put;let failed=false;
+    IDBObjectStore.prototype.put=function(...args){if(this.name==='projects'&&!failed){failed=true;throw new DOMException('MOCK_QUOTA','QuotaExceededError');}return nativePut.apply(this,args);};
+    try {
+      editor().focus();editor().value='آزمایش ذخیره ناموفق';editor().dispatchEvent(new Event('input',{bubbles:true}));editor().blur();
+      if(!await until(()=>$('saveStatus').textContent.includes('ذخیره نشد'),5000))return false;
+    } finally {IDBObjectStore.prototype.put=nativePut;}
+    editor().focus();editor().value='ذخیرهٔ واقعی';editor().dispatchEvent(new Event('input',{bubbles:true}));editor().blur();
+    return await until(()=>$('saveStatus').textContent.includes('ذخیره شد'),5000);
+  });
+  await check('exported project is parseable includes manual work and no service credentials',()=>{
+    let blob;const original=URL.createObjectURL,click=HTMLAnchorElement.prototype.click;
+    URL.createObjectURL=value=>{blob=value;return original(value);};HTMLAnchorElement.prototype.click=function(){};
+    try{$('exportProjectBtn').click();}finally{URL.createObjectURL=original;HTMLAnchorElement.prototype.click=click;}
+    return blob.text().then(text=>{const value=JSON.parse(text);return value.rows[0].translation==='ذخیرهٔ واقعی'&&!text.includes('bridgeToken');});
+  });
+  await check('corrupt project import cannot overwrite the existing current project',async()=>{
+    const broken=structuredClone(globalThis.__savedWorkshop);broken.rows[0].id='foreign';
+    const dt=new DataTransfer();dt.items.add(new File([JSON.stringify(broken)],'bad.gxtsub'));$('projectPicker').files=dt.files;$('projectPicker').dispatchEvent(new Event('change'));
+    if(!await until(() => !$('errorNote').classList.contains('hidden')))return false;
+    return $('fileName').textContent==='resume.srt'&&editor().value==='ذخیرهٔ واقعی';
+  });
+  await check('QA flags long reading speed and missing glossary independently of locked status',()=>{
+    input('glossary','Hello = سلام');editor().focus();editor().value='Long '.repeat(40);editor().dispatchEvent(new Event('input',{bubbles:true}));
+    const text=rows()[0].querySelector('.cue-qa').textContent;editor().blur();return text.includes('خواندن سریع')&&text.includes('اصطلاح');
+  });
+  await check('file read errors remain visible outside the hidden options card',async()=>{
+    const original=File.prototype.arrayBuffer;File.prototype.arrayBuffer=()=>Promise.reject(Error('READ_FAILURE'));
+    try{dropFile('failure.srt','x');await until(()=>$('errorNote').textContent.includes('READ_FAILURE'));return $('optionsCard').classList.contains('hidden')&&$('errorNote').getBoundingClientRect().height>0;}
+    finally{File.prototype.arrayBuffer=original;}
+  });
+
+  await check('ASS zero-duration comments do not reject valid dialogue or alter source notes',async()=>{
+    const ass='[Script Info]\nTitle: Standard comments\n[Events]\nFormat: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text\nComment: 0,0:00:00.00,0:00:00.00,Default,,0,0,0,,Editor note\nDialogue: 0,0:00:01.00,0:00:03.00,Default,Alice,0,0,0,,A normal spoken line.';
+    dropFile('zero-comment.ass',ass);
+    return await until(()=>$('fileName').textContent==='zero-comment.ass'&&rows().length===1)&&!$('errorNote').textContent.includes('زمان‌بندی فایل');
+  });
+  await check('SRT marker with equal times is reported without blocking regular timed dialogue',async()=>{
+    dropFile('marker.srt','1\n00:00:00,000 --> 00:00:00,000\nRelease marker\n\n2\n00:00:01,000 --> 00:00:02,250\nStandard subtitle text.\n');
+    return await until(()=>$('fileName').textContent==='marker.srt'&&rows().length===1)&&$('skipNote').textContent.includes('بازه');
+  });
+  await check('an invalid timed row is isolated and does not hide valid overlapping dialogue',async()=>{
+    dropFile('mixed-times.vtt','WEBVTT\n\na\n00:00:03.000 --> 00:00:02.000\nNon-display marker\n\nb\n00:00:04.000 --> 00:00:06.500\nFirst simultaneous speaker.\n\nc\n00:00:05.000 --> 00:00:07.000\nSecond simultaneous speaker.\n');
+    return await until(()=>$('fileName').textContent==='mixed-times.vtt'&&rows().length===2)&&$('skipNote').textContent.includes('بازه');
+  });
+  const change = (id, value) => { $(id).value = value; $(id).dispatchEvent(new Event('change', { bubbles: true })); };
+  const projectBlob = async () => {
+    let blob; const create = URL.createObjectURL, click = HTMLAnchorElement.prototype.click;
+    URL.createObjectURL = value => { blob = value; return create(value); }; HTMLAnchorElement.prototype.click = function(){};
+    try { $('exportProjectBtn').click(); } finally { URL.createObjectURL = create; HTMLAnchorElement.prototype.click = click; }
+    return JSON.parse(await blob.text());
+  };
+  const importProject = async value => {
+    const dt = new DataTransfer(); dt.items.add(new File([JSON.stringify(value)], 'settings.gxtsub'));
+    $('projectPicker').files = dt.files; $('projectPicker').dispatchEvent(new Event('change'));
+    return until(() => $('fileName').textContent === value.name && !$('editorCard').classList.contains('hidden'));
+  };
+  await check('workshop provider exact model temperature thinking and custom prompt stay project scoped', async () => {
+    const before = JSON.stringify((await chrome.storage.local.get('settings')).settings);
+    change('workshopProvider','openai'); input('workshopModel','provider/model-2026-09'); input('workshopTemperature','0.8'); input('workshopThinking','high'); input('workshopCustomPrompt','دستور خاص همین پروژه');
+    sent.length = 0; $('translateBtn').click(); await until(() => !$('translateBtn').disabled);
+    const t = sent.find(m => m.type === 'TRANSLATE_WORKSHOP')?.translation;
+    return t?.provider === 'openai' && t.model === 'provider/model-2026-09' && t.temperature === 0.8 && t.thinking === 'high' && t.customPrompt === 'دستور خاص همین پروژه' && before === JSON.stringify((await chrome.storage.local.get('settings')).settings);
+  });
+  await check('project export and import restore tuning without credentials or global settings', async () => {
+    const saved = await projectBlob();
+    if (saved.translation?.thinking !== 'high' || JSON.stringify(saved).includes('apiKey')) return false;
+    $('clearFile').click(); await importProject(saved);
+    return $('workshopProvider').value === 'openai' && $('workshopModel').value === 'provider/model-2026-09' && $('workshopTemperature').value === '0.8' && $('workshopCustomPrompt').value === 'دستور خاص همین پروژه';
+  });
+  await check('changing project model cancels transport and late previous-model output cannot win', async () => {
+    globalThis.__gxtHoldTranslations = true; sent.length = 0; $('translateBtn').click();
+    if (!await until(() => globalThis.__gxtPendingTranslations?.length)) return false;
+    const pending = globalThis.__gxtPendingTranslations.splice(0); input('workshopModel','another/exact-model');
+    const immediate = !$('translateBtn').disabled && sent.some(m => m.type === 'CANCEL_WORKSHOP');
+    globalThis.__gxtHoldTranslations = false; pending.forEach(({ message, resolve }) => resolve({ ok: true, entries: message.cues.map(c => ({ id: c.id, text: 'stale model answer' })) })); await wait(80);
+    return immediate && !rows().some(r => r.querySelector('textarea').value === 'stale model answer');
+  });
+  await check('model discovery updates suggestions without overwriting the selected exact version', async () => {
+    sent.length = 0; $('refreshWorkshopModels').click();
+    if (!await until(() => [...$('workshopModelList').options].some(o => o.value === 'provider-custom-model-2026'))) return false;
+    return $('workshopModel').value === 'another/exact-model' && sent.some(m => m.type === 'LIST_MODELS' && m.provider === 'openai') && !sent.some(m => m.type === 'TRANSLATE_WORKSHOP');
+  });
+  await check('out-of-range generation temperature blocks requests before translation starts', async () => {
+    input('workshopTemperature','3'); sent.length = 0; $('translateBtn').click(); await wait(80);
+    const blocked = !sent.some(m => m.type === 'TRANSLATE_WORKSHOP') && !$('workshopTemperature').validity.valid;
+    input('workshopTemperature',''); return blocked;
+  });
+  await check('Gemini 2.5 budget and Gemini 3 thinking controls match model capabilities', async () => {
+    change('workshopProvider','gemini'); input('workshopModel','gemini-2.5-flash'); input('workshopThinkingBudget','1024');
+    if ($('workshopBudgetField').classList.contains('hidden') || !$('workshopThinkingField').classList.contains('hidden')) return false;
+    sent.length = 0; $('translateBtn').click(); await until(() => !$('translateBtn').disabled);
+    if (sent.find(m => m.type === 'TRANSLATE_WORKSHOP')?.translation?.thinkingBudget !== 1024) return false;
+    input('workshopModel','gemini-3.1-pro');
+    return $('workshopThinkingBudget').value === '' && $('workshopBudgetField').classList.contains('hidden') && [...$('workshopThinking').options].find(o => o.value === 'off').disabled && [...$('workshopThinking').options].find(o => o.value === 'minimal').disabled;
+  });
+  await check('machine translation clearly disables unsupported generation controls and retains custom instructions', () => {
+    input('workshopCustomPrompt','دستور نگه‌داشته‌شده'); change('workshopProvider','google');
+    const disabled = $('workshopModel').disabled && $('workshopTemperature').disabled && $('workshopCustomPrompt').disabled && $('glossary').disabled;
+    change('workshopProvider','gemini'); return disabled && !$('workshopCustomPrompt').disabled && $('workshopCustomPrompt').value === 'دستور نگه‌داشته‌شده';
+  });
+  await check('ASS font size outline and alignment export without a second translation request', async () => {
+    dropFile('styled.ass','[Script Info]\nScriptType: v4.00+\nPlayResX: 1280\nPlayResY: 720\n[V4+ Styles]\nFormat: Name, Fontname, Fontsize, Outline, Alignment, Encoding\nStyle: Default,Arial,24,1,2,1\n[Events]\nFormat: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text\nDialogue: 0,0:00:01.00,0:00:03.00,Default,,0,0,0,,A styled subtitle.');
+    await until(() => $('fileName').textContent === 'styled.ass'); $('translateBtn').click(); await until(() => !$('translateBtn').disabled);
+    sent.length = 0; change('fontPreset','Shabnam'); change('outputFontSize','38'); change('outputOutline','2.5'); change('outputAlignment','8');
+    await wait(400);
+    const preview = $('resultPreview').textContent;
+    return preview.includes('Default,Shabnam,38,2.5,8,1') && !sent.some(m => m.type === 'TRANSLATE_WORKSHOP') && $('outputFontPreview').style.fontFamily.includes('Shabnam');
+  });
+  await check('font switch state and output style survive project roundtrip including a disabled font override', async () => {
+    $('optFont').checked = false; $('optFont').dispatchEvent(new Event('change'));
+    const saved = await projectBlob(); $('clearFile').click(); await importProject(saved);
+    return !$('optFont').checked && $('fontName').value === 'Shabnam' && $('outputFontSize').value === '38' && $('outputOutline').value === '2.5' && $('outputAlignment').value === '8';
+  });
+  await check('new subtitle file resets project-only settings and SRT states font export limitation', async () => {
+    input('workshopModel','one-project-only'); dropFile('fresh.srt','1\n00:00:00,000 --> 00:00:02,000\nFresh file.'); await until(() => $('fileName').textContent === 'fresh.srt');
+    return $('workshopProvider').value === 'inherit' && $('workshopModel').value === '' && $('workshopTemperature').value === '' && $('workshopCustomPrompt').value === '' && $('fontName').value === 'Vazirmatn' && $('outputFontSize').value === '' && $('outputFontSize').disabled && $('fontFormatHint').textContent.includes('SRT');
+  });
+  await check('autosave preserves project tuning before the first translation and restores it without service calls', async () => {
+    change('workshopProvider','openai'); input('workshopModel','saved/version-2026'); input('workshopTemperature','0.65'); input('workshopThinking','medium'); input('workshopCustomPrompt','قواعد پروژهٔ ذخیره‌شده');
+    if (!await until(() => $('saveStatus').textContent.includes('ذخیره شد'),5000)) return false;
+    const db = await new Promise((resolve,reject) => { const request=indexedDB.open('gxt-subtitle-projects',1); request.onsuccess=()=>resolve(request.result); request.onerror=()=>reject(request.error); });
+    const values = await new Promise((resolve,reject) => { const request=db.transaction('projects').objectStore('projects').getAll(); request.onsuccess=()=>resolve(request.result); request.onerror=()=>reject(request.error); }); db.close();
+    const saved = values.find(v => v.name === 'fresh.srt');
+    if (saved?.translation?.temperature !== 0.65 || saved.translation.model !== 'saved/version-2026' || saved.rows.some(r => r.translation)) return false;
+    $('clearFile').click(); await wait(80); $('savedProjects').value=saved.id; $('savedProjects').dispatchEvent(new Event('change')); sent.length=0; $('restoreProjectBtn').click();
+    if (!await until(() => !$('editorCard').classList.contains('hidden') && $('workshopModel').value === 'saved/version-2026')) return false;
+    return $('workshopThinking').value === 'medium' && $('workshopCustomPrompt').value === 'قواعد پروژهٔ ذخیره‌شده' && !sent.some(m => m.type === 'TRANSLATE_WORKSHOP');
+  });
+  // Leave a representative populated page available for screenshot review.
+  dropFile('بازبینی نمونه.srt',source);await until(()=>$('fileName').textContent==='بازبینی نمونه.srt');
+  $('translateBtn').click();await until(()=>!$('translateBtn').disabled);
+  const passed=checks.filter(c=>c[1]).length;
+  results.innerHTML=`<h3>${passed}/${checks.length} checks passed</h3>`+checks.map(([name,ok,detail])=>`<div class="${ok?'pass':'fail'}">${ok?'PASS':'FAIL'} ${name} ${detail}</div>`).join('');
+  console.log(`GXT-WORKSHOP SUMMARY ${passed}/${checks.length}`);
+})();
+</script>
+</body>
+</html>

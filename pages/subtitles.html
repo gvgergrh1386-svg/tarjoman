@@ -1,0 +1,234 @@
+<!doctype html>
+<html lang="fa" dir="rtl">
+<head>
+<meta charset="utf-8">
+<title data-i18n="pages_subtitles_title_1">ترجمان — کارگاه زیرنویس</title>
+<link rel="stylesheet" href="subtitles.css">
+</head>
+<body>
+
+<header class="topbar">
+  <div class="brand">
+    <img src="../icons/icon32.png" alt="" width="24" height="24">
+    <div>
+      <h1><span data-i18n="popup_popup_nav_title_3">کارگاه زیرنویس</span></h1>
+      <p class="sub"><span data-i18n="pages_subtitles_sub_1">ترجمهٔ فایل زیرنویس به فارسی، و ساخت نوار صوتی دوبله</span></p>
+    </div>
+  </div>
+  <span class="tag" id="engineTag">…</span>
+</header>
+
+<main>
+  <section class="card project-tools" aria-label="پروژه‌های ذخیره‌شده" data-i18n-aria-label="pages_subtitles_card_aria_label_1">
+    <div class="row-actions">
+      <select id="savedProjects" aria-label="پروژهٔ ذخیره‌شده" data-i18n-aria-label="pages_subtitles_savedProjects_aria_label_1"><option value="" data-i18n="pages_subtitles_option_1">پروژه‌های این مرورگر</option></select>
+      <button class="ghost" id="restoreProjectBtn" disabled><span data-i18n="pages_subtitles_restoreProjectBtn_1">بازیابی پروژه</span></button>
+      <button class="ghost" id="importProjectBtn"><span data-i18n="pages_subtitles_importProjectBtn_1">باز کردن پروژه از فایل</span></button>
+      <input id="projectPicker" type="file" accept=".gxtsub,.json" hidden>
+    </div>
+    <p id="saveStatus" class="hint" role="status"><span data-i18n="pages_subtitles_saveStatus_1">پیشرفت و ویرایش‌ها به‌صورت خودکار در همین مرورگر ذخیره می‌شوند. برای پشتیبان مستقل، فایل پروژه را دریافت کنید.</span></p>
+  </section>
+  <!-- ------------------------------------------------------------ drop -->
+  <section class="drop" id="drop" tabindex="0" role="button"
+           aria-label="فایل زیرنویس را اینجا رها کنید" data-i18n-aria-label="pages_subtitles_drop_aria_label_1">
+    <div class="drop-icon">⤓</div>
+    <p class="drop-title"><span data-i18n="pages_subtitles_drop_aria_label_1">فایل زیرنویس را اینجا رها کنید</span></p>
+    <p class="drop-hint"><span data-i18n="pages_subtitles_drop_hint_1">SRT · ASS/SSA · VTT — یا برای انتخاب کلیک کنید</span></p>
+    <input type="file" id="picker" accept=".srt,.ass,.ssa,.vtt,.txt" multiple hidden>
+  </section>
+
+  <!-- ------------------------------------------------------------ file -->
+  <section class="card hidden" id="fileCard">
+    <div class="card-head">
+      <h2 id="fileName">—</h2>
+      <button class="ghost sm" id="clearFile"><span data-i18n="pages_subtitles_clearFile_1">فایل دیگر</span></button>
+    </div>
+    <div class="facts" id="facts"></div>
+    <div class="notice hidden" id="skipNote"></div>
+    <details class="fold" id="previewFold">
+      <summary><span data-i18n="pages_subtitles_summary_1">پیش‌نمایش</span></summary>
+      <div class="preview" id="preview"></div>
+    </details>
+  </section>
+
+  <!-- --------------------------------------------------------- options -->
+  <section class="card hidden" id="optionsCard">
+    <div class="card-head"><div><h2><span data-i18n="pages_subtitles_h2_1">تنظیمات همین پروژه</span></h2><p class="hint"><span data-i18n="pages_subtitles_hint_1">انتخاب‌های این بخش با پروژه ذخیره می‌شوند و تنظیمات یوتیوب، ایکس و سایر فایل‌ها را تغییر نمی‌دهند.</span></p></div><button class="ghost sm" id="resetTranslationBtn"><span data-i18n="pages_subtitles_resetTranslationBtn_1">بازگشت به تنظیمات اصلی</span></button></div>
+    <div class="workshop-fields model-fields">
+      <label><span data-i18n="language.projectTarget"></span><input id="workshopTargetLang" type="text" dir="ltr" autocomplete="off"></label>
+<label class="field"><span data-i18n="popup_popup_h2_1">سرویس ترجمه</span> <select id="workshopProvider"><option value="inherit" data-i18n="pages_subtitles_option_2">پیروی از تنظیمات اصلی</option><option value="gemini">Gemini</option><option value="openai" data-i18n="pages_subtitles_option_3">OpenAI و سرویس‌های سازگار</option><option value="google">Google Translate</option><option value="bing">Bing</option></select></label>
+      <label class="field" id="workshopModelField"><span data-i18n="pages_subtitles_workshopModelField_1">مدل و نسخهٔ دقیق</span> <input id="workshopModel" type="text" list="workshopModelList" maxlength="160" dir="ltr" autocomplete="off" spellcheck="false" placeholder="خالی = مدل تنظیمات اصلی" data-i18n-placeholder="pages_subtitles_workshopModel_placeholder_1"><datalist id="workshopModelList"></datalist></label>
+    </div>
+    <div class="model-status"><span class="hint" id="workshopModelHint" role="status"></span><button class="ghost sm" id="refreshWorkshopModels"><span data-i18n="pages_subtitles_refreshWorkshopModels_5">دریافت مدل‌های قابل دسترس</span></button></div>
+    <details class="fold" id="modelAdvanced">
+      <summary><span data-i18n="pages_subtitles_summary_2">کنترل دقیق تولید و تفکر</span></summary>
+      <div class="workshop-fields tuning-fields">
+        <label class="field"><span data-i18n="pages_subtitles_field_1">دما</span> <input id="workshopTemperature" type="number" min="0" max="2" step="any" placeholder="خالی = تنظیم اصلی / پیش‌فرض" dir="ltr" data-i18n-placeholder="pages_subtitles_workshopTemperature_placeholder_1"><small class="hint" id="temperatureHint"><span data-i18n="pages_subtitles_temperatureHint_1">پیش‌فرض انتخاب امنی برای شروع است؛ دمای کمتر همیشه به معنی ترجمهٔ بهتر نیست.</span></small></label>
+        <label class="field" id="workshopThinkingField"><span data-i18n="pages_subtitles_workshopThinkingField_1">میزان تفکر</span> <select id="workshopThinking"><option value="auto" data-i18n="pages_subtitles_option_4">خودکار / تنظیم اصلی</option><option value="off" data-i18n="pages_subtitles_option_5">بدون تفکر، در مدل‌های پشتیبان</option><option value="minimal" data-i18n="pages_subtitles_option_6">حداقلی</option><option value="low" data-i18n="popup_popup_option_7">کم</option><option value="medium" data-i18n="popup_popup_option_8">متوسط</option><option value="high" data-i18n="pages_subtitles_option_7">زیاد</option></select><small class="hint" id="thinkingHint"><span data-i18n="pages_subtitles_thinkingHint_1">تفکر بیشتر می‌تواند زمان پاسخ و مصرف را افزایش دهد؛ پشتیبانی به مدل بستگی دارد.</span></small></label>
+        <label class="field hidden" id="workshopBudgetField"><span data-i18n="pages_subtitles_workshopBudgetField_1">بودجهٔ تفکر Gemini 2.5</span> <input id="workshopThinkingBudget" type="number" min="-1" max="32768" step="1" placeholder="خالی = خودکار" dir="ltr" data-i18n-placeholder="pages_subtitles_workshopThinkingBudget_placeholder_1"><small class="hint" id="thinkingBudgetHint"><span data-i18n="pages_subtitles_thinkingBudgetHint_1">تعداد توکن تفکر؛ این مقدار سقف طول ترجمه نیست.</span></small></label>
+      </div>
+    </details>
+    <details class="fold" open>
+      <summary><span data-i18n="pages_subtitles_summary_3">راهنمای ترجمه و اصطلاح‌ها</span></summary>
+      <p class="hint" id="contextNote"><span data-i18n="pages_subtitles_syncTranslationControls_9">جملات مرتبط همراه زمان و گوینده ترجمه می‌شوند؛ بخشی از زمینه و ترجمهٔ قبلی به قطعهٔ بعد منتقل می‌شود.</span></p>
+      <div class="workshop-fields">
+        <label class="field"><span data-i18n="pages_subtitles_field_2">اصطلاح‌نامه</span> <textarea id="glossary" rows="3" placeholder="API = رابط برنامه‌نویسی" dir="auto" maxlength="24000" data-i18n-placeholder="pages_subtitles_glossary_placeholder_1"></textarea></label>
+        <label class="field"><span data-i18n="pages_subtitles_field_3">نام شخصیت‌ها و نام‌های خاص</span> <textarea id="characters" rows="3" placeholder="Alice = آلیس" dir="auto" maxlength="24000" data-i18n-placeholder="pages_subtitles_characters_placeholder_1"></textarea></label>
+        <label class="field"><span data-i18n="pages_subtitles_field_4">لحن</span> <select id="workshopStyle"><option value="natural" data-i18n="pages_subtitles_option_8">طبیعی و متناسب با متن</option><option value="formal" data-i18n="shared_settings_REGISTERS_2">رسمی</option><option value="colloquial" data-i18n="shared_settings_REGISTERS_1">محاوره‌ای</option></select></label>
+        <label class="field"><span data-i18n="pages_subtitles_field_5">خلاصهٔ داستان یا راهنمای کوتاه</span> <textarea id="workshopInstructions" rows="2" maxlength="1500" placeholder="مثلاً: گفت‌وگوی دو همکار دربارهٔ سفر فضایی" data-i18n-placeholder="pages_subtitles_workshopInstructions_placeholder_1"></textarea></label>
+        <label class="field full-field"><span data-i18n="pages_subtitles_field_6">دستور اختصاصی ترجمه</span> <textarea id="workshopCustomPrompt" rows="3" maxlength="6000" dir="auto" placeholder="مثلاً: اصطلاح‌های علمی را دقیق نگه دار؛ شوخی‌ها را طبیعی ترجمه کن و نام محصول‌ها را لاتین بنویس." data-i18n-placeholder="pages_subtitles_workshopCustomPrompt_placeholder_1"></textarea><small class="hint"><span data-i18n="pages_subtitles_hint_2">این دستور به راهنمای ترجمه افزوده می‌شود. زمان، شناسهٔ خط‌ها و نشانه‌های قالب همچنان محفوظ می‌مانند.</span></small></label>
+      </div>
+      <p class="hint"><span data-i18n="pages_subtitles_hint_3">هر قاعده در یک سطر: مبدأ = ترجمه. برای ثابت ماندن املای نام، دو طرف را یکسان بنویسید. حداکثر ۱۰۰ قاعده در هر فهرست.</span></p>
+    </details>
+    <div class="card-head"><h2><span data-i18n="pages_subtitles_h2_2">تنظیم خروجی</span></h2></div>
+
+    <label class="opt">
+      <input type="checkbox" id="optRtl" checked>
+      <span>
+        <b><span data-i18n="pages_subtitles_b_1">اصلاح جهت خط (پیشنهاد اکید)</span></b>
+        <i><span data-i18n="pages_subtitles_i_1">بدون این، «سلام!» در mpv و VLC به شکل «!سلام» نمایش داده می‌شود. هر خط در نشانه‌های جهت‌دهی راست‌به‌چپ پیچیده می‌شود.</span></i>
+      </span>
+    </label>
+
+    <label class="opt" id="optRewrapRow">
+      <input type="checkbox" id="optRewrap" checked>
+      <span>
+        <b><span data-i18n="pages_subtitles_b_2">بازچینش خطوط</span></b>
+        <i><span data-i18n="pages_subtitles_i_2">جملهٔ فارسی شکل دیگری دارد؛ شکستن خط در جای انگلیسی، عبارت را وسط پاره می‌کند. متن یکجا ترجمه و دوباره متوازن می‌شود.</span></i>
+      </span>
+    </label>
+
+    <label class="opt">
+      <input type="checkbox" id="optBilingual">
+      <span>
+        <b><span data-i18n="popup_popup_renderSummaries_17">دوزبانه</span></b>
+        <i><span data-i18n="pages_subtitles_i_3">متن اصلی زیر ترجمه می‌ماند — برای زبان‌آموزی.</span></i>
+      </span>
+    </label>
+
+    <details class="fold" id="fontOptions" open>
+    <summary><span data-i18n="pages_subtitles_summary_4">فونت فارسی و ظاهر خروجی</span></summary>
+    <p class="hint" id="fontFormatHint"><span data-i18n="pages_subtitles_fontFormatHint_1">نام فونت و استایل در خروجی ASS ذخیره می‌شود؛ خود فایل فونت داخل زیرنویس قرار نمی‌گیرد.</span></p>
+    <label class="opt hidden" id="optFontRow">
+      <input type="checkbox" id="optFont" checked>
+      <span>
+        <b><span data-i18n="pages_subtitles_b_3">اعمال فونت انتخاب‌شده به استایل‌های ASS</span></b>
+        <i><span data-i18n="pages_subtitles_i_4">برای نمایش همین فونت در پخش‌کننده، باید فونت روی دستگاه مقصد نصب باشد. استایل‌های درون هر خط حفظ می‌شوند.</span></i>
+      </span>
+    </label>
+
+    <div id="fontField" class="workshop-fields">
+      <label class="field"><span data-i18n="pages_subtitles_field_7">فونت فارسی</span> <select id="fontPreset"><option value="Vazirmatn" data-i18n="content_youtube_fontSelect_1">وزیرمتن</option><option value="Shabnam" data-i18n="shared_settings_BUNDLED_FONTS_3">شبنم</option><option value="Sahel" data-i18n="shared_settings_BUNDLED_FONTS_2">ساحل</option><option value="Samim" data-i18n="shared_settings_BUNDLED_FONTS_1">صمیم</option><option value="Tahoma" data-i18n="pages_subtitles_option_9">Tahoma — فونت سیستم</option><option value="Arial" data-i18n="pages_subtitles_option_10">Arial — فونت سیستم</option><option value="custom" data-i18n="pages_subtitles_option_11">نام دلخواه</option></select></label>
+      <label class="field"><span data-i18n="pages_subtitles_field_8">نام دقیق فونت</span> <input type="text" id="fontName" value="Vazirmatn" maxlength="120" dir="ltr" spellcheck="false"></label>
+      <label class="field"><span data-i18n="pages_subtitles_field_9">اندازه در استایل ASS</span> <input id="outputFontSize" type="number" min="8" max="144" step="1" placeholder="خالی = اندازهٔ فایل اصلی" dir="ltr" data-i18n-placeholder="pages_subtitles_outputFontSize_placeholder_1"></label>
+      <label class="field"><span data-i18n="pages_subtitles_field_10">ضخامت دورخط</span> <input id="outputOutline" type="number" min="0" max="8" step="0.5" placeholder="خالی = دورخط فایل اصلی" dir="ltr" data-i18n-placeholder="pages_subtitles_outputOutline_placeholder_1"></label>
+      <label class="field"><span data-i18n="pages_subtitles_field_11">جای متن در ASS</span> <select id="outputAlignment"><option value="" data-i18n="pages_subtitles_option_12">حفظ جای اصلی</option><option value="7" data-i18n="pages_subtitles_option_13">بالا، چپ</option><option value="8" data-i18n="pages_subtitles_option_14">بالا، وسط</option><option value="9" data-i18n="pages_subtitles_option_15">بالا، راست</option><option value="4" data-i18n="pages_subtitles_option_16">میانه، چپ</option><option value="5" data-i18n="pages_subtitles_option_17">مرکز تصویر</option><option value="6" data-i18n="pages_subtitles_option_18">میانه، راست</option><option value="1" data-i18n="pages_subtitles_option_19">پایین، چپ</option><option value="2" data-i18n="pages_subtitles_option_20">پایین، وسط</option><option value="3" data-i18n="pages_subtitles_option_21">پایین، راست</option></select></label>
+      <div class="field"><span><span data-i18n="pages_subtitles_span_1">ظاهر پایه</span></span><button class="ghost" id="resetOutputStyleBtn"><span data-i18n="pages_subtitles_resetOutputStyleBtn_1">حفظ اندازه، دورخط و جای اصلی</span></button></div>
+    </div>
+    <div class="font-sample-stage" aria-label="نمونهٔ تقریبی فونت" data-i18n-aria-label="pages_subtitles_font_sample_stage_aria_label_1"><p id="outputFontPreview" dir="rtl"><span data-i18n="pages_subtitles_outputFontPreview_1">این یک نمونهٔ زیرنویس فارسی است.</span><br><span data-i18n="pages_subtitles_outputFontPreview_2">نیم‌فاصله، نشانه‌ها و شمارهٔ ۱۲۳</span></p></div>
+    <p class="hint"><span data-i18n="pages_subtitles_hint_4">این نمونه برای مقایسهٔ فونت است؛ اندازه و جای دقیق در پخش‌کننده به ابعاد و تنظیمات فایل ویدیو بستگی دارد.</span></p>
+    </details>
+
+    <div class="row-actions">
+      <button class="primary" id="translateBtn"><span data-i18n="pages_subtitles_translateBtn_1">ترجمه به فارسی</span></button>
+      <button class="ghost" id="resumeBtn"><span data-i18n="pages_subtitles_resumeBtn_1">ادامه / ترمیم خط‌های ناقص</span></button>
+      <button class="ghost" id="cancelBtn" disabled><span data-i18n="content_page_translate_cancelBtn_1">لغو</span></button>
+    </div>
+    <div class="progress hidden" id="progress">
+      <div class="bar"><div class="fill" id="progressFill"></div></div>
+      <p class="progress-text" id="progressText"></p>
+    </div>
+  </section>
+  <div class="notice err hidden" id="errorNote" role="alert"></div>
+
+  <section class="card hidden" id="editorCard">
+    <div class="card-head"><h2><span data-i18n="pages_subtitles_h2_3">میز بازبینی</span></h2><span class="tag" id="editorSummary"></span></div>
+    <p class="hint"><span data-i18n="pages_subtitles_hint_5">ویرایش دستی خودکار قفل می‌شود. برای بازترجمه ابتدا قفل را بردارید. نشانه‌های قالب مانند ⟦0⟧ را نگه دارید؛ خروجی دارای قالب ناقص با متن اصلی جایگزین و گزارش می‌شود.</span></p>
+    <div class="editor-toolbar">
+      <input id="searchText" type="search" placeholder="جست‌وجو در مبدأ و ترجمه" aria-label="جست‌وجو" data-i18n-placeholder="pages_subtitles_searchText_placeholder_1" data-i18n-aria-label="pages_subtitles_searchText_aria_label_1">
+      <label><input id="onlyQa" type="checkbox"> <span data-i18n="pages_subtitles_label_2">فقط نیازمند بازبینی</span></label>
+      <button class="ghost" id="retranslateSelectionBtn"><span data-i18n="pages_subtitles_retranslateSelectionBtn_1">بازترجمهٔ انتخاب‌شده‌ها</span></button>
+      <button class="ghost" id="undoBtn" disabled><span data-i18n="pages_subtitles_undoBtn_1">برگشت تغییر</span></button>
+    </div>
+    <div class="editor-toolbar">
+      <input id="replaceFind" type="text" placeholder="متن مورد نظر" aria-label="متن جست‌وجو برای جایگزینی" data-i18n-placeholder="pages_subtitles_replaceFind_placeholder_1" data-i18n-aria-label="pages_subtitles_replaceFind_aria_label_1">
+      <input id="replaceWith" type="text" placeholder="جایگزین" aria-label="متن جایگزین" data-i18n-placeholder="pages_subtitles_replaceWith_placeholder_1" data-i18n-aria-label="pages_subtitles_replaceWith_aria_label_1">
+      <button class="ghost" id="replaceBtn"><span data-i18n="pages_subtitles_replaceBtn_1">جایگزینی در خط‌های باز</span></button>
+      <span class="hint"><span data-i18n="pages_subtitles_hint_6">اگر خطی انتخاب شده باشد، فقط همان خط‌ها تغییر می‌کنند.</span></span>
+    </div>
+    <div class="editor-toolbar"><label><input id="selectPage" type="checkbox"> <span data-i18n="pages_subtitles_label_3">انتخاب این صفحه</span></label><span id="selectionCount" class="hint"></span></div>
+    <div id="editorRows" class="editor-rows"></div>
+    <div class="row-actions"><button class="ghost" id="previousPage"><span data-i18n="pages_subtitles_previousPage_1">صفحهٔ قبل</span></button><span id="pageLabel" class="hint"></span><button class="ghost" id="nextPage"><span data-i18n="pages_subtitles_nextPage_1">صفحهٔ بعد</span></button></div>
+    <p class="hint" id="qaLegend"><span data-i18n="pages_subtitles_qaLegend_1">هشدارهای کیفیت راهنمای بازبینی‌اند؛ «متن مشابه مبدأ» و «سرعت خواندن» ممکن است در نام‌ها یا تابلوها قابل قبول باشند. زمان فایل خودکار تغییر نمی‌کند.</span></p>
+  </section>
+
+  <!-- ---------------------------------------------------------- result -->
+  <section class="card hidden" id="resultCard">
+    <div class="card-head"><h2><span data-i18n="pages_subtitles_h2_4">خروجی</span></h2></div>
+    <div class="facts" id="resultFacts"></div>
+    <div class="row-actions">
+      <button class="primary" id="downloadBtn"><span data-i18n="content_youtube_srtBtn_1">دانلود زیرنویس فارسی</span></button>
+      <button class="ghost" id="copyBtn"><span data-i18n="pages_subtitles_wire_5">کپی متن</span></button>
+      <button class="ghost" id="exportProjectBtn"><span data-i18n="pages_subtitles_exportProjectBtn_1">دریافت پروژه و ویرایش‌ها</span></button>
+      <select id="exportFormat" aria-label="قالب خروجی" data-i18n-aria-label="pages_subtitles_exportFormat_aria_label_1"><option value="original" data-i18n="pages_subtitles_option_22">قالب اصلی</option><option value="srt">SRT</option><option value="vtt">VTT</option></select>
+    </div>
+    <details class="fold">
+      <summary><span data-i18n="pages_subtitles_summary_5">نمونهٔ خروجی</span></summary>
+      <div class="preview" id="resultPreview"></div>
+    </details>
+  </section>
+
+  <!-- ------------------------------------------------------------- dub -->
+  <section class="card hidden" id="dubCard">
+    <div class="card-head">
+      <h2><span data-i18n="pages_subtitles_h2_5">نوار صوتی دوبله</span></h2>
+      <span class="tag soft"><span data-i18n="popup_popup_chip_mini_1">آزمایشی</span></span>
+    </div>
+    <p class="lead">
+      <span data-i18n="pages_subtitles_lead_1">از همین زیرنویس فارسی یک فایل صوتی ساخته می‌شود که دقیقاً روی زمان‌بندی ویدیو می‌نشیند.
+      بعد در mpv کافی است ویدیو را با آن باز کنید:</span>
+    </p>
+    <pre class="cmd" dir="ltr">mpv video.mkv --audio-file=dub.wav</pre>
+
+    <div class="field">
+      <label class="lbl" for="dubFit"><span data-i18n="pages_subtitles_lbl_1">جاگیری در زمان</span></label>
+      <select id="dubFit">
+        <option value="rate" data-i18n="pages_subtitles_option_23">تندتر بخوان تا جا شود (پیشنهادی)</option>
+        <option value="overflow" data-i18n="pages_subtitles_option_24">سرعت طبیعی، سرریز به سکوت بعدی</option>
+        <option value="strict" data-i18n="pages_subtitles_option_25">سرعت طبیعی، بدون تغییر</option>
+      </select>
+      <p class="hint"><span data-i18n="pages_subtitles_hint_7">ترجمهٔ فارسی معمولاً ۱۵ تا ۳۰ درصد از انگلیسی بلندتر است. گزینهٔ اول سرعت گفتار را دقیقاً به اندازهٔ لازم بالا می‌برد (حداکثر ۲ برابر) تا دوبله از تصویر عقب نیفتد.</span></p>
+    </div>
+
+    <label class="opt">
+      <input type="checkbox" id="dubMerge" checked>
+      <span>
+        <b><span data-i18n="pages_subtitles_b_4">ادغام جمله‌ای</span></b>
+        <i><span data-i18n="pages_subtitles_i_5">زیرنویس واحد «خواندن» است نه «گفتن»؛ بدون ادغام، گوینده هر دو ثانیه نفس می‌گیرد.</span></i>
+      </span>
+    </label>
+
+    <div class="row-actions">
+      <button class="primary" id="dubBtn"><span data-i18n="pages_subtitles_dubBtn_1">ساخت فایل صوتی</span></button>
+      <button class="ghost" id="dubCancelBtn" disabled><span data-i18n="content_page_translate_cancelBtn_1">لغو</span></button>
+    </div>
+    <div class="progress hidden" id="dubProgress">
+      <div class="bar"><div class="fill" id="dubFill"></div></div>
+      <p class="progress-text" id="dubText"></p>
+    </div>
+    <div class="notice hidden" id="dubNote"></div>
+    <div class="row-actions hidden" id="dubDownloadRow">
+      <button class="primary" id="dubDownloadBtn"><span data-i18n="pages_subtitles_dubDownloadBtn_1">دانلود فایل صوتی</span></button>
+      <audio id="dubPreview" controls class="dub-preview"></audio>
+    </div>
+  </section>
+</main>
+
+<script src="../shared/settings.js"></script>
+<script src="../shared/memory.js"></script>
+<script src="../shared/theme.js"></script>
+<script src="../shared/subtitles.js"></script>
+<script src="../shared/workshop.js"></script>
+<script src="subtitles.js"></script>
+</body>
+</html>

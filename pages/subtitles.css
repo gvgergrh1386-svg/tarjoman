@@ -1,0 +1,556 @@
+/**
+ * Subtitle workbench styling.
+ *
+ * Every colour comes from shared/theme.js, applied to <html> at load, so this
+ * page follows the same theme, accent, density and surface the popup and the
+ * in-page cards use. Nothing is hard-coded except layout.
+ */
+
+* { box-sizing: border-box; }
+
+html {
+  color-scheme: var(--gxt-scheme, dark);
+}
+
+body {
+  margin: 0;
+  padding: 0 0 64px;
+  background: var(--gxt-bg, #0e1116);
+  color: var(--gxt-fg, #e7e9ee);
+  font: var(--gxt-fs-md, 13.5px) / var(--gxt-lh, 1.75)
+    var(--gxt-font, "Vazirmatn", "Segoe UI", Tahoma, sans-serif);
+  font-weight: var(--gxt-weight, 400);
+}
+
+/* ------------------------------------------------------------- top bar */
+
+.topbar {
+  position: sticky;
+  top: 0;
+  z-index: 5;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 16px;
+  padding: 14px 24px;
+  background: var(--gxt-bg-elev, #171a21);
+  border-bottom: 1px solid var(--gxt-line, #262b35);
+}
+
+.brand {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+}
+
+.brand h1 {
+  margin: 0;
+  font-size: var(--gxt-fs-xl, 17px);
+  font-weight: 800;
+}
+
+.brand .sub {
+  margin: 0;
+  font-size: var(--gxt-fs-xs, 12px);
+  color: var(--gxt-fg-muted, #98a0ae);
+}
+
+.tag {
+  padding: 4px 11px;
+  border: 1px solid var(--gxt-accent-line, #2f6ea6);
+  border-radius: var(--gxt-radius-pill, 999px);
+  background: var(--gxt-accent-soft, rgba(56, 176, 255, .15));
+  color: var(--gxt-accent-on-soft, #5cb8f5);
+  font-size: var(--gxt-fs-xs, 12px);
+  font-weight: 700;
+  white-space: nowrap;
+}
+
+.tag.soft {
+  border-color: var(--gxt-line);
+  background: transparent;
+  color: var(--gxt-fg-muted);
+}
+
+/* -------------------------------------------------------------- layout */
+
+main {
+  max-width: 1180px;
+  margin: 0 auto;
+  padding: 24px 20px 0;
+  display: flex;
+  flex-direction: column;
+  gap: 18px;
+}
+
+.hidden { display: none !important; }
+
+textarea {
+  width: 100%; min-width: 0; resize: vertical;
+  color: var(--gxt-fg); background: var(--gxt-input-bg, var(--gxt-bg)); border: 1px solid var(--gxt-input-line, var(--gxt-line));
+  border-radius: var(--gxt-radius-md, 10px); padding: 10px; font: inherit; line-height: 1.8;
+}
+textarea:focus-visible { outline: 2px solid var(--gxt-accent); outline-offset: 2px; }
+.workshop-fields { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; margin-top: 12px; }
+.workshop-fields .field { margin: 0; display: flex; flex-direction: column; gap: 6px; }
+.workshop-fields .full-field { grid-column: 1 / -1; }
+.model-fields { padding: 14px; background: var(--gxt-bg); border: 1px solid var(--gxt-accent-line, var(--gxt-line)); border-radius: var(--gxt-radius-md, 12px); }
+.model-status { display: flex; justify-content: space-between; align-items: center; gap: 12px; margin-top: 10px; }
+.model-status .hint { overflow-wrap: anywhere; }
+.model-status button { flex-shrink: 0; }
+.tuning-fields { align-items: start; }
+.font-sample-stage { display: flex; align-items: end; justify-content: center; min-height: 210px; margin-top: 16px; padding: 20px; overflow: hidden; border: 1px solid var(--gxt-line); border-radius: var(--gxt-radius-md, 12px); background: linear-gradient(150deg, #243845, #0e1420 65%); }
+#outputFontPreview { max-width: 100%; margin: 0; color: white; font-size: 26px; line-height: 1.7; overflow-wrap: anywhere; text-align: center; }
+input:disabled, select:disabled, textarea:disabled { opacity: .55; cursor: not-allowed; }
+.editor-toolbar { display: flex; gap: 10px; align-items: center; flex-wrap: wrap; margin: 12px 0; }
+.editor-toolbar input:not([type="checkbox"]) { flex: 1; min-width: 140px; }
+.editor-rows { display: flex; flex-direction: column; gap: 12px; }
+.editor-row { border: 1px solid var(--gxt-line); border-radius: var(--gxt-radius-md, 12px); padding: 12px; background: var(--gxt-bg); }
+.editor-row.is-locked { border-inline-start: 3px solid var(--gxt-accent); }
+.cue-meta, .cue-footer { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; font-size: var(--gxt-fs-xs, 12px); color: var(--gxt-fg-muted); }
+.cue-meta { padding-bottom: 8px; border-bottom: 1px solid var(--gxt-line); }
+.cue-columns { display: grid; grid-template-columns: 1fr 1fr; gap: 14px; padding: 12px 0; align-items: start; }
+.cue-source { min-width: 0; white-space: pre-wrap; overflow-wrap: anywhere; }
+.cue-source small, .cue-target { color: var(--gxt-fg-muted); font-size: var(--gxt-fs-xs, 12px); }
+.cue-source p { margin: 6px 0; color: var(--gxt-fg); font-size: var(--gxt-fs-md, 13.5px); }
+.cue-target textarea { display: block; font-size: var(--gxt-fs-md, 13.5px); margin-top: 6px; }
+.cue-qa, .cue-error { color: var(--gxt-warning, #e8b85f); font-size: var(--gxt-fs-xs, 12px); }
+.cue-error { margin: 6px 0 0; }
+.project-tools select { min-width: 180px; flex: 1; }
+@media (max-width: 640px) {
+  .workshop-fields, .cue-columns { grid-template-columns: 1fr; }
+  .topbar { flex-wrap: wrap; }
+  #optionsCard > .card-head { align-items: start; flex-direction: column; }
+  #resetTranslationBtn { white-space: nowrap; }
+  .model-status { align-items: stretch; flex-direction: column; }
+  main { padding: 14px 10px 0; }
+  .cue-meta { gap: 6px; }
+}
+
+/* ---------------------------------------------------------- drop zone */
+
+.drop {
+  padding: 44px 24px;
+  border: 2px dashed var(--gxt-line, #262b35);
+  border-radius: var(--gxt-radius-lg, 18px);
+  background: var(--gxt-bg-elev, #171a21);
+  text-align: center;
+  cursor: pointer;
+  transition: border-color var(--gxt-motion, .18s), background var(--gxt-motion, .18s);
+}
+
+.drop:hover,
+.drop:focus-visible {
+  border-color: var(--gxt-accent, #38b0ff);
+  outline: none;
+}
+
+.drop.over {
+  border-color: var(--gxt-accent, #38b0ff);
+  background: var(--gxt-accent-soft, rgba(56, 176, 255, .12));
+}
+
+.drop-icon {
+  /* Not on the type scale on purpose: this is a decorative glyph sized to the
+     drop zone, not text, and the scale tops out at --gxt-fs-2xl (23px). */
+  font-size: 34px;
+  line-height: 1;
+  color: var(--gxt-accent, #38b0ff);
+}
+
+.drop-title {
+  margin: 12px 0 4px;
+  font-size: var(--gxt-fs-xl, 16px);
+  font-weight: 700;
+}
+
+.drop-hint {
+  margin: 0;
+  font-size: var(--gxt-fs-sm, 12.5px);
+  color: var(--gxt-fg-muted, #98a0ae);
+}
+
+/* -------------------------------------------------------------- cards */
+
+.card {
+  padding: 18px 20px;
+  border: 1px solid var(--gxt-panel-line, var(--gxt-line, #262b35));
+  border-radius: var(--gxt-radius-lg, 18px);
+  background: var(--gxt-bg-elev, #171a21);
+}
+
+.card-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  margin-bottom: 14px;
+}
+
+.card-head h2 {
+  margin: 0;
+  font-size: var(--gxt-fs-lg, 15px);
+  font-weight: 800;
+  overflow-wrap: anywhere;
+}
+
+.lead {
+  margin: 0 0 10px;
+  font-size: var(--gxt-fs-sm, 12.5px);
+  color: var(--gxt-fg-muted, #98a0ae);
+}
+
+/* -------------------------------------------------------------- facts */
+
+.facts {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(120px, 1fr));
+  gap: 10px;
+}
+
+.fact {
+  padding: 10px 12px;
+  border: 1px solid var(--gxt-line, #262b35);
+  border-radius: var(--gxt-radius-md, 13px);
+  background: var(--gxt-bg, #0e1116);
+}
+
+.fact span {
+  display: block;
+  font-size: var(--gxt-fs-2xs, 11.5px);
+  color: var(--gxt-fg-muted, #98a0ae);
+}
+
+.fact b {
+  font-size: var(--gxt-fs-lg, 15px);
+  font-weight: 800;
+}
+
+.fact.warn b { color: var(--gxt-warn, #ffd400); }
+
+/* ------------------------------------------------------------ notices */
+
+.notice {
+  margin-top: 12px;
+  padding: 10px 13px;
+  border-radius: var(--gxt-radius-md, 13px);
+  border: 1px solid var(--gxt-line, #262b35);
+  background: var(--gxt-bg, #0e1116);
+  font-size: var(--gxt-fs-sm, 12.5px);
+  color: var(--gxt-fg-muted, #98a0ae);
+  overflow-wrap: anywhere;
+}
+
+.notice.warn {
+  border-color: color-mix(in srgb, var(--gxt-warn, #ffd400) 45%, transparent);
+  color: var(--gxt-warn, #ffd400);
+}
+
+.notice.err {
+  border-color: color-mix(in srgb, var(--gxt-err, #ff6b70) 45%, transparent);
+  color: var(--gxt-err, #ff6b70);
+}
+
+/* ------------------------------------------------------------ options */
+
+.opt {
+  display: flex;
+  align-items: flex-start;
+  gap: 11px;
+  padding: 11px 0;
+  border-top: 1px solid var(--gxt-line, #262b35);
+  cursor: pointer;
+}
+
+.opt:first-of-type { border-top: 0; }
+
+.opt input {
+  margin: 3px 0 0;
+  width: 16px;
+  height: 16px;
+  accent-color: var(--gxt-accent, #38b0ff);
+  flex: none;
+}
+
+.opt b {
+  display: block;
+  font-size: var(--gxt-fs-md, 13.5px);
+  font-weight: 700;
+}
+
+.opt i {
+  display: block;
+  margin-top: 2px;
+  font-style: normal;
+  font-size: var(--gxt-fs-xs, 12px);
+  line-height: 1.7;
+  color: var(--gxt-fg-muted, #98a0ae);
+}
+
+/* ------------------------------------------------------------- fields */
+
+.field { margin-top: 14px; }
+
+.lbl {
+  display: block;
+  margin-bottom: 6px;
+  font-size: var(--gxt-fs-sm, 12.5px);
+  font-weight: 700;
+}
+
+.hint {
+  margin: 6px 0 0;
+  font-size: var(--gxt-fs-xs, 12px);
+  line-height: 1.75;
+  color: var(--gxt-fg-muted, #98a0ae);
+}
+
+input[type="text"],
+input[type="search"],
+input[type="number"],
+select {
+  width: 100%;
+  padding: 9px 11px;
+  border: 1px solid var(--gxt-input-line, var(--gxt-line, #262b35));
+  border-radius: var(--gxt-radius-sm, 9px);
+  background: var(--gxt-input-bg, var(--gxt-bg, #0e1116));
+  color: var(--gxt-fg, #e7e9ee);
+  font: inherit;
+  font-size: var(--gxt-fs-sm, 12.5px);
+}
+
+input[type="text"]:focus,
+input[type="search"]:focus,
+select:focus {
+  outline: 2px solid var(--gxt-accent, #38b0ff);
+  outline-offset: 1px;
+}
+
+/* ------------------------------------------------------------ buttons */
+
+.row-actions {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  margin-top: 16px;
+  flex-wrap: wrap;
+}
+
+button {
+  padding: 9px 17px;
+  border-radius: var(--gxt-radius-sm, 9px);
+  border: 1px solid transparent;
+  font: inherit;
+  font-size: var(--gxt-fs-sm, 12.5px);
+  font-weight: var(--gxt-weight-strong, 700);
+  cursor: pointer;
+  min-height: 36px;
+  transition: filter var(--gxt-motion, .18s), border-color var(--gxt-motion, .18s);
+}
+
+button:disabled {
+  opacity: .45;
+  cursor: not-allowed;
+}
+
+/* One focus treatment for the page. Without it, every button here could be
+   reached with Tab and gave no sign of it. */
+button:focus-visible,
+summary:focus-visible,
+input:focus-visible,
+select:focus-visible {
+  outline: none;
+  box-shadow: var(--gxt-focus-ring, 0 0 0 2px #0e1014, 0 0 0 4px #1d9bf0);
+  border-radius: var(--gxt-radius-sm, 9px);
+}
+
+button.primary {
+  background: var(--gxt-accent-solid, #177bbf);
+  color: var(--gxt-accent-fg, #fff);
+}
+
+button.primary:hover:not(:disabled) { background: var(--gxt-accent-hover, #146aa6); }
+
+button.ghost {
+  background: transparent;
+  border-color: var(--gxt-line, #262b35);
+  color: var(--gxt-fg, #e7e9ee);
+}
+
+button.ghost:hover:not(:disabled) { border-color: var(--gxt-accent, #38b0ff); }
+
+button.sm { padding: 5px 11px; font-size: var(--gxt-fs-xs, 12px); min-height: 28px; }
+
+/* ----------------------------------------------------------- progress */
+
+.progress { margin-top: 14px; }
+
+.bar {
+  height: 6px;
+  border-radius: 999px;
+  background: var(--gxt-line, #262b35);
+  overflow: hidden;
+}
+
+.fill {
+  height: 100%;
+  width: 0;
+  border-radius: 999px;
+  background: var(--gxt-accent, #38b0ff);
+  transition: width .25s ease;
+}
+
+.progress-text {
+  margin: 7px 0 0;
+  font-size: var(--gxt-fs-sm, 12.5px);
+  color: var(--gxt-fg-muted, #98a0ae);
+}
+
+/* v3.2.5 — this page's twelve literal font sizes are on the type scale now.
+ *
+ * They were `12.5px`, `15px`, `16px` and friends: exactly the «راحت» density's
+ * values, so nothing moves for a reader on the default — but «فشرده» and «بزرگ»
+ * had simply never reached this page. «بزرگ» exists as an accessibility setting
+ * (Chrome's own zoom does not reach an extension page on every platform), so a
+ * page that ignores it is not merely inconsistent. */
+
+/* ------------------------------------------------------------ preview */
+
+.fold {
+  margin-top: 14px;
+  border-top: 1px dashed var(--gxt-line, #262b35);
+  padding-top: 12px;
+}
+
+.fold > summary {
+  cursor: pointer;
+  font-size: var(--gxt-fs-sm, 12.5px);
+  font-weight: 700;
+  color: var(--gxt-accent-ink, #7cc4f5);
+  list-style: none;
+  user-select: none;
+}
+
+.fold > summary::-webkit-details-marker { display: none; }
+
+.fold > summary::before {
+  content: "▾";
+  display: inline-block;
+  margin-inline-end: 5px;
+  transition: transform var(--gxt-motion, .18s);
+}
+
+.fold[open] > summary::before { transform: rotate(180deg); }
+
+.preview {
+  max-height: 320px;
+  overflow: auto;
+  margin-top: 10px;
+  padding: 12px;
+  border-radius: var(--gxt-radius-md, 13px);
+  background: var(--gxt-bg, #0e1116);
+  font-size: var(--gxt-fs-sm, 12.5px);
+}
+
+.pv {
+  display: flex;
+  gap: 12px;
+  padding: 5px 0;
+  border-bottom: 1px solid var(--gxt-line, #262b35);
+}
+
+.pv:last-child { border-bottom: 0; }
+
+.pv-t {
+  flex: none;
+  color: var(--gxt-fg-muted, #98a0ae);
+  font-variant-numeric: tabular-nums;
+  direction: ltr;
+}
+
+.pv-x { overflow-wrap: anywhere; }
+
+.pv-line {
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+  font-family: Consolas, "Courier New", monospace;
+  font-size: var(--gxt-fs-xs, 12px);
+  line-height: 1.6;
+}
+
+.cmd {
+  margin: 0 0 14px;
+  padding: 11px 13px;
+  border-radius: var(--gxt-radius-md, 13px);
+  border: 1px solid var(--gxt-line, #262b35);
+  background: var(--gxt-bg, #0e1116);
+  font-family: Consolas, "Courier New", monospace;
+  font-size: var(--gxt-fs-sm, 12.5px);
+  overflow-x: auto;
+  user-select: all;
+}
+
+.dub-preview {
+  height: 34px;
+  max-width: 100%;
+  flex: 1;
+  min-width: 200px;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  *, *::before, *::after { transition: none !important; }
+}
+
+/* ═══════════════════ forced colours (Windows High Contrast) — v2.9.5 ═══
+ *
+ * Same audit as the popup and the in-page layer. In this page the two things
+ * that disappear entirely are the drop zone's dashed affordance (it is drawn
+ * with the accent) and the progress bar's fill — a progress bar that cannot
+ * show progress is worse than none, since the page's longest operation looks
+ * frozen. And focus, again, is a box-shadow that this mode does not paint.
+ */
+@media (forced-colors: active) {
+  .drop {
+    border: 2px dashed CanvasText;
+  }
+
+  .drop:focus-visible,
+  button:focus-visible,
+  select:focus-visible,
+  input:focus-visible,
+  .fold > summary:focus-visible {
+    outline: 3px solid CanvasText;
+    outline-offset: 2px;
+    box-shadow: none;
+  }
+
+  button.primary {
+    background: Highlight;
+    color: HighlightText;
+    border: 1px solid Highlight;
+  }
+
+  button:disabled {
+    color: GrayText;
+    border-color: GrayText;
+    background: Canvas;
+  }
+
+  .bar {
+    border: 1px solid CanvasText;
+  }
+
+  /* Progress is quantity, not decoration: keep the fill visible. */
+  .fill {
+    forced-color-adjust: none;
+  }
+
+  .card,
+  .opt,
+  .preview,
+  .notice,
+  .cmd,
+  .tag {
+    border: 1px solid CanvasText;
+  }
+}

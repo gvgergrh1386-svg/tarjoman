@@ -1,0 +1,44 @@
+<!doctype html><meta charset="utf-8"><title>Web video visible surfaces and contrast</title>
+<style>body{font:14px system-ui;margin:20px}.player{position:relative;width:640px;height:360px;background:#234;margin-bottom:16px}video{width:100%;height:100%;display:block}.controls{position:absolute;bottom:0;left:0;right:0;height:45px;background:#555}.hidden-controls{opacity:0;visibility:hidden}#summary{position:fixed;top:2px;right:2px;background:white;z-index:2147483647}</style>
+<div id="summary">running</div><main id="fixtures"></main>
+<script>globalThis.GXT_SHIM_SEED={settings:{webVideoEnabled:true,webVideoDub:true,webVideoSubtitles:true,webVideoDisplay:'auto',webVideoDubEngine:'auto',ytLiveModel:'account-live-model',ytLiveSourceLang:'en',ytLiveDuck:10}};globalThis.GXT_SHIM_HANDLER=async m=>({ok:true,list:m.texts?.map(t=>'ترجمه '+t)});</script>
+<script src="chrome-shim.js"></script><script src="../shared/settings.js"></script><script src="../shared/theme.js"></script><script src="../shared/video-sources.js"></script><script>
+globalThis.dubCreations=[];GXT.dub={create(config){const record={config,starts:[],stops:0,settings:config.settings};dubCreations.push(record);return {start(mode){record.starts.push(mode)},stop(){record.stops++},dispose(){record.stops++},setMode(){},setSegments(){},update(){},configure(s){record.settings=s},stats(){return {running:true,live:{state:'active'}}}}}};
+</script><script src="../content/web-video.js"></script>
+<script>
+(async()=>{
+ const results=[];const check=(name,run)=>{let ok=false,error='';try{ok=!!run()}catch(e){error=e.message}results.push({name,ok,error});console.log(`GXT-WEBVIS ${ok?'PASS':'FAIL'} ${name}${error?' '+error:''}`)};
+ const wait=ms=>new Promise(r=>setTimeout(r,ms));await wait(100);
+ const section=document.createElement('section');section.className='player';section.innerHTML='<video controls></video>';document.querySelector('#fixtures').append(section);await wait(250);
+ const video=section.querySelector('video'),W=GXT.webVideo,r=W._test.get(video);r.openPanel();await wait(80);
+ const rgb=s=>{const a=s.match(/[\d.]+/g)?.map(Number);return a?.slice(0,3).map(v=>v/255)};
+ const luminance=c=>c.map(v=>v<=.04045?v/12.92:((v+.055)/1.055)**2.4).reduce((s,v,i)=>s+v*[.2126,.7152,.0722][i],0);
+ const ratio=el=>{const css=getComputedStyle(el),f=luminance(rgb(css.color)),b=luminance(rgb(css.backgroundColor));return (Math.max(f,b)+.05)/(Math.min(f,b)+.05)};
+ for(const uiTheme of ['paper','graphite','midnight','daylight']){
+   await GXT.setSettings({uiTheme});await wait(180);
+   check(uiTheme+' enabled toolbar button has readable ink on actual surface',()=>ratio(r.menuButton)>=4.5);
+   check(uiTheme+' native select and text input use readable paired colors',()=>ratio(r.engineSelect)>=4.5&&ratio(r.liveModelInput)>=4.5);
+   check(uiTheme+' unavailable source remains readable with an explicit disabled state',()=>r.select.disabled&&Number(getComputedStyle(r.select).opacity)===1&&ratio(r.select)>=4.5);
+   r.dubButton.setAttribute('aria-pressed','true');
+   check(uiTheme+' active button uses matching accent foreground',()=>ratio(r.dubButton)>=4.5);r.dubButton.setAttribute('aria-pressed','false');
+ }
+ check('open settings paint above the subtitle layer',()=>Number(getComputedStyle(r.panel).zIndex)>Number(getComputedStyle(r.caption).zIndex));
+ const second=document.createElement('section');second.className='player';second.innerHTML='<video controls></video>';document.querySelector('#fixtures').append(second);await wait(200);
+ check('an open player menu paints above neighboring video controls',()=>Number(getComputedStyle(r.host).zIndex)>Number(getComputedStyle(W._test.get(second.querySelector('video')).host).zIndex));
+ r.shadow.querySelector('button[aria-label="بستن تنظیمات"]').click();await wait(100);
+ check('closing a menu releases its foreground layer',()=>!r.host.hasAttribute('data-panel-open'));r.openPanel();await wait(100);
+ const pageStyle=document.createElement('style');pageStyle.textContent='[data-gxt-web-video]{border:4px solid white!important;padding:6px!important;min-width:20px!important;min-height:20px!important;outline:2px solid white!important;background:white!important;transform:translate(50vw,50vh)!important}[data-gxt-web-video]::before{content:""!important;position:fixed!important;left:50vw!important;top:50vh!important;width:20px!important;height:20px!important;border:4px solid white!important}';document.head.append(pageStyle);await wait(120);
+ check('page CSS cannot turn the empty overlay host into a centered white square',()=>{const box=r.host.getBoundingClientRect(),css=getComputedStyle(r.host);return box.width===0&&box.height===0&&box.left===0&&box.top===0&&css.outlineStyle==='none'&&css.backgroundColor==='rgba(0, 0, 0, 0)'});
+ check('page pseudo-elements cannot paint an orphan center marker',()=>getComputedStyle(r.host,'::before').content==='none');
+ check('inactive subtitle layer has no visible box',()=>r.caption.getClientRects().length===0);
+ r.caption.hidden=false;r.caption.textContent='';await wait(50);
+ check('empty subtitle content never paints even during a visibility transition',()=>r.caption.getClientRects().length===0);
+ r.host.hidden=true;
+ check('hidden host stays hidden despite page CSS and strong shadow reset',()=>r.host.getClientRects().length===0);r.host.hidden=false;r.caption.hidden=true;pageStyle.remove();
+ r.menuButton.focus();
+ check('button keyboard focus remains visible',()=>getComputedStyle(r.menuButton).outlineStyle!=='none');
+ await GXT.setSettings({webVideoEnabled:false});await wait(180);
+ check('disabling removes every overlay host and floating marker',()=>!document.querySelector('[data-gxt-web-video]')&&!document.querySelector('[data-gxt-web-video-dock]'));
+ const passed=results.filter(x=>x.ok).length;document.querySelector('#summary').textContent=passed+'/'+results.length;console.log(`GXT-WEBVIS SUMMARY ${passed}/${results.length}`);
+})().catch(e=>{console.error(e);console.log('GXT-WEBVIS FAIL uncaught '+e.message);console.log('GXT-WEBVIS SUMMARY 0/1')});
+</script>

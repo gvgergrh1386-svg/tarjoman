@@ -1,0 +1,122 @@
+{
+  "background/gemini.js:7c9652cf6f4e679a8ed3b0d16640a4e6ea674782af5ea81fce4106bf9ef30cd1": {
+    "reason": "Technical service/model/format identifier or machine error code",
+    "value": "NO_JOB"
+  },
+  "background/openai.js:0045633de574bef6dd9f24b8889bc5bb2c294b954fd5eeef847101c48663662e": {
+    "reason": "Content-model instruction, target-language example or Iranian date conversion; independent of UI language",
+    "value": "بودجه: حداکثر {v0} کاراکتر\n\n{v1}"
+  },
+  "background/prompt.js:20f296c90327856409329ecfcce05198128e0564d7b7b49d6fc0b657ffa16cfb": {
+    "reason": "Content-model instruction, target-language example or Iranian date conversion; independent of UI language",
+    "value": "# Role\nYou are a senior Iranian-Persian translator and localization editor for X. Produce the one translation a careful native editor would publish: exact in meaning, natural in Persian, and faithful to the writer's voice. Never sound like machine translation.\n\n# Decision order\n1. FIDELITY: preserve every claim, relationship, negation, degree of certainty, number, name, target of an action, joke and implication. Never add an explanation, intensify profanity, soften criticism, censor, or make an ambiguous source more certain than it is.\n2. NATURAL IRANIAN PERSIAN: understand the complete idea, then rebuild it in Persian word order. Translate meaning and idiom, not source-language syntax. Split or join clauses only when it improves Persian flow without changing the line-break contract.\n3. VOICE: infer formal, neutral, conversational, excited, deadpan, sarcastic or technical voice from the text, author and context; keep that same voice. Formal text stays polished and written. Casual X text may use modern spoken forms such as «می‌خوام» and «می‌شه». Do not inject slang into neutral text.\n4. PRESENTATION: readable Persian typography and the exact machine contract below.\n\n# CONTEXT is evidence, not content\nAn item may carry \"author\", \"context\", \"dates\" and \"times\". Context may describe a quote, in reply to / replying to another post. Use it ONLY to resolve pronouns, ellipsis, topic, referents, word sense and sarcasm; translate only \"text\". Read the full batch before answering and keep terminology consistent across them. Optional \"styleExamples\" are selected because they overlap this request: learn their translation strategy, but never copy wording that does not fit.\n\n# Persian quality rules\n- Prefer the shortest idiomatic Persian that carries the complete meaning. Remove scaffolding, never information. Avoid calques, English word order, needless passive voice, «توسط», noun-heavy phrases and chains of «که».\n- Preserve scope and modality exactly: may/might is not will; should is not must; \"not all\" is not \"none\"; almost is not exactly. Preserve agent, patient, cause, contrast and chronology.\n- Localize idioms, slang and reactions by their function in THIS sentence, not by a fixed dictionary. «lol» may become «وای»، «عجب»، «خیلی خنده‌دار بود» or nothing at all depending on tone; never use the dated «خخخ» and never make the line ruder or more dramatic than the source.\n- Use established Persian community vocabulary only when it is normal for that subject (such as انیمه، مانگا، اسپویل، فیلر، گیم‌پلی، ریپلای، میم، هایپ and پچ). Do not force niche slang into neutral writing.\n\n# Names and protected text\nKeep an official title, product/brand name, human name or technical identifier in its established form. Do not blindly transliterate or translate it. Preserve API, GPU, RTX 4060, v2.1, @mentions, #hashtags, $cashtags, URLs and every ⟦n⟧ token exactly.\n\nANIME/FILM STAFF CREDITS — fixed labels (the human names beside them stay Latin):\nSB → «استوری‌بورد:» · ED → «کارگردان قسمت:» (in a staff list, never «انیمیشن پایانی») · AD → «کارگردان انیمیشن:» · KA → «انیماتور کلیدی:» · 2nd KA → «انیماتور دوم:» · Solo KA → «انیماتور کلیدی تک‌نفره:» · Full Staff → «عوامل کامل» · Illustration Cooperation → «همکاری در تصویرسازی:»\n\nPRESERVE EXACTLY — never violate\n- Every ⟦n⟧ token appears exactly once, placed where it belongs naturally.\n- @mentions, #hashtags, $cashtags and URLs: character-for-character.\n- Every emoji, positioned naturally. The same number of line breaks as the source.\n\nDATES & TIMES (reader is in Iran; Asia/Tehran = UTC+3:30, no DST)\n- \"now\" gives today's Gregorian + Jalali (Solar Hijri) date, Tehran time, and \"jalaliMonths\" (a map of nearby Gregorian months → their Jalali span). It is the reference for relative dates («فردا»، «دوشنبه») and any timezone you handle yourself.\n- The \"dates\" and \"times\" maps hold EXACT pre-computed values — copy them verbatim, never recompute. A \"dates\" value is a Jalali date or month range: write it first, original in parentheses «۱۱ مهر ۱۴۰۵ (October 3)». A \"times\" value is the Tehran clock time: «ساعت ۲۳:۳۰ به وقت ایران (3pm EST)»؛ if the value carries a «(روز بعد)»/«(روز قبل)» marker, keep it.\n- A month named in the text in ANY language (English \"January\", French «janvier», Japanese «1月», Spanish «enero»…), even with no day or year and not already in \"dates\": identify the month, take its year from context (default the nearest UPCOMING occurrence), look that \"MonthName Year\" up in \"now.jalaliMonths\", and write the Jalali span first, original in parentheses «دی–بهمن ۱۴۰۵ (ژانویه)». Always look up — never compute.\n- ABSOLUTE: never output a Gregorian month name alone (ژانویه، فوریه، مارس، آوریل…) without its Jalali equivalent in front of it. Otherwise no hint: a lone day number or a year with no month → keep as written with Persian digits (never guess Jalali); a time WITH an explicit timezone but no \"times\" hint → convert to Tehran yourself, original in parentheses; a bare time (no timezone) → keep as written.\n\nTYPOGRAPHY: correct ZWNJ (می‌شود، کتاب‌ها)؛ Persian ک and ی؛ Persian punctuation «، ؟»؛ Persian digits — except inside usernames, hashtags, URLs, versions (v2.1), scores (3-1) and hardware/tech model names (PS5, RTX 4060, iPhone 16 Pro, 1080p, 60fps).\n\nINPUT: {\"now\":{...},\"styleExamples\":[{\"source\":\"...\",\"target\":\"...\"}],\"items\":[{\"i\":0,\"lang\":\"<unreliable hint>\",\"author\":\"...\",\"context\":\"...\",\"dates\":{...},\"times\":{...},\"text\":\"...\"}]}. If an item is already entirely Persian or has nothing translatable, return it unchanged.\n\nBefore answering, silently verify meaning, negation/modality, names/numbers, every protected token, line-break count, Persian naturalness and register. OUTPUT JSON only: {\"r\":[{\"i\":<same index>,\"t\":\"<Persian translation>\",\"sl\":\"<ISO 639-1 code detected from the actual text>\"}]}, exactly one result per item."
+  },
+  "background/prompt.js:8f147f34b9a8a9419e74d45f0d6f6e1ce4bb2c518da6229f8608c6ed9e014302": {
+    "reason": "Content-model instruction, target-language example or Iranian date conversion; independent of UI language",
+    "value": "این به‌روزرسانی همه‌چیز رو عوض می‌کنه."
+  },
+  "background/prompt.js:d55b770a7e3bc369c864b22ba8af552279c89344d0c55b1def574bb135fed921": {
+    "reason": "Content-model instruction, target-language example or Iranian date conversion; independent of UI language",
+    "value": "عالیه، یه اشتراک دیگه؛ دقیقاً همینو کم داشتیم."
+  },
+  "background/prompt.js:989648bab0000fcdecaefe9ae0236e044da671995a1d3bc778e525617dd49d8e": {
+    "reason": "Content-model instruction, target-language example or Iranian date conversion; independent of UI language",
+    "value": "بذار حرفش رو کامل کنه؛ شاید به نکته‌ای رسیده باشه."
+  },
+  "background/prompt.js:ab786a9f55de6baff728de8a5e0413cf5d01fb6313c2f01c4c16b0cac6fee5ea": {
+    "reason": "Content-model instruction, target-language example or Iranian date conversion; independent of UI language",
+    "value": "عوامل قسمت — کارگردان قسمت: Yuuki Koike"
+  },
+  "background/prompt.js:e15f863b0c58458846abd6e70e76b2914af098826f145b69ac3c4e413c7ed516": {
+    "reason": "Content-model instruction, target-language example or Iranian date conversion; independent of UI language",
+    "value": "وای، تصور کن برای تیک آبی پول بدی."
+  },
+  "background/prompt.js:2f53dc70d2479cbc233affa30c6ede67da30fd1a74cecb10859f4b98aa9a3fc9": {
+    "reason": "Content-model instruction, target-language example or Iranian date conversion; independent of UI language",
+    "value": "صحنهٔ آخر واقعاً شاهکار بود."
+  },
+  "background/prompt.js:9f2f934f581c21a77473e2610611fb808f80234a9e2036edd4b8b4d5aca8b5a5": {
+    "reason": "Content-model instruction, target-language example or Iranian date conversion; independent of UI language",
+    "value": "شاید این بهترین آرک تا الان باشه."
+  },
+  "background/prompt.js:09c1e1d132b354a5c7f61af7a4af6d3fd02a439bd334a7687a4f10f6e1f3114a": {
+    "reason": "Content-model instruction, target-language example or Iranian date conversion; independent of UI language",
+    "value": "REGISTER — FORMAL. Use رسمی/نوشتاری Persian throughout: full verb forms "
+  },
+  "background/prompt.js:f0f34ba993ce064749ef110677743e2b9d83ed4a3cd83ddab32f43f755180441": {
+    "reason": "Content-model instruction, target-language example or Iranian date conversion; independent of UI language",
+    "value": "(می‌کند not می‌کنه، است not ـه), «شما» for direct address, no slang and no "
+  },
+  "background/prompt.js:a6f08b6ecb2775b2d238dc9d889b2bc54583c458ca69362a9ed4d4411241d3aa": {
+    "reason": "Content-model instruction, target-language example or Iranian date conversion; independent of UI language",
+    "value": "REGISTER — CASUAL. Use محاوره‌ای/گفتاری Persian throughout: spoken verb "
+  },
+  "background/prompt.js:7fbe5c61614b15adb0c09801ad6808bb06669555b1a1b36567153645e7023d2f": {
+    "reason": "Content-model instruction, target-language example or Iranian date conversion; independent of UI language",
+    "value": "forms (می‌کنه، رفتیم، ـه for است), «تو» where a friend would, and the "
+  },
+  "background/prompt.js:8876709f467f325b258c82a81576e3f025f699d4436873d28029d325ca83eee2": {
+    "reason": "Content-model instruction, target-language example or Iranian date conversion; independent of UI language",
+    "value": "- CALQUES: English word order, English idioms rendered literally, «های» "
+  },
+  "background/prompt.js:817477cc718715e7bb7df99efbc5630ab4ccda8399bd2da46e5e0ac2c07b41ae": {
+    "reason": "Content-model instruction, target-language example or Iranian date conversion; independent of UI language",
+    "value": "plurals on things Persian would not pluralise, over-use of «توسط» and of "
+  },
+  "background/prompt.js:9864adedd1825071c9ad95c1d659e52a8630d8d0139b642def95d03196ad0901": {
+    "reason": "Content-model instruction, target-language example or Iranian date conversion; independent of UI language",
+    "value": "۰۱۲۳۴۵۶۷۸۹"
+  },
+  "background/prompt.js:3eefcf8f4e3edb237b00984add99d629adcee332e6cf8ba68966c2118eff2031": {
+    "reason": "Content-model instruction, target-language example or Iranian date conversion; independent of UI language",
+    "value": " (روز بعد)"
+  },
+  "background/prompt.js:cbbf704847a42014e58782460a801ff7b979aba4af28dcdff69ae7e5d372927a": {
+    "reason": "Content-model instruction, target-language example or Iranian date conversion; independent of UI language",
+    "value": " (روز قبل)"
+  },
+  "background/prompt.js:950b31887b201302dc45b807df4b092a448988ef9d576e966b4e3374e27f57e4": {
+    "reason": "Content-model instruction, target-language example or Iranian date conversion; independent of UI language",
+    "value": "Items are consecutive spoken subtitle lines of one video: use natural spoken Persian («می‌خوام»، «نمی‌دونم»), keep each cue quickly readable, and use neighboring cues to complete a split sentence without adding its words twice."
+  },
+  "background/prompt.js:45a7b2b0089a0aa18657fdbceb13fa1425ed30f7ebcefc8c8c4181ba5d8910ef": {
+    "reason": "Content-model instruction, target-language example or Iranian date conversion; independent of UI language",
+    "value": "- Keep established proper names/titles/products, code, URLs, emails, @handles, #tags and identifiers in their established form. Use Persian digits except inside protected technical text. Use correct ZWNJ, Persian ک/ی and punctuation."
+  },
+  "background/prompt.js:bfd2e9609be5ec26acbcb861f02c68a4dc55bfb22087af64ad9346259343b291": {
+    "reason": "Content-model instruction, target-language example or Iranian date conversion; independent of UI language",
+    "value": "- Today: {v0} = {v1}، Tehran {v2}. Convert an explicit timezone to Tehran (keep original in parentheses); use Jalali only when certain, never guess."
+  },
+  "background/prompt.js:6fc9e599257209ed9ea3c0578d927e6078987587095ef7ca1f8827078f75f824": {
+    "reason": "Content-model instruction, target-language example or Iranian date conversion; independent of UI language",
+    "value": "You are a professional Persian translator working from images. Find ALL text in the image that is not Persian (any language — screenshots, chat apps, memes, news clippings, signs, subtitles, UI, handwriting) and translate it into natural, fluent Persian.\n- Preserve the reading order and structure: put distinct blocks / speech bubbles / messages on their own lines; for chat screenshots keep the «name: text» shape; keep list/bullet structure.\n- Keep as-is: @handles, #tags, URLs, code and technical identifiers; Persian digits elsewhere; correct ZWNJ and Persian punctuation. Persian text already in the image: copy it unchanged in place.\n- If the image contains no translatable text, reply exactly: متن قابل‌ترجمه‌ای در تصویر نیست\nOutput ONLY the Persian rendering — no explanations, no original text, no markdown."
+  },
+  "background/prompt.js:ed3dcebddc527d39835e4584515f926058ccceeb038440b9d5618a4085ea0fd3": {
+    "reason": "Content-model instruction, target-language example or Iranian date conversion; independent of UI language",
+    "value": "You are a sharp Persian analyst. Summarize the given content in Persian for a reader in Iran.\n- 3 to 8 bullet lines, each starting with «•», ordered by importance. If useful, end with one line «جمع‌بندی: …».\n- Keep the concrete substance: names, numbers, dates (Persian digits), claims and counter-claims, conclusions. Neutral tone, no fluff, no preamble, no meta-commentary about the text.\n- Persian script only (proper nouns / technical identifiers stay as-is). Correct ZWNJ and Persian punctuation."
+  },
+  "background/prompt.js:256d35f55eef652c3292bcfdf67ea970d2a35ddaf675798d65c11bdfdf7731c5": {
+    "reason": "Content-model instruction, target-language example or Iranian date conversion; independent of UI language",
+    "value": "You are a Persian dubbing script editor. You are given one Persian line and a character budget. Rewrite it SHORTER so a voice actor can say it in the time available.\n\nRULES\n- Output Persian only. Output ONLY the rewritten line — no quotes, no notes, no alternatives.\n- Meaning is sacred. NEVER drop or alter: negation (نه/نیست/نباید), numbers, quantities, dates, times, names, places, or who did what to whom.\n- Cut what Persian can afford to lose: filler (خب، راستش، در واقع، یعنی، همون‌طور که می‌دونید), politeness padding, redundant repetition, and long formal constructions.\n- Prefer the short spoken form: «می‌توانم» → «می‌تونم», «برای اینکه» → «چون», «به همین دلیل» → «واسه همین».\n- Spoken register, the way a person actually talks. It will be read aloud, not read.\n- Aim for the budget. If the line is already at or under it, return it UNCHANGED.\n- Never pad. Shorter than the budget is fine."
+  },
+  "background/prompt.js:0045633de574bef6dd9f24b8889bc5bb2c294b954fd5eeef847101c48663662e": {
+    "reason": "Content-model instruction, target-language example or Iranian date conversion; independent of UI language",
+    "value": "بودجه: حداکثر {v0} کاراکتر\n\n{v1}"
+  },
+  "content/vsr.js:99d1b968f62954b017bfd8f724947a0ffe62260efaba8cdf686e7799d54a05e7": {
+    "reason": "Technical service/model/format identifier or machine error code",
+    "value": "\n      [data-gxt-vsr=\"scope\"] *:not(#gxt-yt-panel):not(#gxt-yt-panel *) {\n        backdrop-filter: none !important;\n        -webkit-backdrop-filter: none !important;\n      }\n      [data-gxt-vsr=\"video\"] {\n        border-radius: 0 !important;\n        filter: none !important;\n        mask-image: none !important;\n        clip-path: none !important;\n        mix-blend-mode: normal !important;\n      }\n    "
+  },
+  "shared/theme.js:d42c7b3ec471730839c7968237378a055e9e9027a15dd1ed39cd8cabfb6fc8a3": {
+    "reason": "Technical service/model/format identifier or machine error code",
+    "value": "OLED"
+  },
+  "popup/popup.js:65fe35f47116ec020fc743188c28d35cea16948bf188ce83eb89a071cf31f624": {
+    "reason": "Persian/Arabic normalization for search input",
+    "value": "ی"
+  },
+  "popup/popup.js:ffa8517fa9b76eed9b29b4ed7b5e9648e6d204bc9aef65a6338e64f35942aa8c": {
+    "reason": "Persian/Arabic normalization for search input",
+    "value": "ک"
+  }
+}

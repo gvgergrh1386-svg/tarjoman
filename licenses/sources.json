@@ -1,0 +1,27 @@
+[
+  {
+    "file": "Vazirmatn-OFL.txt",
+    "source": "https://raw.githubusercontent.com/rastikerdar/vazirmatn/v33.003/OFL.txt",
+    "sha256": "17e355067c8284f47743a1ee3b1ef7ff684ff0601eda357f9353b10b3016ab31"
+  },
+  {
+    "file": "Shabnam-OFL.txt",
+    "source": "https://raw.githubusercontent.com/rastikerdar/shabnam-font/v5.0.0/LICENSE",
+    "sha256": "1db30dc6cadf551c27ad2547ec24a20c8ecd5440e458add9067ae70895151c52"
+  },
+  {
+    "file": "Sahel-OFL.txt",
+    "source": "https://raw.githubusercontent.com/rastikerdar/sahel-font/v3.4.0/LICENSE",
+    "sha256": "4de56cc5fc458113a5704ec4d850191e640396008a6e45ff2a70d67ea6c5c74f"
+  },
+  {
+    "file": "Samim-OFL.txt",
+    "source": "https://raw.githubusercontent.com/rastikerdar/samim-font/v4.0.5/LICENSE",
+    "sha256": "3040cd96c27bc48257e35016bcfe65f1c214d63f7771d2e292a467bb07d09a52"
+  },
+  {
+    "file": "Apache-2.0.txt",
+    "source": "https://www.apache.org/licenses/LICENSE-2.0.txt",
+    "sha256": "cfc7749b96f63bd31c3c42b5c471bf756814053e847c10f3eb003417bc523d30"
+  }
+]

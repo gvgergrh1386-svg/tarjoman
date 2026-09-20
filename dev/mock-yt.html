@@ -1,0 +1,813 @@
+﻿<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>GXT mock YouTube player</title>
+<style>
+  body { margin: 0; padding: 24px; background: #0f0f0f; color: #eee; font: 14px/1.6 Roboto, "Segoe UI", sans-serif; }
+  #movie_player { position: relative; width: 640px; height: 360px; background: #000; border-radius: 12px; overflow: hidden; }
+  video { width: 100%; height: 100%; }
+  #summary { position: fixed; top: 8px; right: 8px; z-index: 99999; background: #16181c; border: 1px solid #333; border-radius: 10px; padding: 8px 12px; font: 12px/1.8 Consolas, monospace; max-width: 400px; }
+  #summary .pass { color: #0f8; }
+  #summary .fail { color: #f66; font-weight: bold; }
+</style>
+</head>
+<body>
+<div id="summary">running…</div>
+<div id="movie_player"><video muted></video>
+<!-- v3.2.2 — YouTube's OWN player chrome, at the z-index values it really
+     uses. Without these the mock player was unrealistically simple: it had no
+     z-indexed children, so DOM order alone put our UI on top and a host that
+     computed to `z-index: auto` looked perfectly fine. On the real player that
+     same host painted UNDERNEATH all of this and the UI "completely vanished".
+     A mock that cannot reproduce the site's stacking cannot catch that. -->
+<div class="ytp-gradient-bottom" style="position:absolute;left:0;right:0;bottom:0;height:170px;z-index:59;background:linear-gradient(transparent,rgba(0,0,0,.7));pointer-events:none"></div>
+<div class="ytp-chrome-bottom" style="position:absolute;left:12px;right:12px;bottom:0;height:48px;z-index:60">
+  <div class="ytp-right-controls" style="position:absolute;right:0;bottom:0;width:220px;height:48px"></div>
+</div>
+<div class="ytp-chrome-top" style="position:absolute;left:0;right:0;top:0;height:48px;z-index:60"></div>
+</div>
+
+<script>
+  // The mock page is not /watch — enable the module's test seam.
+  globalThis.__gxtYtTestMode = true;
+  // Seed appearance settings so we can assert they are applied.
+  globalThis.GXT_SHIM_SEED = {
+    settings: { ytScale: 1.5, ytFont: 'Shabnam', ytPosX: 50, ytPosY: 11, ytAheadSec: 90 },
+    apiKeys: ['dev-key'],
+  };
+</script>
+<script src="chrome-shim.js?v=3300"></script>
+<script>
+  // Fake worker: counts every request, echoes Persian-prefixed lines.
+  globalThis.GXT_YT_CALLS = [];
+  globalThis.GXT_TTS_CALLS = [];
+  globalThis.GXT_SHIM_HANDLER = async (message) => {
+    if (message.type === 'TTS_SPEAK') {
+      globalThis.GXT_TTS_CALLS.push(message);
+      return { ok: true, mime: 'audio/wav', data: btoa('x'.repeat(24000)) };
+    }
+    if (message.type !== 'TRANSLATE_TEXTS') return { ok: false, code: 'DEV' };
+    globalThis.GXT_YT_CALLS.push(message.texts.length);
+    await new Promise((r) => setTimeout(r, 120));
+    return { ok: true, list: message.texts.map((t) => 'ف: ' + t), failed: null };
+  };
+
+  /**
+   * Anything thrown and not caught is a failure — including a rejected promise
+   * nobody awaits, which is how the bug these hooks were added for presented.
+   * dev/run_harness.py reports these too; asserting inside the page as well
+   * means the mock still catches them when opened by hand in a browser.
+   */
+  globalThis.GXT_UNCAUGHT = [];
+  addEventListener('error', (e) => globalThis.GXT_UNCAUGHT.push(String(e.message)));
+  addEventListener('unhandledrejection', (e) =>
+    globalThis.GXT_UNCAUGHT.push(String(e.reason && e.reason.message || e.reason)));
+</script>
+<script src="../shared/settings.js?v=3300"></script>
+<script src="../shared/memory.js?v=3300"></script>
+<script src="../shared/theme.js?v=3300"></script>
+<script src="../content/dub.js?v=3300"></script>
+<script src="../content/ui.js?v=3300"></script>
+<script src="../content/player.css.js?v=3300"></script>
+<script src="../content/youtube.js?v=3300"></script>
+<script>
+(async () => {
+  // v3.2.0 — the on-state moved from a «✓» inside the LABEL to `aria-pressed`,
+  // which is both what the stylesheet selects on and what a screen reader
+  // announces. A label cannot be read by assistive tech as a state, so the old
+  // encoding meant the player's two main controls reported nothing at all.
+  // v3.2.0 — the in-player UI lives in a shadow root now (style isolation from
+  // YouTube's own CSS, which is what the old inline styles were buying). These
+  // two cross that boundary; `document.getElementById` no longer can.
+  const Q = (sel) => GXT.yt?._internal?.q?.(sel) || null;
+  const QA = (sel) => GXT.yt?._internal?.qa?.(sel) || [];
+  const results = [];
+  const check = (name, ok) => {
+    results.push([name, !!ok]);
+    console.log(`GXT-YT-TEST ${ok ? 'PASS' : 'FAIL'} ${name}`);
+  };
+  const until = async (fn, timeout = 8000, step = 120) => {
+    const t0 = Date.now();
+    for (;;) {
+      let v = null;
+      try { v = fn(); } catch { v = null; }
+      if (v) return v;
+      if (Date.now() - t0 > timeout) return null;
+      await new Promise((r) => setTimeout(r, step));
+    }
+  };
+  const player = document.getElementById('movie_player');
+  const videoEl = player.querySelector('video');
+  // Controllable playhead + paused state: youtube.js reads both.
+  let fakeTime = 1;
+  let fakePaused = true;
+  Object.defineProperty(videoEl, 'currentTime', {
+    configurable: true,
+    get: () => fakeTime,
+    set: (v) => { fakeTime = v; },
+  });
+  Object.defineProperty(videoEl, 'paused', {
+    configurable: true,
+    get: () => fakePaused,
+  });
+  const timeupdate = () => videoEl.dispatchEvent(new Event('timeupdate'));
+
+  // Announce the video + TWO caption tracks (so the source-track picker shows).
+  setTimeout(() => window.postMessage({
+    source: 'gxt-yt',
+    videoId: 'vid-test-1',
+    title: 'mock',
+    tracks: [
+      { baseUrl: 'mock-track.json?fmt=json3', lang: 'en', kind: '', name: 'English' },
+      { baseUrl: 'mock-track.json?fmt=json3&t=asr', lang: 'en', kind: 'asr', name: 'English auto' },
+    ],
+  }, '*'), 200);
+
+  // 1) Pill appears.
+  //
+  // v3.1.0 — the controls now mount as soon as the PLAYER exists, not once a
+  // caption track has been reported, because the live dubbing engine needs no
+  // captions and its only in-player switch lives here. That makes this `until`
+  // resolve before the tracks message below has been delivered, so the checks
+  // that are ABOUT tracks have to wait for the tracks.
+  const pill = await until(() => Q('#gxt-yt-pill'));
+  check('pill appears', !!pill);
+  check('v3.1.0: the controls do not wait for captions',
+    !!Q('#gxt-yt-controls'));
+  /**
+   * v3.2.2 — REACHABLE, not merely present.
+   *
+   * The bug this catches: the host is reset with `all: initial` INLINE, which
+   * also sets `z-index: auto`, and a `:host` rule without `!important` cannot
+   * override an inline declaration. The UI therefore painted underneath
+   * YouTube's own player chrome (`.ytp-chrome-bottom` and friends sit at
+   * z-index 59-62) — on screen by geometry, invisible and unclickable in fact.
+   *
+   * Every existing check passed through that bug, because they all asked
+   * "does the element exist / is its box non-empty". The only assertion that
+   * catches it is a HIT TEST: ask the document what is actually at the centre
+   * of our own button and require the answer to be us.
+   */
+  const reachable = (el) => {
+    if (!el) return false;
+    const r = el.getBoundingClientRect();
+    if (r.width < 4 || r.height < 4) return false;
+    const hit = document.elementFromPoint(
+      Math.round(r.left + r.width / 2),
+      Math.round(r.top + r.height / 2)
+    );
+    // elementFromPoint stops at the shadow host, which is the right answer.
+    return !!hit && (hit === el || hit.getAttribute?.('data-gxt-ui') === 'yt' || hit.contains?.(el));
+  };
+  /**
+   * The real invariant, stated generally (v3.2.2).
+   *
+   * Not "z-index > 60" (a magic number that drifts when YouTube reskins) and not
+   * a hit test at one point (which only fires if a layer happens to overlap that
+   * exact pixel). The rule is: OUR HOST MUST PAINT ABOVE EVERY LAYER YOUTUBE PUTS
+   * IN THE PLAYER. That is checkable against whatever is actually there, and it
+   * is precisely what `all: initial` breaking z-index violated.
+   */
+  const paintsOnTop = () => {
+    const host = document.querySelector('#movie_player [data-gxt-ui]');
+    if (!host) return false;
+    const hz = Number(getComputedStyle(host).zIndex); // 'auto' -> NaN -> fail
+    if (!Number.isFinite(hz)) return false;
+    return [...document.querySelectorAll('#movie_player > *')]
+      .filter((el) => el !== host)
+      .map((el) => Number(getComputedStyle(el).zIndex))
+      .filter(Number.isFinite)
+      .every((z) => hz > z);
+  };
+  check('REGRESSION: the host paints above every YouTube player layer', paintsOnTop());
+  /**
+   * v3.2.3 — the host must not fall back to `initial` typography.
+   *
+   * `all: initial` is applied INLINE to isolate the host from the page, and it
+   * also sets font-family, font-size, line-height and color. A `:host` rule
+   * cannot override an inline declaration, so v3.2.2 shipped with the host
+   * computing to "Times New Roman" 16px/normal in black — with `--gxt-font`
+   * sitting on the same element, correct and unused. Every descendant inherits
+   * from the host, so the entire player UI was drawn by a serif fallback at the
+   * wrong size: the redesign was structurally all there and could not look like
+   * it. This asserts the host's typography IS the token values, which is the
+   * only statement that distinguishes "styled" from "reset".
+   */
+  check('REGRESSION: the host inherits the design tokens, not initial values', (() => {
+    const host = document.querySelector('#movie_player [data-gxt-ui]');
+    if (!host) return false;
+    const c = getComputedStyle(host);
+    const wantFamily = (c.getPropertyValue('--gxt-font') || '').trim();
+    const wantSize = (c.getPropertyValue('--gxt-fs-md') || '').trim();
+    if (!wantFamily || !wantSize) return false;      // no tokens at all
+    const firstOf = (s) => s.split(',')[0].replace(/["']/g, '').trim();
+    return firstOf(c.fontFamily) === firstOf(wantFamily)
+      && c.fontSize === wantSize
+      && c.lineHeight !== 'normal'
+      && c.color !== 'rgb(0, 0, 0)';
+  })());
+  check('REGRESSION: the panel text is not a serif fallback', (() => {
+    const el = Q('#gxt-yt-panel .yt-lbl') || Q('#gxt-yt-pill');
+    if (!el) return false;
+    const f = getComputedStyle(el).fontFamily.toLowerCase();
+    return !/times|serif$/.test(f.split(',')[0]);
+  })());
+
+  check('REGRESSION: the subtitle button is actually hit-testable', reachable(Q('#gxt-yt-pill')));
+  check('REGRESSION: the dubbing button is actually hit-testable', reachable(Q('#gxt-yt-dub')));
+  check('REGRESSION: the gear is actually hit-testable',
+    reachable(QA('#gxt-yt-controls button').find((b) => b.textContent === '⚙')));
+
+  await until(() => (GXT.yt._internal.trackCount() === 2 ? true : null));
+
+  // 1b) Gear (settings) is visible BEFORE any activation (v1.6.4 feature 2).
+  const gearEarly = [...QA('#gxt-yt-controls button')].find((b) => b.textContent === '⚙');
+  check('settings gear visible before activation', !!gearEarly && gearEarly.style.display !== 'none');
+
+  // 1c) The pre-activation panel exposes source-track + engine, no bulk button.
+  gearEarly?.click();
+  const idlePanel = await until(() => Q('#gxt-yt-panel'));
+  check('pre-activation panel opens', !!idlePanel);
+  check('source-track picker lists both tracks',
+    idlePanel?.querySelector('select')?.options.length === 2);
+  check('engine selector present (has inherit + bing)',
+    [...(idlePanel?.querySelectorAll('select') || [])].some(
+      (s) => [...s.options].some((o) => o.value === 'inherit') && [...s.options].some((o) => o.value === 'bing')
+    ));
+  check('no full-video button before activation',
+    ![...(idlePanel?.querySelectorAll('button') || [])].some((b) => (b.textContent || '').includes('ترجمهٔ کامل')));
+  gearEarly?.click(); // close before proceeding
+
+  // 2) Activate WHILE PAUSED.
+  //
+  // v2.1.0 changed this contract deliberately. The old rule was "while paused,
+  // translate only a 5s guard window", which is why a paused video could sit
+  // showing untranslated English. The new rule: the URGENT window (~25s) is
+  // always served, playing or paused — but the look-ahead is not, so a paused
+  // video still cannot spend the whole buffer.
+  pill?.click();
+  const capsule = await until(() => Q('#gxt-yt-overlay span'));
+  check('overlay activates immediately', !!capsule);
+  // v2.9.5 — WCAG 3.1.2. A caption is the likeliest thing to be spoken aloud,
+  // so the Persian line declares its language. The bilingual second line is
+  // deliberately left undeclared: it is the ORIGINAL, and marking it fa would
+  // be a worse lie than saying nothing.
+  check('v2.9.5: the Persian caption line declares its language',
+    capsule?.firstElementChild?.lang === 'fa');
+  check('v2.9.5: the original line is not mislabelled as Persian',
+    capsule?.lastElementChild?.lang !== 'fa');
+  await until(() => globalThis.GXT_YT_CALLS.length >= 1);
+  check('v2.1.0: while paused the request is the small urgent batch, not the buffer',
+    globalThis.GXT_YT_CALLS[0] > 0 && globalThis.GXT_YT_CALLS[0] <= 10,
+    `first batch: ${globalThis.GXT_YT_CALLS[0]} cues`);
+  check('v2.1.0: while paused the look-ahead is NOT prefetched (quota safety)',
+    globalThis.GXT_YT_CALLS.length === 1,
+    `${globalThis.GXT_YT_CALLS.length} request(s) while paused`);
+  // The point of all of it: the line on the frozen frame is translated.
+  timeupdate();
+  const pausedShown = await until(() => (capsule?.textContent || '').includes('ف: line 0'), 4000);
+  check('v2.1.0: the cue under a PAUSED playhead is translated', !!pausedShown);
+
+  // 3) Press play -> the look-ahead resumes with a large batch.
+  fakePaused = false;
+  videoEl.dispatchEvent(new Event('play'));
+  await until(() => globalThis.GXT_YT_CALLS.length >= 2);
+  check('v2.1.0: play resumes the look-ahead with a large batch',
+    globalThis.GXT_YT_CALLS[1] > globalThis.GXT_YT_CALLS[0] && globalThis.GXT_YT_CALLS[1] >= 20,
+    `look-ahead batch: ${globalThis.GXT_YT_CALLS[1]} cues`);
+
+  // 4) Sync: cue 0 still shows translated text once playing.
+  timeupdate();
+  const shown = await until(() => (capsule?.textContent || '').includes('ف: line 0') && capsule);
+  check('current cue rendered translated', !!shown);
+
+  // 5) Appearance from settings: font + 1.5x size + draggable.
+  const base = Math.max(15, Math.min(34, player.clientWidth / 34));
+  check('subtitle font applied (Shabnam)', (capsule?.style.fontFamily || '').includes('Shabnam'));
+  check('size scale applied (1.5x)', capsule?.style.fontSize === `${Math.round(base * 1.5)}px`);
+  // v3.2.0 — asserted through getComputedStyle, because these declarations moved
+  // from an inline string into the stylesheet. The inline check was testing the
+  // MECHANISM; what matters to the viewer is the rendered result, which is what
+  // a computed style reports either way.
+  check('capsule is draggable (grab cursor + pointer events)', (() => {
+    const cs = getComputedStyle(capsule);
+    return cs.cursor === 'grab' && cs.pointerEvents === 'auto';
+  })());
+
+  // 6) Controls fade with YouTube's native autohide.
+  const controls = Q('#gxt-yt-controls');
+  player.classList.add('ytp-autohide');
+  const faded = await until(() => controls?.style.opacity === '0');
+  check('controls fade out with native ytp-autohide', !!faded);
+  player.classList.remove('ytp-autohide');
+  const returned = await until(() => controls?.style.opacity === '');
+  check('controls fade back in with native controls', !!returned);
+
+  // 7) Gear panel (active): source, engine, buffer, font selects + bulk button.
+  const gear = [...QA('#gxt-yt-controls button')].find((b) => b.textContent === '⚙');
+  gear?.click();
+  const panel = await until(() => Q('#gxt-yt-panel'));
+  check('gear opens settings panel', !!panel);
+  check('v3.3.8 removes the redundant brand chip and keeps three compact icons',
+    !Q('.yt-brand') && QA('#gxt-yt-controls button').length === 3 &&
+    QA('#gxt-yt-controls button').every((b) => !!b.dataset.glyph));
+  const nativeRight = player.querySelector('.ytp-right-controls');
+  const dockRect = controls.getBoundingClientRect();
+  const nativeRect = nativeRight.getBoundingClientRect();
+  check('v3.3.8 dock sits beside the native controls, inside their bottom row',
+    controls.classList.contains('native-dock') && dockRect.right <= nativeRect.left &&
+    dockRect.bottom > nativeRect.top && dockRect.top < nativeRect.bottom);
+  const panelTabs = [...(panel?.querySelectorAll('.yt-tab') || [])];
+  check('v3.3.8 settings are split into subtitle, dubbing and appearance tabs',
+    panelTabs.length === 3 && panelTabs.map((b) => b.textContent).join('|') === 'زیرنویس|دوبله|ظاهر');
+  check('v3.3.8 panel starts with a two-output status dashboard',
+    panel?.querySelectorAll('.yt-state-card').length === 2);
+  panelTabs.find((b) => b.textContent === 'ظاهر')?.click();
+  check('v3.3.8 tab navigation exposes one pane at a time',
+    panelTabs.find((b) => b.textContent === 'ظاهر')?.getAttribute('aria-selected') === 'true' &&
+    panel?.querySelectorAll('.yt-pane:not([hidden])').length === 1);
+  panelTabs.find((b) => b.textContent === 'زیرنویس')?.click();
+  const bulkBtn = panel?.querySelector('.yt-bulk');
+  check('full-video button present', (bulkBtn?.textContent || '').includes('ترجمهٔ کامل'));
+  const selects = [...(panel?.querySelectorAll('select') || [])];
+  // v3.1.0 — asserted by CONTENT, not by count. The count was 4 and is now 5
+  // because the dub-engine picker is no longer hidden until dubbing is already
+  // on (that gate was half of the caption/dubbing coupling this release
+  // removed). A magic number would have to be edited every time the panel
+  // grows, and would not have said which control was missing.
+  const optionValues = selects.map((s) => [...s.options].map((o) => o.value));
+  const hasSelectWith = (v) => optionValues.some((vals) => vals.includes(v));
+  check('active panel offers the source-track picker',
+    selects.some((s) => s.options.length === 2 && [...s.options].every((o) => /en/.test(o.value))));
+  check('active panel offers the provider override', hasSelectWith('bing'));
+  check('active panel offers the dub-engine choice', hasSelectWith('live'));
+  check('active panel offers the buffer size', hasSelectWith('180'));
+  check('active panel offers the subtitle font', hasSelectWith('Shabnam'));
+  check('engine override select present', selects.some((s) => [...s.options].some((o) => o.value === 'bing')));
+
+  // 8) Bulk mode translates everything exactly once (no double-billing).
+  bulkBtn?.click();
+  const complete = await until(() => (bulkBtn?.textContent || '').includes('✓'), 15000);
+  check('full-video translation completes', !!complete);
+  const totalSent = globalThis.GXT_YT_CALLS.reduce((a, b) => a + b, 0);
+  check(`no cue billed twice (sent ${totalSent}/200)`, totalSent === 200);
+
+  // 9) A far cue is now instantly available after seeking.
+  fakeTime = 550; // cue index 183
+  timeupdate();
+  const far = await until(() => (capsule?.textContent || '').includes('ف: line 183'));
+  check('far cue available after bulk (seek)', !!far);
+
+  // 10) Switching the source track reloads captions without breaking the UI.
+  //     (Done last: a reload legitimately re-translates, so it must not skew
+  //     the double-billing count above.)
+  const gear2 = [...QA('#gxt-yt-controls button')].find((b) => b.textContent === '⚙');
+  if (!Q('#gxt-yt-panel')) gear2?.click();
+  const panel2 = await until(() => Q('#gxt-yt-panel'));
+  const srcSelect = [...(panel2?.querySelectorAll('select') || [])].find(
+    (s) => [...s.options].some((o) => o.value.includes('asr'))
+  );
+  check('source-track picker present in active panel', !!srcSelect);
+  const asrOpt = [...(srcSelect?.options || [])].find((o) => o.value.includes('asr'));
+  if (srcSelect && asrOpt) { srcSelect.value = asrOpt.value; srcSelect.dispatchEvent(new Event('change')); }
+  const reloaded = await until(() => {
+    const cap = Q('#gxt-yt-overlay span');
+    return cap && (cap.textContent || '').includes('line') ? cap : null;
+  }, 9000);
+  check('overlay survives + reloads after a source-track switch', !!reloaded);
+
+  // 11) Dubbing wiring (v2.4.0). The engine itself is covered by mock-dub;
+  //     what matters here is that youtube.js drives it correctly — and, above
+  //     all, that it can never walk away leaving the viewer's audio turned down.
+  // NOTE: `videoEl` is already declared at the top of this script — redeclaring
+  // it is a parse error that silently disables the ENTIRE harness (the v1.6.2
+  // lesson, again). Reuse it.
+  let dubUpdates = 0;
+  let dubInstance = null;
+  const realDubCreate = GXT.dub.create;
+  GXT.dub.create = (cfg) => {
+    const engine = realDubCreate(cfg);
+    dubInstance = engine;
+    const realUpdate = engine.update;
+    engine.update = (...args) => { dubUpdates += 1; return realUpdate(...args); };
+    return engine;
+  };
+  GXT.dub._internal.setRampMs(0);
+  let dubAudioTime = 0;
+  GXT.dub._internal.setContextFactory(() => ({
+    state: 'running',
+    get currentTime() { return dubAudioTime; },
+    destination: {},
+    resume: async () => {},
+    createGain: () => ({ gain: { value: 1 }, connect() {} }),
+    createBufferSource: () => ({
+      buffer: null, playbackRate: { value: 1 }, onended: null,
+      connect() {}, start() {}, stop() {},
+    }),
+    decodeAudioData: async (b) => ({ duration: b.byteLength / 48000 }),
+  }));
+
+  if (!Q('#gxt-yt-panel')) {
+    [...QA('#gxt-yt-controls button')].find((b) => b.textContent === '⚙')?.click();
+  }
+  const dubPanel = await until(() => Q('#gxt-yt-panel'));
+  const dubToggle = [...(dubPanel?.querySelectorAll('input[type=checkbox]') || [])].find(
+    (i) => (i.closest('div')?.textContent || '').includes('خواندن زیرنویس با صدا')
+  );
+  check('dubbing section appears in the active panel', !!dubToggle);
+
+  // v2.4.6: the voice has its OWN button in the player. Before this, switching
+  // dubbing on meant pressing a control labelled «زیرنویس فارسی».
+  const dubBtn = Q('#gxt-yt-dub');
+  check('the player has a separate dub button', !!dubBtn);
+  check('the two buttons are labelled for what they each do',
+    (Q('#gxt-yt-pill')?.textContent || '').includes('زیرنویس') &&
+    (dubBtn?.textContent || '').includes('دوبله'));
+
+  videoEl.volume = 0.9;
+  dubBtn?.click();
+  await new Promise((r) => setTimeout(r, 500));
+  check('the dub button turns dubbing on by itself', (await GXT.getSettings()).ytDub === true);
+  // Speech needs SENTENCES, not reading-sized cues, so switching dubbing on
+  // with merging off must rebuild the cue list — visible as cues joining up.
+  const merged = await until(() => {
+    const cap = Q('#gxt-yt-overlay span');
+    const text = cap?.textContent || '';
+    return (text.match(/line \d+/g) || []).length > 1 ? text : null;
+  }, 9000);
+  check('turning dubbing on re-segments the captions into sentences', !!merged);
+
+  const spoke = await until(() => (globalThis.GXT_TTS_CALLS.length ? true : null), 9000);
+  check('translated sentences are handed to the speech engine', !!spoke);
+
+  const dubPanel2 = Q('#gxt-yt-panel');
+  const dubSelects = [...(dubPanel2?.querySelectorAll('select') || [])];
+  check('dub controls appear once it is on (duck level, max rate, mode)',
+    dubSelects.some((s) => [...s.options].some((o) => o.value === 'full')) &&
+    dubSelects.some((s) => [...s.options].some((o) => o.value === '1.75')));
+
+  // v2.4.5 REGRESSION — the bug this release exists to fix. Turning the
+  // subtitle TEXT off used to stop the dub as well, because the render path
+  // gated the tick: no overlay, no tick, no voice. They are two outputs of one
+  // pipeline and neither may gate the other.
+  const overlayBox = Q('#gxt-yt-overlay span');
+  await GXT.setSettings({ ytSubtitles: false });
+  await new Promise((r) => setTimeout(r, 400));
+  timeupdate();
+  const textHidden = await until(() => (overlayBox?.style.display === 'none' ? true : null), 3000);
+  check('turning subtitles off hides the text', !!textHidden);
+
+  const updatesBefore = dubUpdates;
+  for (let i = 0; i < 5; i += 1) { fakeTime += 2; timeupdate(); await new Promise((r) => setTimeout(r, 60)); }
+  check('REGRESSION: with subtitles off, the dub still receives the playhead',
+    dubUpdates > updatesBefore);
+  check('REGRESSION: with subtitles off, the dub engine is still running',
+    dubInstance?.stats().running === true);
+
+  await GXT.setSettings({ ytSubtitles: true });
+  await new Promise((r) => setTimeout(r, 400));
+  fakeTime = 1;
+  timeupdate();
+  const textBack = await until(() => {
+    const box = Q('#gxt-yt-overlay span');
+    return box && box.style.display !== 'none' ? box : null;
+  }, 5000);
+  check('turning subtitles back on restores the text', !!textBack);
+
+  // The one guarantee that must never break: stopping hands the volume back.
+  // v2.4.6 changed what these buttons mean, and this checks the new rule
+  // rather than the old one. Each button owns ONE output; the pipeline stops
+  // only when neither output is wanted any more.
+  // A fixed clock at zero only queued speech; it never made it audible. The
+  // original now ducks only inside a real scheduled buffer's playback window.
+  const speakingCue = [...(dubInstance?._test.scheduled.values() || [])].find(entry => entry.end > entry.at);
+  if (speakingCue) {
+    dubAudioTime = speakingCue.at + Math.min(0.05, (speakingCue.end - speakingCue.at) / 2);
+    dubInstance.update();
+  }
+  check('the dub really is ducking the original right now', !!speakingCue && videoEl.volume < 0.5);
+
+  Q('#gxt-yt-pill')?.click();
+  await new Promise((r) => setTimeout(r, 400));
+  const afterSubsOff = await GXT.getSettings();
+  check('the subtitle button toggles ONLY the text', afterSubsOff.ytDub === true);
+  check('with the voice still on, the pipeline keeps running',
+    Q('#gxt-yt-dub')?.getAttribute('aria-pressed') === 'true');
+
+  Q('#gxt-yt-dub')?.click();
+  await new Promise((r) => setTimeout(r, 500));
+  check('turning off the last remaining output stops the pipeline',
+    Q('#gxt-yt-dub')?.getAttribute('aria-pressed') === 'false' &&
+    Q('#gxt-yt-pill')?.getAttribute('aria-pressed') === 'false');
+  check('stopping restores the video volume', Math.abs(videoEl.volume - 0.9) < 0.02);
+
+  // ───────────────── v3.2.5: the in-player palette contract, MEASURED
+  //
+  // This block used to call `GXT.youtube.__look()` — the inline paint helper —
+  // and assert on the colours it returned. Two things were wrong with that.
+  //
+  // The premise had expired: the comment here said the panel "lives in
+  // YouTube's own DOM, so it cannot inherit CSS variables", which stopped
+  // being true in v3.2.0 when the whole UI moved into a shadow root with the
+  // token block on its host. So the test was asserting a contract about a code
+  // path the product no longer executed, and could have stayed green through
+  // any amount of breakage in the stylesheet that actually paints this UI.
+  //
+  // And it was measuring the wrong surface anyway: it compared ink against
+  // `theme.vars['bg-elev']`, the OPAQUE theme colour, while the panel paints
+  // translucently over video.
+  //
+  // So: re-theme the live surface and read getComputedStyle off the real nodes.
+  // Whatever this measures is, by construction, what a viewer sees.
+  {
+    const T = GXT.theme;
+    const { contrast, compositeOver } = T;
+    const root = GXT.youtube.__root();
+    // The gear sheet has to be open for its own nodes to exist.
+    if (!root?.querySelector('#gxt-yt-panel')) Q('#gxt-yt-gear')?.click();
+    // The caption box only exists while a pipeline is running, and by this point
+    // in the run both outputs have been switched off — so a PROBE is mounted in
+    // the same shadow root instead. It carries the same classes and therefore
+    // resolves against the same rules and the same host tokens as the real
+    // caption; what is being measured here is the stylesheet, not the lifecycle.
+    let probe = null;
+    if (!root.querySelector('.yt-cap')) {
+      probe = document.createElement('div');
+      probe.className = 'yt-cap-wrap';
+      probe.innerHTML = '<span class="yt-cap">متن آزمایشی<div class="orig">probe</div></span>';
+      root.appendChild(probe);
+    }
+
+    const shaky = [];
+    const px = (el, prop) => getComputedStyle(el).getPropertyValue(prop).trim();
+    /** A computed rgb()/rgba() to hex, composited over `under` if translucent. */
+    const flat = (value, under) => {
+      const n = (value.match(/[\d.]+/g) || []).map(Number);
+      if (n.length < 3) return null;
+      const hex = `#${n.slice(0, 3).map((c) => Math.round(c).toString(16).padStart(2, '0')).join('')}`;
+      const a = n.length > 3 ? n[3] : 1;
+      return a < 1 && under ? compositeOver(hex, under, a) : hex;
+    };
+
+    for (const themeId of ['graphite', 'midnight', 'daylight', 'paper']) {
+      for (const accentId of ['sky', 'amber', 'emerald']) {
+        GXT.youtube.__applyTheme({ uiTheme: themeId, uiAccent: accentId });
+        const panel = root.querySelector('#gxt-yt-panel');
+        const label = panel?.querySelector('.yt-lbl');
+        const hint = panel?.querySelector('.yt-hint, .yt-note');
+        const pill = root.querySelector('#gxt-yt-pill');
+        const cap = root.querySelector('.yt-cap');
+        if (!panel || !label || !pill || !cap) { shaky.push(`${themeId}/${accentId}: node missing`); continue; }
+
+        // The panel's own surface, over the two extreme frames it can sit on.
+        const surface = px(panel, 'background-color');
+        for (const frame of ['#ffffff', '#000000']) {
+          const under = flat(surface, frame);
+          const ink = flat(px(label, 'color'), under);
+          if (contrast(ink, under) < 4.5) {
+            shaky.push(`${themeId}/${accentId}: panel label ${contrast(ink, under).toFixed(2)}:1 over ${frame}`);
+          }
+          if (hint) {
+            const soft = flat(px(hint, 'color'), under);
+            if (contrast(soft, under) < 4.5) {
+              shaky.push(`${themeId}/${accentId}: panel hint ${contrast(soft, under).toFixed(2)}:1 over ${frame}`);
+            }
+          }
+          // The caption is the surface v3.2.5 brought into the design system;
+          // it must clear AAA over BOTH frames, not merely AA.
+          const capBg = flat(px(cap, 'background-color'), frame);
+          const capInk = flat(px(cap, 'color'), capBg);
+          if (contrast(capInk, capBg) < 7) {
+            shaky.push(`${themeId}/${accentId}: caption ${contrast(capInk, capBg).toFixed(2)}:1 over ${frame}`);
+          }
+        }
+        // An ACTIVE control fills with the accent and writes on it. Read from
+        // the pill with aria-pressed forced on, so this measures the real rule.
+        pill.setAttribute('aria-pressed', 'true');
+        const fill = flat(px(pill, 'background-color'), '#000000');
+        const on = flat(px(pill, 'color'), fill);
+        if (contrast(on, fill) < 4.48) {
+          shaky.push(`${themeId}/${accentId}: active pill ${contrast(on, fill).toFixed(2)}:1`);
+        }
+        pill.setAttribute('aria-pressed', 'false');
+      }
+    }
+    if (shaky.length) console.log('GXT-YT-TEST detail ' + shaky.slice(0, 6).join(' | '));
+    check('REGRESSION: the SHIPPED in-player surface is legible on every theme', !shaky.length);
+
+    // And the caption really did join the design system: its scrim must come
+    // from the theme, not from the old hard-coded near-black bar.
+    const capNode = () => root.querySelector('.yt-cap');
+    GXT.youtube.__applyTheme({ uiTheme: 'paper', uiAccent: 'sky', ytCapTheme: 'theme' });
+    const capPaper = capNode() && flat(px(capNode(), 'background-color'), '#ffffff');
+    GXT.youtube.__applyTheme({ uiTheme: 'midnight', uiAccent: 'sky', ytCapTheme: 'theme' });
+    const capNight = capNode() && flat(px(capNode(), 'background-color'), '#ffffff');
+    check('the subtitle scrim follows the theme instead of being a fixed bar',
+      !!capPaper && !!capNight && capPaper !== capNight);
+
+    // …and the classic bar is still reachable, byte-for-byte what it was. The
+    // class has to be set by hand here: `applyAppearance` drives it off the real
+    // overlay, which does not exist while nothing is playing.
+    capNode()?.classList.add('plain');
+    check('the classic high-contrast caption is still one setting away',
+      !!capNode() && /rgba?\(8,\s*8,\s*8/.test(px(capNode(), 'background-color')));
+    capNode()?.classList.remove('plain');
+
+    GXT.youtube.__applyTheme({ uiTheme: 'graphite', uiAccent: 'sky', ytCapTheme: 'theme' });
+    probe?.remove();
+    if (root.querySelector('#gxt-yt-panel')) Q('#gxt-yt-gear')?.click();
+  }
+
+  // ══════════ v3.3.2: getting out of the way of YouTube's OWN menus ══════
+  //
+  // THE REPORT, with screenshots: the native settings menu open, its lower rows
+  // («سرعت بازپخش», «360°») covered by our pill and gear; and the speed submenu
+  // with «عادی» hidden behind «دوبله». Our host sits at z-index 2147483000 —
+  // correct for YouTube's permanent chrome, which v3.2.2 proved we must clear,
+  // and far too strong for YouTube's transient menus.
+  //
+  // The worse half is not visual. `.yt-cap` carries `pointer-events: auto` so it
+  // can be dragged, so wherever the caption overlapped a menu it also SWALLOWED
+  // THAT MENU'S CLICKS. The decisive assertion here is therefore a HIT TEST, the
+  // same technique that caught the v3.2.2 z-index bug: ask the document what is
+  // really at the centre of a menu row and require the answer to be YouTube.
+  {
+    const root = GXT.yt._internal.surfaceRoot();
+    // Make sure the caption exists and is painted, so it can be measured.
+    if (Q('#gxt-yt-pill')?.getAttribute('aria-pressed') !== 'true') Q('#gxt-yt-pill')?.click();
+    await until(() => Q('#gxt-yt-overlay .yt-cap'), 8000);
+    const cap = Q('#gxt-yt-overlay .yt-cap');
+    if (cap) {
+      cap.style.display = 'inline-block';
+      cap.querySelector('div').textContent = 'زیرنویس آزمایشی برای سنجش برخورد';
+    }
+    await until(() => Q('#gxt-yt-controls'), 4000);
+    const cluster = Q('#gxt-yt-controls');
+    const visible = (el) => {
+      const cs = getComputedStyle(el);
+      return cs.visibility !== 'hidden' && parseFloat(cs.opacity || '1') > 0.05;
+    };
+
+    check('before any menu, our controls are visible and interactive',
+      !!cluster && visible(cluster) && getComputedStyle(cluster).pointerEvents !== 'none');
+
+    /**
+     * A stand-in for YouTube's settings menu: same base class, same corner, same
+     * shape. It is built here rather than left in the page markup so the checks
+     * above it run against a clean player — and because a popup YouTube has not
+     * opened yet does not exist in its DOM either (they are created lazily).
+     */
+    const menu = document.createElement('div');
+    menu.className = 'ytp-popup ytp-settings-menu';
+    menu.style.cssText =
+      'position:absolute;right:12px;bottom:49px;width:251px;height:260px;z-index:71;'
+      + 'background:#28282888;';
+    const row = document.createElement('div');
+    row.className = 'ytp-menuitem';
+    row.textContent = 'سرعت بازپخش';
+    // Put the row where our control cluster sits, which is the collision the
+    // screenshots show.
+    row.style.cssText = 'position:absolute;left:0;right:0;bottom:14px;height:40px;';
+    menu.appendChild(row);
+    player.appendChild(menu);
+
+    // The new dock is in the bottom control row and this menu is above it: no
+    // collision means the icons should remain, not disappear unnecessarily.
+    const clusterRect = cluster.getBoundingClientRect();
+    const menuBox = menu.getBoundingClientRect();
+    const controlsOverlap =
+      clusterRect.left < menuBox.right && menuBox.left < clusterRect.right &&
+      clusterRect.top < menuBox.bottom && menuBox.top < clusterRect.bottom;
+    await new Promise((r) => setTimeout(r, 420));
+    check('v3.3.8 a dock clear of the YouTube menu remains visible',
+      !controlsOverlap && visible(cluster));
+    check('v3.3.8 the non-overlapping dock remains interactive',
+      getComputedStyle(cluster).pointerEvents !== 'none');
+
+    // The caption is the product's OUTPUT: it must not disappear because someone
+    // opened the volume menu. It only stops intercepting.
+    if (cap) {
+      check('REGRESSION: the caption keeps painting — subtitles are not a menu',
+        visible(cap), `opacity=${getComputedStyle(cap).opacity}`);
+      const capRect = cap.getBoundingClientRect();
+      const menuRect = menu.getBoundingClientRect();
+      const capOverlaps =
+        capRect.left < menuRect.right && menuRect.left < capRect.right &&
+        capRect.top < menuRect.bottom && menuRect.top < capRect.bottom;
+      if (capOverlaps) {
+        check('REGRESSION: …but it stops swallowing the menu\'s clicks',
+          getComputedStyle(cap).pointerEvents === 'none');
+      } else {
+        // Not overlapping on this geometry — then it must NOT have been
+        // neutralised, which is the other half of the contract.
+        check('a caption clear of the menu keeps its drag handle',
+          getComputedStyle(cap).pointerEvents !== 'none');
+      }
+    }
+
+    /**
+     * THE HIT TEST — the only assertion that proves the reported bug is gone.
+     * Every check above would still pass if we merely faded and left an
+     * invisible click-eater in place.
+     */
+    const target = row.getBoundingClientRect();
+    const hit = document.elementFromPoint(
+      Math.round(target.left + target.width / 2),
+      Math.round(target.top + target.height / 2)
+    );
+    check('REGRESSION: a click on the menu row reaches YOUTUBE, not us',
+      !!hit && (hit === row || row.contains(hit) || menu.contains(hit)),
+      `elementFromPoint → ${hit?.className || hit?.tagName || 'null'}`);
+
+    // Closing it gives everything back.
+    menu.remove();
+    const restored = await until(() => (visible(cluster) ? true : null), 3000);
+    check('closing the menu restores our controls', !!restored);
+    if (cap) {
+      const capRestored = await until(
+        () => getComputedStyle(cap).pointerEvents !== 'none', 3000
+      );
+      check('and the caption can be dragged again',
+        !!capRestored);
+    }
+
+    /**
+     * The geometry has to be doing real work. A popup that does NOT overlap must
+     * leave our controls alone — otherwise the rule is just «any menu hides
+     * everything», which would blank the UI for a tooltip in the far corner.
+     */
+    const far = document.createElement('div');
+    far.className = 'ytp-popup';
+    far.style.cssText =
+      'position:absolute;left:8px;top:8px;width:120px;height:60px;z-index:71;background:#2228;';
+    player.appendChild(far);
+    await new Promise((r) => setTimeout(r, 450));
+    check('REGRESSION: a menu that does not overlap hides nothing',
+      visible(cluster), 'the collision test is not geometric');
+    far.remove();
+    await new Promise((r) => setTimeout(r, 400));
+  }
+
+  // ────────────── v3.2.5: a batch in flight when the cue list is replaced
+  //
+  // THE BUG. `sendBatch` captured the video id but not `startGen`, so it only
+  // asked "is this still the same video?" — never "is this still the same cue
+  // list?". Within one video the list is REPLACED, not appended to, whenever the
+  // pipeline restarts: a source-track switch, or «جمله‌بندی هوشمند», which merges
+  // caption fragments into sentences and therefore produces a SHORTER list. A
+  // batch planned against the old indices then applied against the new one and
+  // ran `cues[batch[k]].fa = t` past its end:
+  //
+  //     TypeError: Cannot set properties of undefined (setting 'fa')
+  //
+  // thrown from an async function nobody awaits. The cost was not just the
+  // throw: it escaped before the `tick()` and `requestWindow()` that follow, so
+  // the batch's translations were dropped AND scheduling stalled until the
+  // one-second safety tick recovered it.
+  //
+  // It was firing on SOME runs of this very page and the page still reported
+  // «57/57 OK», because a mock that only reads console lines cannot see an
+  // unhandled rejection. That is fixed (see GXT_UNCAUGHT above and the runner's
+  // exception reporting) — but a race that reproduces intermittently is not a
+  // regression test, so the interleaving is now forced with GXT_YT_GATE.
+  {
+    const probe = GXT.yt._internal.applyBatchProbe;
+
+    // The exact hazard: a four-line batch planned against a longer list, applied
+    // after the list was rebuilt with three lines in it.
+    const stale = probe(3, [0, 1, 2, 7], ['ف: ۰', 'ف: ۱', 'ف: ۲', 'ف: ۷']);
+    check('REGRESSION: a batch landing after the cue list shrank does not throw',
+      stale.threw === null);
+    // And it is not merely swallowed: every index that still EXISTS is written,
+    // so the surviving lines are not lost with the out-of-range one.
+    check('REGRESSION: the in-range lines of a stale batch are still applied',
+      stale.written === 3);
+
+    // The whole batch out of range is the same story with nothing to keep.
+    const gone = probe(2, [5, 6], ['ف: ۵', 'ف: ۶']);
+    check('a wholly out-of-range batch is discarded without throwing',
+      gone.threw === null && gone.written === 0);
+
+    // A normal batch is unaffected — the guard must not change the happy path.
+    const fine = probe(4, [1, 2], ['ف: ۱', 'ف: ۲']);
+    check('an in-range batch still applies exactly its own lines',
+      fine.threw === null && fine.written === 2);
+
+    // Nothing anywhere in this page may have thrown unobserved.
+    check('REGRESSION: nothing was thrown and swallowed during this run',
+      globalThis.GXT_UNCAUGHT.length === 0);
+    if (globalThis.GXT_UNCAUGHT.length) {
+      console.log('GXT-YT-TEST detail uncaught: ' + globalThis.GXT_UNCAUGHT.join(' | '));
+    }
+  }
+
+  const passed = results.filter((r) => r[1]).length;
+  document.getElementById('summary').innerHTML =
+    `<b>${passed}/${results.length} checks passed</b>` +
+    results.map(([n, ok]) => `<div class="${ok ? 'pass' : 'fail'}">${ok ? 'PASS' : 'FAIL'} — ${n}</div>`).join('');
+  console.log(`GXT-YT-TEST SUMMARY ${passed}/${results.length}`);
+})();
+</script>
+</body>
+</html>

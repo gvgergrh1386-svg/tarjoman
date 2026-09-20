@@ -1,0 +1,351 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>X lifecycle regression tests</title>
+<link rel="stylesheet" href="../content/content.css">
+<style>body { font: 16px/1.5 sans-serif; margin: 24px; } #fixture { max-width: 600px; } .pass { color: green; } .fail { color: red; }</style>
+</head>
+<body>
+<h1>X lifecycle regression tests</h1>
+<div id="fixture"></div><pre id="summary">Running…</pre>
+<script>
+globalThis.GXT_SHIM_SEED = { settings: { enabled: false, batchSize: 1, batchDelayMs: 1 }, apiKeys: ['test-only'] };
+const NativeIntersectionObserver = globalThis.IntersectionObserver;
+const nativeEntries = [];
+globalThis.IntersectionObserver = class {
+  constructor(callback, options) {
+    this.callback = callback; this.targets = new Set();
+    this.native = new NativeIntersectionObserver((entries) => { nativeEntries.push(...entries); callback(entries); }, options);
+  }
+  observe(el) {
+    if (el.dataset.nativeIo) return this.native.observe(el);
+    this.targets.add(el);
+    setTimeout(() => {
+      if (this.targets.has(el)) this.callback([{ target: el, isIntersecting: true, intersectionRatio: 1 }]);
+    }, 0);
+  }
+  unobserve(el) { this.targets.delete(el); this.native.unobserve(el); }
+  disconnect() { this.targets.clear(); this.native.disconnect(); }
+};
+const sent = [], routes = new Map();
+let composeRoute = null, imageRoute = null;
+globalThis.GXT_SHIM_HANDLER = async (message) => {
+  sent.push(message);
+  if (message.type === 'TRANSLATE_COMPOSE') return composeRoute ? composeRoute(message) : { ok: true, t: 'Translated draft' };
+  if (message.type === 'TRANSLATE_IMAGE') return imageRoute ? imageRoute(message) : { ok: true, t: 'ترجمهٔ تصویر' };
+  if (message.type !== 'TRANSLATE_BATCH') return { ok: false, code: 'DEV' };
+  const results = {};
+  for (const item of message.items) {
+    const result = routes.has(item.text) ? await routes.get(item.text)(item) : { ok: true, t: 'فارسی ' + item.text, sl: 'en' };
+    if (result.batch) return result.batch;
+    results[item.id] = result;
+  }
+  return { ok: true, results };
+};
+</script>
+<script src="chrome-shim.js"></script>
+<script src="../shared/settings.js"></script>
+<script src="../shared/memory.js"></script>
+<script src="../shared/theme.js"></script>
+<script src="../content/ui.js"></script>
+<script src="../content/dom.js"></script>
+<script src="../content/render.js"></script>
+<script src="../content/main.js"></script>
+<script src="../content/composer.js"></script>
+<script>
+const fixture = document.getElementById('fixture');
+const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
+const assert = (value, message = 'assertion failed') => { if (!value) throw new Error(message); };
+async function until(fn, message = 'timed out', timeout = 3000) {
+  const end = Date.now() + timeout;
+  while (Date.now() < end) { if (fn()) return; await sleep(20); }
+  throw new Error(message);
+}
+let config = { ...GXT.DEFAULTS, enabled: false, batchSize: 1, batchDelayMs: 1 };
+async function settings(patch) { config = { ...config, ...patch }; await chrome.storage.local.set({ settings: config }); }
+function tweet(text, id = 'tweetText') {
+  const article = document.createElement('article');
+  const el = document.createElement('div');
+  el.dataset.testid = id; el.lang = 'en'; el.textContent = text;
+  article.append(el); fixture.append(article); return el;
+}
+const body = (el) => el.nextElementSibling?.querySelector('.gxt-text');
+const sentText = (text) => sent.some((message) => message.items?.some((item) => item.text === text));
+function deferText(text) {
+  let resolve;
+  const promise = new Promise((r) => { resolve = r; });
+  routes.set(text, () => promise);
+  return resolve;
+}
+function deferredCompose() {
+  let resolve; const promise = new Promise((r) => { resolve = r; });
+  composeRoute = () => promise; return resolve;
+}
+async function composer() {
+  await settings({ enabled: true, composerTranslate: true });
+  const editor = document.createElement('div');
+  editor.dataset.testid = 'tweetTextarea_0'; editor.contentEditable = 'true';
+  editor.textContent = 'این یک متن فارسی برای آزمون است'; fixture.append(editor);
+  await until(() => editor.nextElementSibling?.querySelector('.gxt-chip-btn'), 'composer button missing');
+  return { editor, btn: editor.nextElementSibling.querySelector('.gxt-chip-btn') };
+}
+async function media() {
+  await settings({ enabled: true, xImageButton: true });
+  const article = document.createElement('article');
+  const img = document.createElement('img'); img.width = 100; img.height = 100;
+  // Prevent a network fetch while still exercising the production selector.
+  img.src = 'data:image/svg+xml,<svg xmlns="http://www.w3.org/2000/svg"><!-- pbs.twimg.com/media/test --></svg>';
+  article.append(img); fixture.append(article);
+  await until(() => article.querySelector('.gxt-imgbtn'));
+  return { article, img, btn: article.querySelector('.gxt-imgbtn') };
+}
+const tests = [
+  ['stable permalink keeps translation on SPA conversation remount with changed author label',async()=>{
+    await settings({enabled:true});const first=tweet('Stable route identity 376.');first.closest('article').insertAdjacentHTML('afterbegin','<div data-testid="User-Name">Alice @alice</div><a href="/alice/status/1234567890"><time>today</time></a>');await until(()=>body(first));const count=sent.length;first.closest('article').remove();history.pushState({},'', '/alice/status/1234567890');
+    const next=tweet('Stable route identity 376.');next.closest('article').insertAdjacentHTML('afterbegin','<div data-testid="User-Name">New label @alice</div><a href="https://x.com/alice/status/1234567890"><time>today</time></a>');next.removeAttribute('lang');await until(()=>body(next));assert(sent.length===count,'view metadata triggered another translation');history.replaceState({},'', '/dev/mock-x-lifecycle.html');
+  }],
+
+  ['identical remounted tweet reuses the session translation without another request', async () => {
+    await settings({enabled:true});
+    const first=tweet('Exact cached remount example.');await until(()=>body(first));
+    const count=sent.length;first.closest('article').remove();await sleep(40);
+    const next=tweet('Exact cached remount example.');await until(()=>body(next));
+    assert(sent.length===count,'identical remount spent another request');
+  }],
+  ['same text from a different author cannot reuse an incompatible session cache', async () => {
+    await settings({enabled:true});
+    const first=tweet('Author sensitive example.');first.closest('article').insertAdjacentHTML('afterbegin','<div data-testid="User-Name">Alice @alice</div>');
+    await until(()=>body(first));const count=sent.length;first.closest('article').remove();await sleep(40);
+    const next=tweet('Author sensitive example.');next.closest('article').insertAdjacentHTML('afterbegin','<div data-testid="User-Name">Bob @bob</div>');
+    await until(()=>body(next));assert(sent.length>count,'author context was omitted from session identity');
+  }],
+  ['same commentary with a different quoted source cannot reuse session translation', async () => {
+    await settings({enabled:true});
+    const first=tweet('Context sensitive reply.');first.closest('article').insertAdjacentHTML('beforeend','<section><div data-testid="tweetText" lang="fa">پیش‌زمینهٔ اول</div></section>');
+    await until(()=>body(first));const count=sent.length;first.closest('article').remove();await sleep(40);
+    const next=tweet('Context sensitive reply.');next.closest('article').insertAdjacentHTML('beforeend','<section><div data-testid="tweetText" lang="fa">پیش‌زمینهٔ دوم</div></section>');
+    await until(()=>body(next));assert(sent.length>count,'quoted context was omitted from session identity');
+  }],
+  ['equal-length suffix changes invalidate the DOM signature', async () => {
+    const el = tweet('A'.repeat(40) + ' first'); const first = GXT.dom.signature(el);
+    el.textContent = 'A'.repeat(40) + ' other'; assert(first !== GXT.dom.signature(el));
+  }],
+  ['link target and emoji changes invalidate the DOM signature', async () => {
+    const el = tweet('Read this '); const a = document.createElement('a'); a.href = '/first'; a.textContent = 'link'; el.append(a);
+    const first = GXT.dom.signature(el); a.href = '/other'; assert(first !== GXT.dom.signature(el));
+    const img = document.createElement('img'); img.alt = '😂'; el.append(img);
+    const second = GXT.dom.signature(el); img.alt = '😭'; assert(second !== GXT.dom.signature(el));
+  }],
+  ['regional language tags obey Persian and Arabic gating', async () => {
+    assert(!GXT.dom.shouldTranslate('This text has letters', 'FA-IR'));
+    assert(GXT.dom.shouldTranslate('هذا النص باللغة العربية', 'ar-SA'));
+  }],
+  ['quoted post author comes from its own card', async () => {
+    fixture.innerHTML = '<article><div data-testid="User-Name">Outer @outer</div><div data-testid="tweetText">Outer text</div><section><div data-testid="User-Name">Quoted @quoted</div><div id="quoted" data-testid="tweetText">Quoted text</div></section></article>';
+    assert(GXT.dom.getAuthor(document.getElementById('quoted')) === 'Quoted (@quoted)');
+  }],
+  ['nested quote permalink never becomes the identity of its outer post',async()=>{
+    fixture.innerHTML='<article><header><a href="/outer/status/100"><time>now</time></a></header><div class="body"><div id="outer" data-testid="tweetText">Outer text</div><section><a href="/quoted/status/200"><time>then</time></a><div id="quoted" data-testid="tweetText">Quoted text</div></section></div></article>';
+    const outer=document.getElementById('outer'),quoted=document.getElementById('quoted');
+    assert(GXT.dom.contentIdentity(outer)==='x:100','outer post inherited quote identity');
+    assert(GXT.dom.contentIdentity(quoted)==='x:200','quote inherited outer identity');
+    fixture.querySelector('article').prepend(fixture.querySelector('section'));
+    assert(GXT.dom.contentIdentity(outer)==='x:100','layout rearrangement changed outer identity');
+  }],
+  ['outer post never expands the quoted post control', async () => {
+    fixture.innerHTML = '<article><div id="outer" data-testid="tweetText">Outer text</div><section><div id="quoted" data-testid="tweetText">Quoted text</div><button data-testid="tweet-text-show-more-link">Show more</button></section></article>';
+    assert(!GXT.dom.findShowMore(document.getElementById('outer')));
+    assert(GXT.dom.findShowMore(document.getElementById('quoted')) === fixture.querySelector('button'));
+  }],
+  ['literal placeholder-looking text remains text', async () => {
+    const el = tweet('Literal ⟦0⟧ plus '); const a = document.createElement('a'); a.href = '/real'; a.textContent = 'real link'; el.append(a);
+    const extraction = GXT.dom.extract(el); const target = document.createElement('div');
+    GXT.render._internal.renderRich(target, extraction.text, extraction);
+    assert(target.textContent === 'Literal ⟦0⟧ plus real link'); assert(target.querySelectorAll('a').length === 1);
+  }],
+  ['mention matching respects whole handles and case', async () => {
+    const el = tweet(''); el.innerHTML = '<a href="/ann">@Ann</a>';
+    const target = document.createElement('div');
+    GXT.render._internal.renderRich(target, '@Anna @ANN email@Ann.example', GXT.dom.extract(el));
+    assert(target.querySelectorAll('a').length === 1); assert(target.textContent === '@Anna @Ann email@Ann.example');
+  }],
+  ['manual translation keyboard activation prevents page scrolling', async () => {
+    const el = tweet('Keyboard example'); let clicks = 0;
+    GXT.render.showTranslateLink(el, () => clicks++);
+    const event = new KeyboardEvent('keydown', { key: ' ', bubbles: true, cancelable: true });
+    el.nextElementSibling.querySelector('[role="button"]').dispatchEvent(event);
+    assert(clicks === 1 && event.defaultPrevented);
+  }],
+  ['hiding and removing a translation restores original display and priority', async () => {
+    const el = tweet('Styled original'); el.style.setProperty('display', 'inline-flex', 'important');
+    GXT.render.showTranslation(el, 'فارسی', GXT.dom.extract(el), 'en', { replaceOriginal: true });
+    assert(el.style.display === 'none'); GXT.render.removeUI(el);
+    assert(el.style.display === 'inline-flex' && el.style.getPropertyPriority('display') === 'important');
+  }],
+  ['text-node replacement updates a translated post', async () => {
+    await settings({ enabled: true }); const el = tweet('Text node initial'); await until(() => body(el));
+    el.textContent = 'Text node changed'; await until(() => body(el)?.textContent.includes('changed'));
+  }],
+  ['suffix-only character edits update equal-length posts', async () => {
+    await settings({ enabled: true }); const prefix = 'Common same-length prefix '.repeat(2); const el = tweet(prefix + 'first');
+    await until(() => body(el)); el.firstChild.nodeValue = prefix + 'other';
+    await until(() => body(el)?.textContent.includes('other'));
+  }],
+  ['removing all source children retracts the translation', async () => {
+    await settings({ enabled: true }); const el = tweet('Removed text example'); await until(() => body(el));
+    el.replaceChildren(); await until(() => !GXT.render.hasUI(el));
+  }],
+  ['lang-only changes retract an already Persian source', async () => {
+    await settings({ enabled: true }); const el = tweet('Language changed example'); await until(() => body(el));
+    el.lang = 'fa-IR'; await until(() => !GXT.render.hasUI(el));
+  }],
+  ['link-only React updates restore the new href', async () => {
+    await settings({ enabled: true }); const el = tweet('Read target '); el.innerHTML += '<a href="/old-target">article</a>';
+    await until(() => body(el)); el.querySelector('a').href = '/new-target';
+    await until(() => body(el)?.querySelector('a')?.getAttribute('href') === '/new-target');
+  }],
+  ['removed React translation sibling is repaired', async () => {
+    await settings({ enabled: true }); const el = tweet('Repair sibling example'); await until(() => body(el));
+    el.nextElementSibling.remove(); await until(() => body(el));
+  }],
+  ['removing a source node removes its orphan translation', async () => {
+    await settings({ enabled: true }); const el = tweet('Removed source example'); await until(() => body(el));
+    const box = el.nextElementSibling; el.remove(); await until(() => !box.isConnected);
+  }],
+  ['late batch failures cannot overwrite a new post translation', async () => {
+    await settings({ enabled: true }); const release = deferText('Old in-flight failure'); const el = tweet('Old in-flight failure');
+    await until(() => sentText('Old in-flight failure')); el.textContent = 'New replacement success'; await until(() => body(el));
+    release({ batch: { ok: false, code: 'NETWORK' } }); await sleep(100);
+    assert(body(el)?.textContent.includes('New replacement success'));
+  }],
+  ['late NO_KEY responses cannot remove a new translation', async () => {
+    await settings({ enabled: true }); const release = deferText('Old no-key request'); const el = tweet('Old no-key request');
+    await until(() => sentText('Old no-key request')); el.textContent = 'New no-key replacement'; await until(() => body(el));
+    release({ batch: { ok: false, code: 'NO_KEY' } }); await sleep(100); assert(body(el));
+  }],
+  ['disabling bios cancels in-flight bio rendering', async () => {
+    await settings({ enabled: true, translateBios: true }); const release = deferText('Bio in-flight example'); const el = tweet('Bio in-flight example', 'UserDescription');
+    await until(() => sentText('Bio in-flight example')); await settings({ translateBios: false });
+    release({ ok: true, t: 'نباید نمایش داده شود' }); await sleep(100); assert(!GXT.render.hasUI(el));
+  }],
+  ['disabling extra zones cancels their in-flight rendering', async () => {
+    await settings({ enabled: true, xExtraZones: true }); const release = deferText('Article in-flight example'); const el = tweet('Article in-flight example', 'longformRichTextComponent');
+    await until(() => sentText('Article in-flight example')); await settings({ xExtraZones: false });
+    release({ ok: true, t: 'نباید نمایش داده شود' }); await sleep(100); assert(!GXT.render.hasUI(el));
+  }],
+  ['manual to auto change processes existing manual links', async () => {
+    await settings({ enabled: true, mode: 'manual' }); const el = tweet('Manual mode switch example'); await until(() => el.nextElementSibling?.matches('.gxt-linkrow'));
+    assert(!sentText('Manual mode switch example')); await settings({ mode: 'auto' }); await until(() => body(el));
+  }],
+  ['provider change replaces existing translation and engine label', async () => {
+    await settings({ enabled: true, provider: 'gemini' }); const el = tweet('Provider change example'); await until(() => body(el));
+    await settings({ provider: 'google' }); await until(() => el.nextElementSibling?.querySelector('.gxt-label')?.textContent.includes('Google Translate'));
+    assert(sent.filter((message) => message.items?.some((item) => item.text === 'Provider change example')).length === 2);
+  }],
+  ['provider change discards old in-flight response', async () => {
+    await settings({ enabled: true, provider: 'gemini' }); const release = deferText('Provider pending example'); const el = tweet('Provider pending example');
+    await until(() => sentText('Provider pending example')); routes.delete('Provider pending example'); await settings({ provider: 'google' });
+    await until(() => body(el)); release({ ok: true, t: 'OLD PROVIDER' }); await sleep(100);
+    assert(!body(el).textContent.includes('OLD PROVIDER'));
+  }],
+  ['malformed worker success becomes retry UI without an exception', async () => {
+    await settings({ enabled: true }); routes.set('Malformed response example', () => ({ batch: { ok: true } }));
+    const el = tweet('Malformed response example'); await until(() => el.nextElementSibling?.querySelector('.gxt-retry'));
+  }],
+  ['master switch prevents a pending response from painting', async () => {
+    await settings({ enabled: true }); const release = deferText('Master off example'); const el = tweet('Master off example'); await until(() => sentText('Master off example'));
+    await settings({ enabled: false }); release({ ok: true, t: 'نباید نمایش داده شود' }); await sleep(100); assert(!GXT.render.hasUI(el));
+  }],
+  ['composer double activation sends only one request', async () => {
+    const release = deferredCompose(); const { btn } = await composer(); btn.click(); btn.click();
+    assert(sent.filter((message) => message.type === 'TRANSLATE_COMPOSE').length === 1);
+    release({ ok: false, error: 'test failure' }); await sleep(50);
+  }],
+  ['composer preserves edits made while translation was pending', async () => {
+    const release = deferredCompose(); const { editor, btn } = await composer(); btn.click(); editor.textContent = 'این متن تازه باید حفظ شود';
+    editor.dispatchEvent(new Event('input', { bubbles: true })); release({ ok: true, t: 'Outdated English draft' }); await sleep(100);
+    assert(editor.innerText === 'این متن تازه باید حفظ شود');
+  }],
+  ['composer preserves draft when feature is disabled mid-request', async () => {
+    const release = deferredCompose(); const { editor, btn } = await composer(); const draft = editor.innerText; btn.click();
+    await settings({ composerTranslate: false }); release({ ok: true, t: 'Disabled result' }); await sleep(100); assert(editor.innerText === draft);
+  }],
+  ['composer replaces only its own draft and remains undoable', async () => {
+    const { editor, btn } = await composer(); const draft = editor.innerText;
+    const sibling = document.createElement('div'); sibling.contentEditable = 'true'; sibling.textContent = 'Unrelated draft'; fixture.append(sibling);
+    btn.click(); await until(() => editor.innerText === 'Translated draft'); assert(sibling.innerText === 'Unrelated draft');
+    editor.focus(); document.execCommand('undo'); assert(editor.innerText === draft);
+  }],
+  ['React-removed composer chip is recreated without duplicate requests', async () => {
+    const { editor, btn } = await composer(); editor.nextElementSibling.remove();
+    await until(() => editor.nextElementSibling?.querySelector('.gxt-chip-btn')); const next = editor.nextElementSibling.querySelector('.gxt-chip-btn');
+    assert(next !== btn); next.click(); await until(() => editor.innerText === 'Translated draft');
+    assert(sent.filter((message) => message.type === 'TRANSLATE_COMPOSE').length === 1);
+  }],
+  ['image card keeps only the latest request and result', async () => {
+    let resolve; const first = new Promise((r) => { resolve = r; }); let calls = 0;
+    imageRoute = () => ++calls === 1 ? first : { ok: true, t: 'Latest image result' };
+    const { btn } = await media(); btn.click(); btn.click();
+    const shadow = document.querySelector('[data-gxt-ui]').shadowRoot;
+    await until(() => shadow.querySelector('.card-body')?.textContent === 'Latest image result');
+    resolve({ ok: true, t: 'Stale image result' }); await sleep(50);
+    assert(shadow.querySelectorAll('.card').length === 1);
+    assert(shadow.querySelector('.card-body').textContent === 'Latest image result');
+  }],
+  ['disabling image translation closes its pending card', async () => {
+    let resolve; imageRoute = () => new Promise((r) => { resolve = r; });
+    const { btn } = await media(); btn.click(); await settings({ xImageButton: false });
+    resolve({ ok: true, t: 'Disabled result' }); await sleep(50);
+    assert(!document.querySelector('[data-gxt-ui]').shadowRoot.querySelector('.card'));
+  }],
+  ['React-removed image button is rebuilt and orphan buttons are removed', async () => {
+    const { article, img, btn } = await media(); btn.remove();
+    await until(() => article.querySelector('.gxt-imgbtn'));
+    assert(article.querySelector('.gxt-imgbtn') !== btn); img.remove();
+    await until(() => !article.querySelector('.gxt-imgbtn'));
+  }],
+  ['hidden translation uses the latest replace-original setting when reopened', async () => {
+    await settings({ enabled: true, replaceOriginal: true }); const el = tweet('Hidden settings example'); await until(() => body(el));
+    [...el.nextElementSibling.querySelectorAll('.gxt-btn')].find((btn) => btn.textContent === 'نهفتن').click();
+    await settings({ replaceOriginal: false }); el.nextElementSibling.querySelector('.gxt-link').click();
+    assert(body(el) && el.style.display !== 'none');
+  }],
+  ['native IO: multi-screen long posts translate after viewport-relative dwell', async () => {
+    await settings({ enabled: true, dwellMode: true });
+    const el = tweet('Long viewport dwell example'); el.dataset.nativeIo = '1';
+    el.style.cssText = `position:fixed;top:0;left:0;width:300px;height:${innerHeight * 4}px`;
+    await until(() => nativeEntries.some((entry) => entry.target === el && entry.isIntersecting), 'native IO never intersected');
+    const entry = nativeEntries.find((entry) => entry.target === el && entry.isIntersecting);
+    assert(entry.intersectionRatio < 0.5, 'fixture must be taller than two viewports');
+    await sleep(300); assert(!sentText('Long viewport dwell example'), 'dwell translated immediately');
+    await until(() => body(el), 'long post never completed dwell');
+  }],
+  ['native IO: scrolling away resets the full second of dwell', async () => {
+    await settings({ enabled: true, dwellMode: true });
+    const el = tweet('Interrupted viewport dwell example'); el.dataset.nativeIo = '1';
+    el.style.cssText = 'position:fixed;top:10px;left:0;width:300px;height:100px';
+    await until(() => nativeEntries.some((entry) => entry.target === el && entry.isIntersecting));
+    await sleep(350); el.style.top = `${innerHeight + 100}px`;
+    await until(() => nativeEntries.some((entry) => entry.target === el && !entry.isIntersecting));
+    await sleep(150); el.style.top = '10px'; await sleep(650);
+    assert(!sentText('Interrupted viewport dwell example'), 'pre-scroll dwell leaked into new visit');
+    await until(() => body(el), 'returned post never translated');
+  }],
+];
+(async () => {
+  await sleep(50); let passed = 0; const lines = [];
+  for (const [name, fn] of tests) {
+    let ok = false, detail = '';
+    try { await fn(); ok = true; passed++; } catch (error) { detail = ': ' + error.message; }
+    const line = `GXT-X-LIFECYCLE ${ok ? 'PASS' : 'FAIL'} ${name}${detail}`;
+    console.log(line); lines.push(line); document.getElementById('summary').textContent = lines.join('\n');
+    await settings({ enabled: false, mode: 'auto', dwellMode: false, provider: 'gemini', translateBios: true, xExtraZones: false, composerTranslate: false, xImageButton: false, replaceOriginal: false });
+    fixture.replaceChildren(); routes.clear(); sent.length = 0; composeRoute = null; imageRoute = null; await sleep(30);
+  }
+  document.getElementById('summary').textContent = `${passed}/${tests.length}\n` + lines.join('\n');
+  console.log(`GXT-X-LIFECYCLE SUMMARY ${passed}/${tests.length}`);
+})();
+</script>
+</body>
+</html>

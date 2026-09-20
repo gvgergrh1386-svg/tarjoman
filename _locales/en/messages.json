@@ -1,0 +1,26 @@
+{
+  "extensionName": {
+    "message": "Tarjoman — Web translation and subtitles"
+  },
+  "extensionShort": {
+    "message": "Tarjoman"
+  },
+  "extensionDescription": {
+    "message": "Translate web pages and X posts, translate subtitles, dub videos and edit subtitle files. Persian and English interfaces."
+  },
+  "commandtranslate_page": {
+    "message": "Translate the current page"
+  },
+  "commandtranslate_selection": {
+    "message": "Translate selected text"
+  },
+  "commandtoggle_enabled": {
+    "message": "Toggle extension"
+  },
+  "commandtranslate_screen": {
+    "message": "Translate screen text"
+  },
+  "commandread_selection": {
+    "message": "Read selected text aloud; press again to stop"
+  }
+}

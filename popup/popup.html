@@ -1,0 +1,1185 @@
+<!doctype html>
+<html dir="rtl" lang="fa">
+<head>
+  <meta charset="utf-8">
+  <title data-i18n="popup_popup_renderSheet_1">ترجمان</title>
+  <link rel="stylesheet" href="popup.css">
+</head>
+<body>
+<!--
+  ══════════════════════════════════════════════════════════════════════════
+  ترجمان — popup shell, v2.9.5 «سازگاری»
+
+  WHAT CHANGED AND WHY
+  ────────────────────
+  Until v2.8 this window was four tabs of switches. Three structural problems
+  came out of the audit, and all three are fixed by the markup below:
+
+   1. THE PRIMARY ACTION WAS NOT IN THE PRIMARY SURFACE. A translation
+      extension's main job is "translate what I am looking at", and the only
+      ways to ask for it were a right-click menu and Alt+Shift+P. Clicking the
+      toolbar icon — the one affordance every user finds — offered settings and
+      nothing else. The «در این صفحه» card now leads the window.
+   2. THE TABS WERE NOT AN ORGANISING PRINCIPLE. «قابلیت‌ها» held YouTube, web
+      pages, X tools, the subtitle workshop, speech, the local bridge AND a
+      video-quality helper that is unrelated to translation — seven cards on
+      one 2000px scroll, while X's own settings sat on a different tab. The
+      shell is now a home list of named destinations, each one screen deep.
+   3. NOTHING WAS ANNOUNCED CORRECTLY. Roughly forty switches were unlabelled
+      checkboxes to a screen reader, the tablist had no aria-selected and no
+      arrow-key handling, and the appearance dialog did not trap focus. Every
+      row here is wired for that in one pass at startup (see `wireA11y` in
+      popup.js), so a new row cannot be added without its label.
+
+  Every control id from earlier versions is preserved verbatim: the handlers in
+  popup.js are the product of many bug-fix cycles and re-typing them would
+  re-introduce fixed defects. Only the containers moved.
+  ══════════════════════════════════════════════════════════════════════════
+-->
+
+  <!-- ════════════════════════════════════════════════════════ app bar ══ -->
+  <header class="appbar">
+    <button class="icon-btn back hidden" id="navBack" type="button" aria-label="بازگشت به خانه" data-i18n-aria-label="popup_popup_navBack_aria_label_1">
+      <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M9.3 6.3 3.6 12l5.7 5.7 1.4-1.4L7.4 13H21v-2H7.4l3.3-3.3-1.4-1.4Z"/></svg>
+    </button>
+    <img class="logo" id="appLogo" src="../icons/icon32.png" alt="" width="28" height="28">
+    <div class="appbar-text">
+      <h1 id="viewTitle"><span data-i18n="popup_popup_renderSheet_1">ترجمان</span></h1>
+      <p class="appbar-status" id="brandSub" role="status"><span data-i18n="popup_popup_brandSub_1">آمادهٔ ترجمه</span></p>
+    </div>
+    <button class="icon-btn" id="appearanceBtn" type="button" aria-haspopup="dialog"
+            title="ظاهر و پوسته" aria-label="ظاهر و پوسته" data-i18n-title="popup_popup_appearanceBtn_title_1" data-i18n-aria-label="popup_popup_appearanceBtn_title_1">
+      <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 3a9 9 0 1 0 0 18c.9 0 1.6-.7 1.6-1.6 0-.4-.2-.8-.4-1.1-.3-.3-.4-.7-.4-1.1 0-.9.7-1.6 1.6-1.6h1.9A4.7 4.7 0 0 0 21 11c0-4.4-4-8-9-8Zm-5.5 9a1.5 1.5 0 1 1 0-3 1.5 1.5 0 0 1 0 3Zm3-4a1.5 1.5 0 1 1 0-3 1.5 1.5 0 0 1 0 3Zm5 0a1.5 1.5 0 1 1 0-3 1.5 1.5 0 0 1 0 3Zm3.5 4a1.5 1.5 0 1 1 0-3 1.5 1.5 0 0 1 0 3Z"/></svg>
+    </button>
+    <span class="switch" id="powerSwitch">
+      <input type="checkbox" id="enabled" role="switch" aria-label="روشن یا خاموش کردن کل افزونه" data-i18n-aria-label="popup_popup_enabled_aria_label_1">
+      <span class="track" aria-hidden="true"></span>
+    </span>
+  </header>
+
+  <!-- ═════════════════════════════════════════════════════════ search ══ -->
+  <div class="searchbar">
+    <svg class="search-ico" viewBox="0 0 24 24" aria-hidden="true"><path d="M10 4a6 6 0 1 0 3.5 10.9l4.3 4.3 1.4-1.4-4.3-4.3A6 6 0 0 0 10 4Zm0 2a4 4 0 1 1 0 8 4 4 0 0 1 0-8Z"/></svg>
+    <label class="sr-only" for="search"><span data-i18n="popup_popup_sr_only_1">جست‌وجو در تنظیم‌ها</span></label>
+    <input id="search" type="search" placeholder="جست‌وجو در همهٔ تنظیم‌ها…"
+           autocomplete="off" spellcheck="false" aria-describedby="searchCount" data-i18n-placeholder="popup_popup_search_placeholder_1">
+    <button class="icon-btn tiny hidden" id="searchClear" type="button" aria-label="پاک‌کردن جست‌وجو" data-i18n-aria-label="popup_popup_searchClear_aria_label_1">
+      <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M18.3 5.7 12 12l6.3 6.3-1.4 1.4L10.6 13.4 4.3 19.7l-1.4-1.4L9.2 12 2.9 5.7l1.4-1.4 6.3 6.3 6.3-6.3 1.4 1.4Z"/></svg>
+    </button>
+  </div>
+  <p class="sr-only" id="searchCount" role="status" aria-live="polite"></p>
+
+  <main id="views">
+    <p class="empty-state hidden" id="noResults"><span data-i18n="popup_popup_noResults_1">چیزی با این عبارت پیدا نشد.</span></p>
+
+    <!-- ══════════════════════════════════════════════════════════ HOME ══ -->
+    <div class="view active" id="view-home" data-view="home" tabindex="-1">
+
+      <h2 class="view-label"><span data-i18n="popup_popup_view_label_1">بخش‌ها</span></h2>
+
+      <!-- ── the missing primary action ──────────────────────────────── -->
+      <section class="card ctx" id="ctxCard" aria-labelledby="ctxCardTitle">
+        <div class="card-head">
+          <h2 id="ctxCardTitle"><span data-i18n="popup_popup_ctxCardTitle_1">در این صفحه</span></h2>
+          <span class="pill-tag ltr" id="ctxHost">—</span>
+        </div>
+
+        <div class="ctx-actions" id="ctxActions">
+          <button class="primary block" id="actTranslate" type="button">
+            <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12.9 15.1 10.3 12.6l.1-.1A17.5 17.5 0 0 0 14.1 6H17V4h-7V2H8v2H1v2h11.2c-.7 1.9-1.8 3.8-3.2 5.4-.9-1-1.7-2.2-2.3-3.4h-2c.7 1.6 1.7 3.2 3 4.6l-5.1 5L4 19l5-5 3.1 3.1.8-2ZM18.5 10h-2L12 22h2l1.1-3h4.8L21 22h2l-4.5-12Zm-2.6 7 1.6-4.3L19.1 17h-3.2Z"/></svg>
+            <span><span data-i18n="popup_popup_span_1">ترجمهٔ این صفحه</span></span>
+          </button>
+          <div class="ctx-row">
+            <button class="ghost" id="actSummary" type="button"><span data-i18n="content_page_translate_body_2">خلاصهٔ فارسی</span></button>
+            <button class="ghost" id="actScreen" type="button" title="ترجمهٔ متن روی صفحهٔ نمایش — بازی، برنامه، ویدیو" data-i18n-title="popup_popup_actScreen_title_1"><span data-i18n="popup_popup_actScreen_2">متن روی صفحه</span></button>
+          <button class="ghost" id="actRead" type="button"><span data-i18n="popup_popup_actRead_1">خواندن صفحه</span></button>
+          </div>
+        </div>
+
+        <div class="row-item flat" id="autoSiteRow" data-k="ترجمه خودکار این سایت auto">
+          <div class="row-main">
+            <div class="row-title"><span data-i18n="popup_popup_row_title_1">ترجمهٔ خودکار این سایت</span>
+              <button class="info" type="button" aria-label="توضیح ترجمهٔ خودکار سایت" data-i18n-aria-label="popup_popup_info_aria_label_1"></button>
+            </div>
+            <p class="row-help"><span data-i18n="popup_popup_row_help_1">هر بار که این سایت را باز کنی، خودش ترجمه می‌شود. برای این کار یک‌بار اجازهٔ دسترسی به همین سایت گرفته می‌شود.</span></p>
+          </div>
+          <span class="switch sm">
+            <input type="checkbox" id="autoSiteToggle" role="switch">
+            <span class="track" aria-hidden="true"></span>
+          </span>
+        </div>
+
+        <p class="note tip" id="ctxNote"></p>
+
+        <!-- v3.0.0 — per-site profile. The answer to "55 global switches":
+             what people actually want is «on THIS site, behave this way». -->
+        <div class="field-row spaced" id="siteProfileRow">
+          <label class="lbl" for="siteRegister"><span data-i18n="popup_popup_lbl_1">لحن این سایت</span></label>
+          <button class="info" type="button"></button>
+        </div>
+        <p class="row-help"><span data-i18n="popup_popup_row_help_2">فقط برای همین سایت ذخیره می‌شود. «مثل همه‌جا» یعنی از تنظیم کلی پیروی کند.</span></p>
+        <select id="siteRegister"></select>
+        <span id="siteStatus" class="status" role="status"></span>
+      </section>
+
+<section class="card locale-card" aria-labelledby="localeHeading"><h2 id="localeHeading" data-i18n="language.heading"></h2><div class="locale-grid"><label class="locale-field"><span data-i18n="language.interface"></span><select id="uiLanguage"><option value="auto" data-i18n="language.auto"></option><option value="fa" data-i18n="content_render_LANG_NAMES_1"></option><option value="en" data-i18n="content_render_LANG_NAMES_34"></option></select></label><label class="locale-field"><span data-i18n="language.target"></span><input id="targetLang" type="text" dir="ltr" autocomplete="off"></label></div><details class="locale-details"><summary data-i18n="region.settings"></summary><div class="locale-grid"><label class="locale-field"><span data-i18n="region.locale"></span><select id="regionLocale"><option value="auto" data-i18n="region.auto"></option><option value="fa-IR" data-i18n="region.iran"></option><option value="en-US" data-i18n="region.us"></option><option value="en-GB" data-i18n="region.uk"></option></select></label><label class="locale-field"><span data-i18n="region.calendar"></span><select id="calendar"><option value="auto" data-i18n="region.auto"></option><option value="persian" data-i18n="region.persian"></option><option value="gregory" data-i18n="region.gregorian"></option></select></label><label class="locale-field"><span data-i18n="region.numbers"></span><select id="numberingSystem"><option value="auto" data-i18n="region.auto"></option><option value="arabext" data-i18n="region.persianDigits"></option><option value="latn" data-i18n="region.latinDigits"></option></select></label><label class="locale-field"><span data-i18n="region.clock"></span><select id="hourCycle"><option value="auto" data-i18n="region.auto"></option><option value="h12" data-i18n="region.12hour"></option><option value="h23" data-i18n="region.24hour"></option></select></label><label class="locale-field"><span data-i18n="region.week"></span><select id="weekStart"><option value="auto" data-i18n="region.auto"></option><option value="sat" data-i18n="region.saturday"></option><option value="sun" data-i18n="region.sunday"></option><option value="mon" data-i18n="region.monday"></option></select></label><label class="locale-field"><span data-i18n="region.timezone"></span><input id="timeZone" dir="ltr" data-i18n-placeholder="region.timezoneHint"></label></div></details><p class="hint" data-i18n="language.independent"></p><label class="locale-field"><span data-i18n="region.contentDates"></span><select id="translationRegion"><option value="iran" data-i18n="region.iranDates"></option><option value="source" data-i18n="region.sourceDates"></option></select></label><p class="hint" data-i18n="region.contentHint"></p><p id="localePreview" class="hint" dir="auto"></p><p id="localeStatus" role="status"></p></section>
+
+      <!-- ── first-run: shown only while no engine is usable ─────────── -->
+      <section class="card setup hidden" id="setupCard" aria-labelledby="setupTitle">
+        <div class="card-head"><h2 id="setupTitle"><span data-i18n="popup_popup_setupTitle_1">یک قدم تا شروع</span></h2></div>
+        <p class="note"><span data-i18n="popup_popup_note_1">ترجمان برای ترجمه به یک سرویس هوش مصنوعی وصل می‌شود. کلید رایگان Google AI Studio چند ثانیه‌ای گرفته می‌شود و برای استفادهٔ روزمره کافی است.</span></p>
+        <div class="row">
+          <button class="primary" id="setupGo" type="button"><span data-i18n="popup_popup_setupGo_1">تنظیم موتور ترجمه</span></button>
+          <a class="link" href="https://aistudio.google.com/apikey" target="_blank" rel="noopener"><span data-i18n="popup_popup_link_1">کلید رایگان بگیر ↗</span></a>
+        </div>
+        <p class="note tip"><span data-i18n="popup_popup_note_2">اگر کلید نمی‌خواهی، در همان صفحه می‌توانی «Google Translate» یا «Bing» را انتخاب کنی — بدون کلید و بدون سقف، با کیفیت پایین‌تر.</span></p>
+      </section>
+
+      <!-- ── destinations ────────────────────────────────────────────── -->
+      <nav class="nav-group" aria-label="تنظیم‌های ترجمه" data-i18n-aria-label="popup_popup_nav_group_aria_label_1">
+        <h2 class="group-lbl"><span data-i18n="content_page_translate_maybeShowSelChip_3">ترجمه</span></h2>
+        <button class="nav-row" type="button" data-goto="engine" data-k="موتور سرویس کلید api جمنای gemini openai مدل دسته">
+          <span class="nav-ico" aria-hidden="true"><svg viewBox="0 0 24 24"><path d="M12 2 4 6v6c0 5 3.4 9.4 8 10 4.6-.6 8-5 8-10V6l-8-4Zm0 2.2 6 3V12c0 4-2.6 7.5-6 8-3.4-.5-6-4-6-8V7.2l6-3Zm-1 3.3v3.2H7.8v2H11v3.2h2v-3.2h3.2v-2H13V7.5h-2Z"/></svg></span>
+          <span class="nav-main">
+            <span class="nav-title"><span data-i18n="content_youtube_togglePanel_72">موتور ترجمه</span></span>
+            <span class="nav-sub" id="sumEngine">—</span>
+          </span>
+          <span class="nav-chev" aria-hidden="true"><svg viewBox="0 0 24 24"><path d="M15.4 7.4 14 6l-6 6 6 6 1.4-1.4-4.6-4.6 4.6-4.6Z"/></svg></span>
+        </button>
+        <button class="nav-row" type="button" data-goto="x" data-k="ایکس توییتر x twitter پست تایم‌لاین بیو کامپوزر">
+          <span class="nav-ico" aria-hidden="true"><svg viewBox="0 0 24 24"><path d="M17.5 3h3.1l-6.8 7.8L21.8 21h-6.2l-4.9-6.4L5.1 21H2l7.3-8.3L2.4 3h6.4l4.4 5.8L17.5 3Zm-1.1 16.1h1.7L7.7 4.8H5.9l10.5 14.3Z"/></svg></span>
+          <span class="nav-main">
+            <span class="nav-title"><span data-i18n="popup_popup_nav_title_1">ایکس (X)</span></span>
+            <span class="nav-sub" id="sumX">—</span>
+          </span>
+          <span class="nav-chev" aria-hidden="true"><svg viewBox="0 0 24 24"><path d="M15.4 7.4 14 6l-6 6 6 6 1.4-1.4-4.6-4.6 4.6-4.6Z"/></svg></span>
+        </button>
+        <button class="nav-row" type="button" data-goto="youtube" data-k="یوتیوب youtube زیرنویس دوبله shorts ویدیو">
+          <span class="nav-ico" aria-hidden="true"><svg viewBox="0 0 24 24"><path d="M21.6 7.2a2.5 2.5 0 0 0-1.8-1.8C18.2 5 12 5 12 5s-6.2 0-7.8.4A2.5 2.5 0 0 0 2.4 7.2 26 26 0 0 0 2 12a26 26 0 0 0 .4 4.8 2.5 2.5 0 0 0 1.8 1.8C5.8 19 12 19 12 19s6.2 0 7.8-.4a2.5 2.5 0 0 0 1.8-1.8A26 26 0 0 0 22 12a26 26 0 0 0-.4-4.8ZM10 15V9l5.2 3L10 15Z"/></svg></span>
+          <span class="nav-main">
+            <span class="nav-title"><span data-i18n="popup_popup_refreshContext_2">یوتیوب</span></span>
+            <span class="nav-sub" id="sumYoutube">—</span>
+          </span>
+          <span class="nav-chev" aria-hidden="true"><svg viewBox="0 0 24 24"><path d="M15.4 7.4 14 6l-6 6 6 6 1.4-1.4-4.6-4.6 4.6-4.6Z"/></svg></span>
+        </button>
+        <button class="nav-row" type="button" data-goto="web" data-k="صفحه وب سایت page ترجمهٔ صفحه انتخاب متن راست‌کلیک">
+          <span class="nav-ico" aria-hidden="true"><svg viewBox="0 0 24 24"><path d="M12 2a10 10 0 1 0 0 20 10 10 0 0 0 0-20Zm6.9 6h-2.9a15.6 15.6 0 0 0-1.3-3.6A8 8 0 0 1 18.9 8ZM12 4.1c.7 1 1.3 2.3 1.7 3.9h-3.4c.4-1.6 1-2.9 1.7-3.9ZM4.3 14a8 8 0 0 1 0-4h3.3a17.6 17.6 0 0 0 0 4H4.3Zm.8 2H8c.3 1.3.7 2.5 1.3 3.6A8 8 0 0 1 5.1 16Zm2.9-8H5.1a8 8 0 0 1 4.2-3.6A15.6 15.6 0 0 0 8 8Zm4 11.9c-.7-1-1.3-2.3-1.7-3.9h3.4c-.4 1.6-1 2.9-1.7 3.9ZM14.1 14H9.9a15.7 15.7 0 0 1 0-4h4.2a15.7 15.7 0 0 1 0 4Zm.6 5.6c.6-1.1 1-2.3 1.3-3.6h2.9a8 8 0 0 1-4.2 3.6Zm1.7-5.6a17.6 17.6 0 0 0 0-4h3.3a8 8 0 0 1 0 4h-3.3Z"/></svg></span>
+          <span class="nav-main">
+            <span class="nav-title"><span data-i18n="popup_popup_sources_4">صفحه‌های وب</span></span>
+            <span class="nav-sub" id="sumWeb">—</span>
+          </span>
+          <span class="nav-chev" aria-hidden="true"><svg viewBox="0 0 24 24"><path d="M15.4 7.4 14 6l-6 6 6 6 1.4-1.4-4.6-4.6 4.6-4.6Z"/></svg></span>
+        </button>
+      </nav>
+
+      <nav class="nav-group" aria-label="ابزارها" data-i18n-aria-label="popup_popup_nav_group_aria_label_2">
+        <h2 class="group-lbl"><span data-i18n="popup_popup_nav_group_aria_label_2">ابزارها</span></h2>
+        <button class="nav-row" type="button" data-goto="voice" data-k="صدا خواندن tts بلندگو گفتار voice">
+          <span class="nav-ico" aria-hidden="true"><svg viewBox="0 0 24 24"><path d="M12 3a3 3 0 0 0-3 3v6a3 3 0 0 0 6 0V6a3 3 0 0 0-3-3Zm7 9a7 7 0 0 1-6 6.9V21h-2v-2.1A7 7 0 0 1 5 12h2a5 5 0 0 0 10 0h2Z"/></svg></span>
+          <span class="nav-main">
+            <span class="nav-title"><span data-i18n="popup_popup_nav_title_2">صدا و خواندن</span></span>
+            <span class="nav-sub" id="sumVoice">—</span>
+          </span>
+          <span class="nav-chev" aria-hidden="true"><svg viewBox="0 0 24 24"><path d="M15.4 7.4 14 6l-6 6 6 6 1.4-1.4-4.6-4.6 4.6-4.6Z"/></svg></span>
+        </button>
+        <button class="nav-row" type="button" id="openSubtitles" data-external="1" data-k="زیرنویس srt ass فایل دوبله کارگاه">
+          <span class="nav-ico" aria-hidden="true"><svg viewBox="0 0 24 24"><path d="M4 4h16a2 2 0 0 1 2 2v12a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V6a2 2 0 0 1 2-2Zm0 2v12h16V6H4Zm2 8h6v2H6v-2Zm8 0h4v2h-4v-2ZM6 10h4v2H6v-2Zm6 0h6v2h-6v-2Z"/></svg></span>
+          <span class="nav-main">
+            <span class="nav-title"><span data-i18n="popup_popup_nav_title_3">کارگاه زیرنویس</span></span>
+            <span class="nav-sub"><span data-i18n="popup_popup_nav_sub_1">ترجمهٔ فایل SRT/ASS و ساخت نوار دوبله</span></span>
+          </span>
+          <span class="nav-chev ext" aria-hidden="true"><svg viewBox="0 0 24 24"><path d="M14 3v2h3.6l-9.3 9.3 1.4 1.4L19 6.4V10h2V3h-7ZM5 5h5V3H3v18h18v-7h-2v5H5V5Z"/></svg></span>
+        </button>
+        <button class="nav-row" type="button" data-goto="bridge" data-k="پل محلی bridge کامپیوتر ویسپر مانگا">
+          <span class="nav-ico" aria-hidden="true"><svg viewBox="0 0 24 24"><path d="M4 4h16v2H4V4Zm0 14h16v2H4v-2Zm2-6a6 6 0 0 1 12 0v4h-2v-4a4 4 0 0 0-8 0v4H6v-4Zm5 0h2v4h-2v-4Z"/></svg></span>
+          <span class="nav-main">
+            <span class="nav-title"><span data-i18n="popup_popup_ENGINE_LABEL_2">پل محلی</span></span>
+            <span class="nav-sub" id="sumBridge">—</span>
+          </span>
+          <span class="nav-chev" aria-hidden="true"><svg viewBox="0 0 24 24"><path d="M15.4 7.4 14 6l-6 6 6 6 1.4-1.4-4.6-4.6 4.6-4.6Z"/></svg></span>
+        </button>
+        <button class="nav-row" type="button" data-goto="video" data-k="ویدیو کیفیت rtx vsr کدک انویدیا">
+          <span class="nav-ico" aria-hidden="true"><svg viewBox="0 0 24 24"><path d="M3 6a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1.6l4.3-2.5A1 1 0 0 1 22 6v12a1 1 0 0 1-1.7.9L16 16.4V18a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V6Zm2 0v12h9V6H5Zm11 8.1 4 2.3V7.6l-4 2.3v4.2Z"/></svg></span>
+          <span class="nav-main">
+            <span class="nav-title"><span data-i18n="popup_popup_nav_title_4">کیفیت ویدیو</span></span>
+            <span class="nav-sub" id="sumVideo">—</span>
+          </span>
+          <span class="nav-chev" aria-hidden="true"><svg viewBox="0 0 24 24"><path d="M15.4 7.4 14 6l-6 6 6 6 1.4-1.4-4.6-4.6 4.6-4.6Z"/></svg></span>
+        </button>
+      </nav>
+
+      <nav class="nav-group" aria-label="تنظیم‌های عمومی" data-i18n-aria-label="popup_popup_nav_group_aria_label_3">
+        <h2 class="group-lbl"><span data-i18n="popup_popup_group_lbl_1">تنظیم‌ها</span></h2>
+        <button class="nav-row" type="button" data-goto="custom" data-k="واژه‌نامه دستور شخصی پرامپت prompt">
+          <span class="nav-ico" aria-hidden="true"><svg viewBox="0 0 24 24"><path d="M20.7 7.3 16.7 3.3a1 1 0 0 0-1.4 0l-2 2 5.4 5.4 2-2a1 1 0 0 0 0-1.4ZM3 17.2V21h3.8L17.4 10.4 13.6 6.6 3 17.2Z"/></svg></span>
+          <span class="nav-main">
+            <span class="nav-title"><span data-i18n="popup_popup_nav_title_5">شخصی‌سازی ترجمه</span></span>
+            <span class="nav-sub" id="sumCustom">—</span>
+          </span>
+          <span class="nav-chev" aria-hidden="true"><svg viewBox="0 0 24 24"><path d="M15.4 7.4 14 6l-6 6 6 6 1.4-1.4-4.6-4.6 4.6-4.6Z"/></svg></span>
+        </button>
+        <button class="nav-row" type="button" data-goto="stats" data-k="آمار سهمیه کش quota مصرف">
+          <span class="nav-ico" aria-hidden="true"><svg viewBox="0 0 24 24"><path d="M4 20h16v-2H4v2Zm2-4h3V8H6v8Zm5 0h3V4h-3v12Zm5 0h3v-6h-3v6Z"/></svg></span>
+          <span class="nav-main">
+            <span class="nav-title"><span data-i18n="popup_popup_nav_title_6">آمار و سهمیه</span></span>
+            <span class="nav-sub" id="sumStats">—</span>
+          </span>
+          <span class="nav-chev" aria-hidden="true"><svg viewBox="0 0 24 24"><path d="M15.4 7.4 14 6l-6 6 6 6 1.4-1.4-4.6-4.6 4.6-4.6Z"/></svg></span>
+        </button>
+        <button class="nav-row" type="button" data-goto="quality" data-k="کیفیت لحن رسمی محاوره ویرایش دقیق حافظه ترجمه یکدستی memory register">
+          <span class="nav-ico" aria-hidden="true"><svg viewBox="0 0 24 24"><path d="M12 2 9.2 8.6 2 9.2l5.5 4.8L5.8 21 12 17.3 18.2 21l-1.7-7 5.5-4.8-7.2-.6L12 2Z"/></svg></span>
+          <span class="nav-main">
+            <span class="nav-title"><span data-i18n="popup_popup_nav_title_7">کیفیت ترجمه</span></span>
+            <span class="nav-sub" id="sumQuality">—</span>
+          </span>
+          <span class="nav-chev" aria-hidden="true"><svg viewBox="0 0 24 24"><path d="M15.4 7.4 14 6l-6 6 6 6 1.4-1.4-4.6-4.6 4.6-4.6Z"/></svg></span>
+        </button>
+        <button class="nav-row" type="button" data-goto="updates" data-k="بروزرسانی مدل جدید update عیب یابی تشخیص مشکل diagnose نسخه">
+          <span class="nav-ico" aria-hidden="true"><svg viewBox="0 0 24 24"><path d="M12 4V1L8 5l4 4V6a6 6 0 1 1-6 6H4a8 8 0 1 0 8-8Z"/></svg></span>
+          <span class="nav-main">
+            <span class="nav-title"><span data-i18n="popup_popup_nav_title_8">به‌روزرسانی و تشخیص</span></span>
+            <span class="nav-sub" id="sumUpdates">—</span>
+          </span>
+          <span class="nav-chev" aria-hidden="true"><svg viewBox="0 0 24 24"><path d="M15.4 7.4 14 6l-6 6 6 6 1.4-1.4-4.6-4.6 4.6-4.6Z"/></svg></span>
+        </button>
+        <button class="nav-row" type="button" data-goto="backup" data-k="پشتیبان بکاپ backup بازیابی restore انتقال کلید ذخیره فایل">
+          <span class="nav-ico" aria-hidden="true"><svg viewBox="0 0 24 24"><path d="M19 3H5a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2V5a2 2 0 0 0-2-2Zm-7 15-5-5h3V8h4v5h3l-5 5Z"/></svg></span>
+          <span class="nav-main">
+            <span class="nav-title"><span data-i18n="popup_popup_nav_title_9">پشتیبان و بازیابی</span></span>
+            <span class="nav-sub" id="sumBackup">—</span>
+          </span>
+          <span class="nav-chev" aria-hidden="true"><svg viewBox="0 0 24 24"><path d="M15.4 7.4 14 6l-6 6 6 6 1.4-1.4-4.6-4.6 4.6-4.6Z"/></svg></span>
+        </button>
+        <button class="nav-row" type="button" data-sheet="1"
+                data-k="ظاهر پوسته رنگ فونت اندازهٔ متن تیره روشن مات شیشه‌ای راهنما تم">
+          <span class="nav-ico" aria-hidden="true"><svg viewBox="0 0 24 24"><path d="M12 3a9 9 0 1 0 0 18c.9 0 1.6-.7 1.6-1.6 0-.4-.2-.8-.4-1.1-.3-.3-.4-.7-.4-1.1 0-.9.7-1.6 1.6-1.6h1.9A4.7 4.7 0 0 0 21 11c0-4.4-4-8-9-8Zm-5.5 9a1.5 1.5 0 1 1 0-3 1.5 1.5 0 0 1 0 3Zm3-4a1.5 1.5 0 1 1 0-3 1.5 1.5 0 0 1 0 3Zm5 0a1.5 1.5 0 1 1 0-3 1.5 1.5 0 0 1 0 3Zm3.5 4a1.5 1.5 0 1 1 0-3 1.5 1.5 0 0 1 0 3Z"/></svg></span>
+          <span class="nav-main">
+            <span class="nav-title"><span data-i18n="popup_popup_appearanceBtn_title_1">ظاهر و پوسته</span></span>
+            <span class="nav-sub" id="sumLook">—</span>
+          </span>
+          <span class="nav-chev" aria-hidden="true"><svg viewBox="0 0 24 24"><path d="M15.4 7.4 14 6l-6 6 6 6 1.4-1.4-4.6-4.6 4.6-4.6Z"/></svg></span>
+        </button>
+        <button class="nav-row" type="button" data-goto="about" data-k="درباره نسخه حریم خصوصی میان‌بر">
+          <span class="nav-ico" aria-hidden="true"><svg viewBox="0 0 24 24"><path d="M12 2a10 10 0 1 0 0 20 10 10 0 0 0 0-20Zm1 15h-2v-6h2v6Zm0-8h-2V7h2v2Z"/></svg></span>
+          <span class="nav-main">
+            <span class="nav-title"><span data-i18n="popup_popup_nav_title_10">دربارهٔ ترجمان</span></span>
+            <span class="nav-sub" id="sumAbout">—</span>
+          </span>
+          <span class="nav-chev" aria-hidden="true"><svg viewBox="0 0 24 24"><path d="M15.4 7.4 14 6l-6 6 6 6 1.4-1.4-4.6-4.6 4.6-4.6Z"/></svg></span>
+        </button>
+      </nav>
+    </div>
+
+    <!-- ═══════════════════════════════════════════════ SECTION: engine ══ -->
+    <div class="view" id="view-engine" data-view="engine" data-title="موتور ترجمه" tabindex="-1" hidden>
+      <h2 class="view-label"><span data-i18n="content_youtube_togglePanel_72">موتور ترجمه</span></h2>
+
+      <section class="card" data-k="سرویس موتور ترجمه جمنای gemini openai google bing کلید api">
+        <div class="card-head">
+          <h2><span data-i18n="popup_popup_h2_1">سرویس ترجمه</span></h2>
+          <span class="pill-tag ltr" id="providerTag"></span>
+        </div>
+        <label class="sr-only" for="provider"><span data-i18n="popup_popup_h2_1">سرویس ترجمه</span></label>
+        <select id="provider">
+          <option value="gemini" data-i18n="popup_popup_option_1">Google Gemini — بهترین کیفیت</option>
+          <option value="openai" data-i18n="popup_popup_option_2">سازگار با OpenAI — OpenRouter، DeepSeek، Ollama…</option>
+          <option value="google" data-i18n="popup_popup_option_3">Google Translate — رایگان و بی‌نهایت</option>
+          <option value="bing" data-i18n="popup_popup_option_4">Microsoft Bing — رایگان و بی‌نهایت</option>
+        </select>
+
+        <div id="geminiSection" class="section">
+          <div class="field-row">
+            <label class="lbl" for="apiKeys"><span data-i18n="popup_popup_lbl_2">کلیدهای API</span></label>
+            <button class="info" type="button" aria-label="توضیح کلیدهای API" data-i18n-aria-label="popup_popup_info_aria_label_2"></button>
+          </div>
+          <p class="row-help"><span data-i18n="popup_popup_row_help_3">هر کلید در یک خط. با چند کلید، وقتی سهمیهٔ یکی پر شود خودکار به بعدی می‌رود. توجه: سهمیهٔ گوگل برای هر «حساب» است، نه هر کلید.</span></p>
+          <textarea id="apiKeys" rows="2" dir="ltr" placeholder="AIza…" autocomplete="off" spellcheck="false"></textarea>
+          <div class="row">
+            <button id="saveKey" class="primary" type="button"><span data-i18n="popup_popup_saveKey_1">ذخیره و آزمایش</span></button>
+            <a class="link" href="https://aistudio.google.com/apikey" target="_blank" rel="noopener"><span data-i18n="popup_popup_link_1">کلید رایگان بگیر ↗</span></a>
+          </div>
+          <span id="keyStatus" class="status" role="status"></span>
+          <div id="keyList" class="keylist"></div>
+
+          <div class="field-row spaced">
+            <label class="lbl" for="model"><span data-i18n="popup_popup_lbl_3">مدل</span></label>
+            <button class="info" type="button" aria-label="توضیح مدل" data-i18n-aria-label="popup_popup_info_aria_label_3"></button>
+          </div>
+          <p class="row-help" id="modelHint"></p>
+          <div class="row tight">
+            <select id="model"></select>
+            <button id="refreshModels" class="icon-btn" type="button" title="بروزرسانی فهرست مدل‌ها" aria-label="بروزرسانی فهرست مدل‌ها" data-i18n-title="popup_popup_refreshModels_title_1" data-i18n-aria-label="popup_popup_refreshModels_title_1">⟳</button>
+          </div>
+        </div>
+
+        <div id="mtSection" class="section hidden">
+          <p class="note"><span data-i18n="popup_popup_note_3">بدون کلید و بدون سقف سهمیه — مناسب حجم بالا. کیفیتش پایین‌تر از هوش مصنوعی است (لحن و اصطلاح را منتقل نمی‌کند) و گاهی ممکن است موقتاً در دسترس نباشد.</span></p>
+        </div>
+
+        <div id="openaiSection" class="section hidden">
+          <label class="field"><span data-i18n="popup_popup_field_1">آدرس پایه (Base URL)</span>
+            <input id="oaiBase" type="text" dir="ltr" list="oaiPresets" placeholder="https://openrouter.ai/api/v1" spellcheck="false">
+          </label>
+          <datalist id="oaiPresets"></datalist>
+          <label class="field"><span data-i18n="popup_popup_field_2">کلید API</span> <span class="faint"><span data-i18n="popup_popup_faint_1">— برای سرور محلی خالی بگذارید</span></span>
+            <input id="oaiKey" type="password" dir="ltr" autocomplete="off" spellcheck="false">
+          </label>
+          <label class="field"><span data-i18n="popup_popup_field_3">نام مدل</span>
+            <input id="oaiModel" type="text" dir="ltr" list="oaiModels" placeholder="gpt-5-mini / deepseek-chat / …" spellcheck="false">
+          </label>
+          <datalist id="oaiModels"></datalist>
+          <div class="row tight">
+            <button class="ghost" id="refreshOaiModels" type="button"><span data-i18n="popup_popup_refreshOaiModels_1">⟳ بررسی مدل‌های تازه</span></button>
+          </div>
+          <label class="field"><span data-i18n="popup_popup_field_4">مدل پشتیبان</span> <span class="faint"><span data-i18n="popup_popup_faint_2">— اختیاری</span></span>
+            <input id="openaiFallbackModel" type="text" dir="ltr" list="oaiModels" placeholder="خالی = بدون پشتیبان" spellcheck="false" data-i18n-placeholder="popup_popup_openaiFallbackModel_placeholder_1">
+          </label>
+          <div class="row">
+            <button id="oaiSave" class="primary" type="button"><span data-i18n="popup_popup_saveKey_1">ذخیره و آزمایش</span></button>
+          </div>
+          <span id="oaiStatus" class="status" role="status"></span>
+        </div>
+      </section>
+
+      <section class="card hidden" id="modelTuningCard" data-k="تفکر دما temperature thinking تنظیم پیشرفته مدل">
+        <div class="card-head">
+          <h2><span data-i18n="popup_popup_h2_2">تنظیم پیشرفتهٔ مدل</span></h2>
+          <span class="pill-tag ltr" id="tuningModelName"></span>
+        </div>
+        <p class="row-help open"><span data-i18n="popup_popup_row_help_4">این تنظیم‌ها فقط برای همین مدل ذخیره می‌شوند. سطح تفکر بالاتر = دقیق‌تر ولی کندتر و پرمصرف‌تر. دمای پایین‌تر = پایدارتر، بالاتر = خلاق‌تر.</span></p>
+        <label class="field slim" id="thinkingRow"><span data-i18n="popup_popup_thinkingRow_1">سطح تفکر</span> <span class="faint"><span data-i18n="popup_popup_faint_3">— فقط Gemini</span></span>
+          <select id="thinkingLevel" dir="rtl">
+            <option value="" data-i18n="popup_popup_option_5">پیش‌فرض (کم — پیشنهادی)</option>
+            <option value="minimal" data-i18n="popup_popup_option_6">کمینه — سریع‌ترین</option>
+            <option value="low" data-i18n="popup_popup_option_7">کم</option>
+            <option value="medium" data-i18n="popup_popup_option_8">متوسط</option>
+            <option value="high" data-i18n="popup_popup_option_9">زیاد — دقیق‌ترین</option>
+          </select>
+        </label>
+        <label class="field slim"><span data-i18n="popup_popup_field_5">دما (خلاقیت)</span> <span class="faint"><span data-i18n="popup_popup_faint_4">— خالی = پیش‌فرض</span></span>
+          <input id="temperature" type="number" min="0" max="2" step="0.05" dir="ltr" placeholder="پیش‌فرض" data-i18n-placeholder="popup_popup_temperature_placeholder_1">
+        </label>
+      </section>
+
+      <section class="card" data-k="اندازه دسته batch درخواست سهمیه">
+        <div class="card-head">
+          <h2><span data-i18n="popup_popup_h2_3">اندازهٔ درخواست</span></h2>
+          <button class="info" type="button" aria-label="توضیح اندازهٔ درخواست" data-i18n-aria-label="popup_popup_info_aria_label_4"></button>
+        </div>
+        <p class="row-help"><span data-i18n="popup_popup_row_help_5">عدد کوچک‌تر: اولین ترجمه‌ها زودتر ظاهر می‌شوند ولی درخواست بیشتری مصرف می‌شود. بزرگ‌تر: صرفه‌جویی در سهمیه با کمی تأخیر.</span></p>
+        <label class="field slim"><span data-i18n="popup_popup_field_6">حداکثر پست در هر درخواست</span>
+          <select id="batchSize" dir="rtl">
+            <option value="3" data-i18n="popup_popup_option_10">۳ — سریع‌ترین شروع</option>
+            <option value="5" data-i18n="popup_popup_option_11">۵ — سریع</option>
+            <option value="8" data-i18n="popup_popup_option_12">۸ — متعادل (پیش‌فرض)</option>
+            <option value="12" data-i18n="popup_popup_option_13">۱۲ — صرفه‌جو</option>
+            <option value="16" data-i18n="popup_popup_option_14">۱۶</option>
+            <option value="20" data-i18n="popup_popup_option_15">۲۰ — کمترین تعداد درخواست</option>
+          </select>
+        </label>
+      </section>
+    </div>
+
+    <!-- ════════════════════════════════════════════════════ SECTION: X ══ -->
+    <div class="view" id="view-x" data-view="x" data-title="ایکس (X)" tabindex="-1" hidden>
+      <h2 class="view-label"><span data-i18n="popup_popup_nav_title_1">ایکس (X)</span></h2>
+
+      <section class="card" data-k="حالت خودکار دستی auto manual کلیک">
+        <div class="card-head"><h2><span data-i18n="popup_popup_h2_4">چه‌وقت ترجمه شود</span></h2></div>
+        <div class="seg" id="modeSeg" role="radiogroup" aria-label="زمان ترجمهٔ پست‌ها" data-i18n-aria-label="popup_popup_modeSeg_aria_label_1">
+          <label><input type="radio" name="mode" value="auto"><span><span data-i18n="shared_theme_THEMES_10">خودکار</span></span></label>
+          <label><input type="radio" name="mode" value="manual"><span><span data-i18n="popup_popup_renderSummaries_22">با کلیک</span></span></label>
+        </div>
+        <p class="note"><span data-i18n="popup_popup_note_4">حالت خودکار: هر پست هنگام دیده‌شدن ترجمه می‌شود. حالت با کلیک: زیر هر پست لینک «ترجمهٔ پست» می‌آید.</span></p>
+      </section>
+
+      <section class="card" data-k="رفتار تایم‌لاین پست timeline">
+        <div class="card-head"><h2><span data-i18n="popup_popup_h2_5">رفتار در تایم‌لاین</span></h2></div>
+
+        <div class="row-item" data-k="نهفتن متن اصلی جایگزینی">
+          <div class="row-main">
+            <div class="row-title"><span data-i18n="content_render_toggle_2">نهفتن متن اصلی</span>
+              <button class="info" type="button" aria-label="توضیح" data-i18n-aria-label="popup_popup_info_aria_label_5"></button>
+            </div>
+            <p class="row-help"><span data-i18n="popup_popup_row_help_6">فقط ترجمه دیده می‌شود؛ با یک کلیک روی «نمایش متن اصلی» هر وقت خواستی برمی‌گردد.</span></p>
+          </div>
+          <span class="switch sm"><input type="checkbox" id="replaceOriginal" role="switch"><span class="track" aria-hidden="true"></span></span>
+        </div>
+
+        <div class="row-item" data-k="بیو پروفایل">
+          <div class="row-main"><div class="row-title"><span data-i18n="popup_popup_row_title_2">ترجمهٔ بیوی پروفایل‌ها</span></div></div>
+          <span class="switch sm"><input type="checkbox" id="translateBios" role="switch"><span class="track" aria-hidden="true"></span></span>
+        </div>
+
+        <div class="row-item" data-k="اسکرول سریع سهمیه dwell صبر">
+          <div class="row-main">
+            <div class="row-title"><span data-i18n="popup_popup_row_title_3">صبر کن تا واقعاً بخوانم</span>
+              <button class="info" type="button" aria-label="توضیح" data-i18n-aria-label="popup_popup_info_aria_label_5"></button>
+            </div>
+            <p class="row-help"><span data-i18n="popup_popup_row_help_7">پست فقط وقتی ترجمه می‌شود که حدود یک ثانیه جلوی چشمت بماند — در اسکرول سریع سهمیه مصرف نمی‌شود.</span></p>
+          </div>
+          <span class="switch sm"><input type="checkbox" id="dwellMode" role="switch"><span class="track" aria-hidden="true"></span></span>
+        </div>
+
+        <div class="row-item" data-k="توییت طولانی نمایش موارد بیشتر show more">
+          <div class="row-main">
+            <div class="row-title"><span data-i18n="popup_popup_row_title_4">باز کردن خودکار پست‌های طولانی</span>
+              <button class="info" type="button" aria-label="توضیح" data-i18n-aria-label="popup_popup_info_aria_label_5"></button>
+            </div>
+            <p class="row-help"><span data-i18n="popup_popup_row_help_8">روی «نمایش موارد بیشتر» خودش کلیک می‌کند تا متنِ کامل باز و همان کامل ترجمه شود.</span></p>
+          </div>
+          <span class="switch sm"><input type="checkbox" id="expandLongPosts" role="switch"><span class="track" aria-hidden="true"></span></span>
+        </div>
+
+        <div class="row-item" data-k="یادداشت جامعه مقاله">
+          <div class="row-main"><div class="row-title"><span data-i18n="popup_popup_row_title_5">یادداشت جامعه و مقاله‌ها</span> <span class="chip-mini warn"><span data-i18n="popup_popup_chip_mini_1">آزمایشی</span></span></div></div>
+          <span class="switch sm"><input type="checkbox" id="xExtraZones" role="switch"><span class="track" aria-hidden="true"></span></span>
+        </div>
+      </section>
+
+      <section class="card" data-k="ابزار داخل ایکس x tools">
+        <div class="card-head"><h2><span data-i18n="popup_popup_h2_6">ابزارهای داخل X</span></h2></div>
+        <div class="row-item" data-k="دکمه ترجمه روی عکس توییت">
+          <div class="row-main"><div class="row-title"><span data-i18n="popup_popup_row_title_6">دکمهٔ ترجمه روی عکس‌های توییت</span></div></div>
+          <span class="switch sm"><input type="checkbox" id="xImageButton" role="switch"><span class="track" aria-hidden="true"></span></span>
+        </div>
+        <div class="row-item" data-k="فارسی به انگلیسی نوشتن پست کامپوزر">
+          <div class="row-main">
+            <div class="row-title"><span data-i18n="popup_popup_row_title_7">فارسی → انگلیسی در کامپوزر</span>
+              <button class="info" type="button" aria-label="توضیح" data-i18n-aria-label="popup_popup_info_aria_label_5"></button>
+            </div>
+            <p class="row-help"><span data-i18n="popup_popup_row_help_9">پیش‌نویس را فارسی بنویس، با یک کلیک به انگلیسیِ طبیعی تبدیل می‌شود (Ctrl+Z برمی‌گرداند).</span></p>
+          </div>
+          <span class="switch sm"><input type="checkbox" id="composerTranslate" role="switch"><span class="track" aria-hidden="true"></span></span>
+        </div>
+        <p class="note tip"><span data-i18n="popup_popup_note_5">ترجمهٔ تصویر به مدل هوش مصنوعی نیاز دارد (Gemini یا OpenAI).</span></p>
+      </section>
+    </div>
+
+    <!-- ══════════════════════════════════════════════ SECTION: youtube ══ -->
+    <div class="view" id="view-youtube" data-view="youtube" data-title="یوتیوب" tabindex="-1" hidden>
+      <h2 class="view-label"><span data-i18n="popup_popup_refreshContext_2">یوتیوب</span></h2>
+
+      <section class="card" data-k="یوتیوب youtube video عمومی">
+        <div class="card-head"><h2><span data-i18n="popup_popup_h2_7">عمومی</span></h2></div>
+        <div class="row-item">
+          <div class="row-main"><div class="row-title"><span data-i18n="popup_popup_row_title_8">ترجمهٔ یوتیوب</span></div>
+            <p class="row-help"><span data-i18n="popup_popup_row_help_10">دکمه‌هایش داخل خود پلیر ویدیو ظاهر می‌شوند.</span></p>
+          </div>
+          <span class="switch sm"><input type="checkbox" id="youtube" role="switch"><span class="track" aria-hidden="true"></span></span>
+        </div>
+        <div class="row-item" data-k="خودکار شروع هر ویدیو auto">
+          <div class="row-main">
+            <div class="row-title"><span data-i18n="content_youtube_togglePanel_67">شروع خودکار روی هر ویدیو</span>
+              <button class="info" type="button" aria-label="توضیح" data-i18n-aria-label="popup_popup_info_aria_label_5"></button>
+            </div>
+            <p class="row-help"><span data-i18n="popup_popup_row_help_11">هر ویدیویی که باز کنی خودش شروع می‌شود — با همین تنظیم‌های ذخیره‌شده. اگر روی یک ویدیو دستی خاموشش کنی، تا ویدیوی بعدی خاموش می‌ماند.</span></p>
+          </div>
+          <span class="switch sm"><input type="checkbox" id="ytAuto" role="switch"><span class="track" aria-hidden="true"></span></span>
+        </div>
+        <div class="row-item" data-k="shorts شورتز">
+          <div class="row-main"><div class="row-title"><span data-i18n="popup_popup_row_title_9">پشتیبانی از Shorts</span></div></div>
+          <span class="switch sm"><input type="checkbox" id="ytShorts" role="switch"><span class="track" aria-hidden="true"></span></span>
+        </div>
+      </section>
+
+      <!-- Two outputs, two cards. They used to be interleaved, which is what
+           made "why does the voice need the subtitle switch?" a reasonable
+           question to ask. -->
+      <section class="card" data-k="زیرنویس متن subtitle">
+        <div class="card-head"><h2><span data-i18n="popup_popup_h2_8">متن زیرنویس</span></h2></div>
+        <label class="field slim"><span data-i18n="popup_popup_field_7">موتور اختصاصی یوتیوب</span>
+          <select id="ytProvider"><option value="inherit" data-i18n="popup_popup_option_16">همان موتور عمومی</option><option value="google">Google</option><option value="bing">Bing</option><option value="gemini">Gemini</option><option value="openai">OpenAI-compatible</option></select>
+        </label>
+        <label class="field slim"><span data-i18n="popup_popup_field_8">مدل اختصاصی یوتیوب</span>
+          <input id="ytModel" type="text" dir="ltr" placeholder="خالی = مدل موتور انتخاب‌شده" spellcheck="false" data-i18n-placeholder="popup_popup_ytModel_placeholder_1">
+        </label>
+        <label class="field slim"><span data-i18n="popup_popup_field_9">زبان مقصد زیرنویس یوتیوب</span>
+          <input id="ytTargetLang" type="text" dir="ltr" autocomplete="off">
+        </label>
+        <p class="row-help open"><span data-i18n="popup_popup_row_help_12">موتور، مدل و زبان تازه روی همان ویدیوی در حال پخش اعمال می‌شوند. مدل فقط برای Gemini و OpenAI استفاده می‌شود.</span></p>
+        <div class="row-item" data-k="نمایش متن زیرنویس مخفی کردن">
+          <div class="row-main">
+            <div class="row-title"><span data-i18n="popup_popup_row_title_10">نمایش متن زیرنویس</span>
+              <button class="info" type="button" aria-label="توضیح" data-i18n-aria-label="popup_popup_info_aria_label_5"></button>
+            </div>
+            <p class="row-help"><span data-i18n="popup_popup_row_help_13">کاملاً مستقل از دوبله: می‌توانید متن را خاموش کنید و فقط صدا بشنوید، یا برعکس. داخل پلیر هم هرکدام دکمهٔ خودش را دارد.</span></p>
+          </div>
+          <span class="switch sm"><input type="checkbox" id="ytSubtitles" role="switch" checked><span class="track" aria-hidden="true"></span></span>
+        </div>
+        <div class="row-item" data-k="جمله بندی کیفیت هوشمند">
+          <div class="row-main">
+            <div class="row-title"><span data-i18n="popup_popup_row_title_11">جمله‌بندی هوشمند</span>
+              <button class="info" type="button" aria-label="توضیح" data-i18n-aria-label="popup_popup_info_aria_label_5"></button>
+            </div>
+            <p class="row-help"><span data-i18n="popup_popup_row_help_14">تکه‌های بریدهٔ زیرنویس قبل از ترجمه به جملهٔ کامل تبدیل می‌شوند — کیفیت به‌مراتب بهتر. برای دوبله همیشه روشن است، چون گفتار به جمله نیاز دارد.</span></p>
+          </div>
+          <span class="switch sm"><input type="checkbox" id="ytSentenceMerge" role="switch"><span class="track" aria-hidden="true"></span></span>
+        </div>
+        <div class="row-item" data-k="دوزبانه اصلی زیر فارسی">
+          <div class="row-main"><div class="row-title"><span data-i18n="popup_popup_row_title_12">زیرنویس دوزبانه</span> <span class="faint"><span data-i18n="popup_popup_faint_5">— متن اصلی زیر فارسی</span></span></div></div>
+          <span class="switch sm"><input type="checkbox" id="ytBilingual" role="switch"><span class="track" aria-hidden="true"></span></span>
+        </div>
+      </section>
+
+      <section class="card" data-k="دوبله dub">
+        <div class="card-head"><h2><span data-i18n="popup_popup_h2_9">دوبله (صدا)</span></h2></div>
+        <div class="row-item">
+          <div class="row-main">
+            <div class="row-title"><span data-i18n="content_youtube_togglePanel_60">دوبلهٔ فارسی</span>
+              <button class="info" type="button" aria-label="توضیح" data-i18n-aria-label="popup_popup_info_aria_label_5"></button>
+            </div>
+            <p class="row-help"><span data-i18n="popup_popup_row_help_15">ترجمه با صدا خوانده می‌شود و صدای اصلی پایین می‌آید. دو موتور دارد: «از روی زیرنویس» (رایگان و دقیقاً هم‌زمان) و «شنیداری زنده» که صدای ویدیو را به Gemini می‌دهد و برای ویدیوی</span> <b><span data-i18n="popup_popup_b_1">بدون زیرنویس</span></b> <span data-i18n="popup_popup_row_help_16">هم کار می‌کند.</span></p>
+          </div>
+          <span class="switch sm"><input type="checkbox" id="ytDub" role="switch"><span class="track" aria-hidden="true"></span></span>
+        </div>
+
+        <div class="field" data-k="مدل دوبله زنده live model جمنای">
+          <div class="field-row spaced">
+            <label class="lbl" for="ytLiveModel"><span data-i18n="popup_popup_lbl_4">مدل موتور «شنیداری زنده»</span></label>
+            <button class="info" type="button" aria-label="توضیح مدل شنیداری زنده" data-i18n-aria-label="popup_popup_info_aria_label_6"></button>
+          </div>
+          <p class="row-help"><span data-i18n="popup_popup_row_help_17">فهرست از قابلیت Live مدل‌های حساب دریافت می‌شود. انتخاب مشخص شما بدون اطلاع جایگزین نمی‌شود؛ «خودکار» از مدل‌های سازگار استفاده می‌کند.</span></p>
+          <select id="ytLiveModel"></select>
+          <button id="refreshDubModels" class="ghost" type="button"><span data-i18n="content_web_video_createManager_47">به‌روزرسانی مدل‌ها</span></button>
+          <span id="dubModelsStatus" class="status" role="status" aria-live="polite"></span>
+        </div>
+      </section>
+
+      <p class="note tip"><b><span data-i18n="popup_popup_b_2">باقی تنظیم‌ها داخل خود پلیر است</span></b> <span data-i18n="popup_popup_note_6">— دکمهٔ ⚙ کنار دکمه‌های زیرنویس و دوبله. آنجا موتور دوبله،</span> <b><span data-i18n="popup_popup_b_3">زبانی که ترجمه شود</span></b> <span data-i18n="popup_popup_note_7">(برای ویدیویی که دو صدای هم‌زمان دارد)، بلندی صدای اصلی، سقف تندخوانی، فونت و جای زیرنویس، و دانلود SRT تنظیم می‌شود — چون همه‌شان وقتی معنی دارند که ویدیویی جلوی چشمتان باشد.</span></p>
+    </div>
+
+    <!-- ══════════════════════════════════════════════════ SECTION: web ══ -->
+    <div class="view" id="view-web" data-view="web" data-title="صفحه‌های وب" tabindex="-1" hidden>
+      <h2 class="view-label"><span data-i18n="popup_popup_sources_4">صفحه‌های وب</span></h2>
+
+      <section class="card" data-k="ویدیو پلیر عمومی کنترل زیرنویس دوبله web video player سایت مجوز">
+        <div class="card-head"><h2><span data-i18n="popup_popup_h2_10">ویدیوهای وب</span></h2></div>
+        <div class="row-item">
+          <div class="row-main"><div class="row-title"><span data-i18n="popup_popup_row_title_13">کنترل افزونه روی ویدیوهای وب</span></div><p class="row-help open"><span data-i18n="popup_popup_row_help_18">با روشن‌کردن، کروم برای سایت‌های HTTP و HTTPS اجازه می‌خواهد. پشتیبانی به پلیر و زیرنویس قابل دسترس بستگی دارد.</span></p></div>
+          <span class="switch sm"><input id="webVideoEnabled" type="checkbox" role="switch"><span class="track" aria-hidden="true"></span></span>
+        </div>
+        <div class="row-item"><div class="row-main"><div class="row-title"><span data-i18n="popup_popup_row_title_14">امکان ترجمهٔ زیرنویس عمومی</span></div></div><span class="switch sm"><input id="webVideoSubtitles" type="checkbox" role="switch"><span class="track" aria-hidden="true"></span></span></div>
+        <div class="row-item"><div class="row-main"><div class="row-title"><span data-i18n="popup_popup_row_title_15">امکان دوبلهٔ ویدیوهای وب</span></div><p class="row-help"><span data-i18n="popup_popup_row_help_19">پخش صدا فقط با انتخاب شما روی همان پلیر شروع می‌شود. دوبلهٔ زنده به زیرنویس نیاز ندارد و از سهمیهٔ کلید Gemini استفاده می‌کند.</span></p></div><span class="switch sm"><input id="webVideoDub" type="checkbox" role="switch"><span class="track" aria-hidden="true"></span></span></div>
+        <label class="field slim"><span data-i18n="popup_popup_field_10">روش پیش‌فرض دوبله</span><select id="webVideoDubEngine"><option value="auto" data-i18n="popup_popup_option_17">خودکار: زیرنویس؛ در نبود آن دوبلهٔ زنده</option><option value="caption" data-i18n="content_web_video_createManager_49">خواندن زیرنویس ترجمه‌شده</option><option value="live" data-i18n="popup_popup_option_18">ترجمهٔ مستقیم صدا با Gemini Live</option></select></label>
+        <label class="field slim"><span data-i18n="popup_popup_field_11">زمان نمایش کنترل‌ها</span><select id="webVideoDisplay"><option value="auto" data-i18n="popup_popup_option_19">نمایش خودکار</option><option value="interaction" data-i18n="popup_popup_option_20">فقط پس از تعامل با پلیر</option></select></label>
+        <label class="field slim"><span data-i18n="popup_popup_field_12">سایت‌های فعال</span><select id="webVideoSiteMode"><option value="all" data-i18n="popup_popup_option_21">همهٔ سایت‌های پشتیبانی‌شده، به‌جز فهرست ممنوع</option><option value="allowlist" data-i18n="popup_popup_option_22">فقط سایت‌های انتخابی</option></select></label>
+        <label class="field slim"><span data-i18n="popup_popup_field_13">سایت‌های انتخابی (یک دامنه در هر خط)</span><textarea id="webVideoAllowedSites" rows="3" dir="ltr" spellcheck="false" placeholder="example.com"></textarea></label>
+        <label class="field slim"><span data-i18n="popup_popup_field_14">سایت‌های غیرفعال (یک دامنه در هر خط)</span><textarea id="webVideoBlockedSites" rows="3" dir="ltr" spellcheck="false" placeholder="example.org"></textarea></label>
+        <p class="row-help open"><span data-i18n="popup_popup_row_help_20">دامنه شامل زیردامنه‌هایش هم می‌شود. فهرست غیرفعال همیشه اولویت دارد.</span></p>
+        <button id="webVideoCurrentSite" class="ghost block" type="button"><span data-i18n="popup_popup_webVideoCurrentSite_1">تنظیم ویدیوی این سایت</span></button>
+        <span id="webVideoStatus" class="status" role="status" aria-live="polite"></span>
+      </section>
+
+      <section class="card" data-k="موتور صفحه وب page">
+        <div class="card-head"><h2><span data-i18n="popup_popup_h2_11">موتور ترجمهٔ صفحه</span></h2></div>
+
+        <div class="row-item" data-k="جمله محور بلوک">
+          <div class="row-main">
+            <div class="row-title"><span data-i18n="popup_popup_row_title_16">ترجمهٔ جمله‌محور</span> <span class="chip-mini"><span data-i18n="popup_popup_chip_mini_2">پیشنهادی</span></span>
+              <button class="info" type="button" aria-label="توضیح" data-i18n-aria-label="popup_popup_info_aria_label_5"></button>
+            </div>
+            <p class="row-help"><span data-i18n="popup_popup_row_help_21">جمله‌هایی که وسطشان لینک یا بولد هست یک‌جا ترجمه می‌شوند، نه تکه‌تکه.</span></p>
+          </div>
+          <span class="switch sm"><input type="checkbox" id="pageBlockMode" role="switch"><span class="track" aria-hidden="true"></span></span>
+        </div>
+        <div class="row-item" data-k="اسکرول بی نهایت spa پیوسته">
+          <div class="row-main">
+            <div class="row-title"><span data-i18n="popup_popup_row_title_17">ترجمهٔ پیوسته</span>
+              <button class="info" type="button" aria-label="توضیح" data-i18n-aria-label="popup_popup_info_aria_label_5"></button>
+            </div>
+            <p class="row-help"><span data-i18n="popup_popup_row_help_22">محتوایی که بعداً می‌آید (اسکرول بی‌نهایت، منوها، صفحه‌های پویا) هم ترجمه می‌شود.</span></p>
+          </div>
+          <span class="switch sm"><input type="checkbox" id="pageDynamic" role="switch"><span class="track" aria-hidden="true"></span></span>
+        </div>
+        <div class="row-item" data-k="دوزبانه ترجمه زیر متن اصلی">
+          <div class="row-main"><div class="row-title"><span data-i18n="content_page_translate_acts_2">نمایش دوزبانه</span> <span class="faint"><span data-i18n="popup_popup_faint_6">— ترجمه زیر متن اصلی</span></span></div></div>
+          <span class="switch sm"><input type="checkbox" id="pageBilingual" role="switch"><span class="track" aria-hidden="true"></span></span>
+        </div>
+        <div class="row-item" data-k="tooltip placeholder راهنمای فیلد">
+          <div class="row-main"><div class="row-title"><span data-i18n="popup_popup_row_title_18">ترجمهٔ placeholder و tooltipها</span></div></div>
+          <span class="switch sm"><input type="checkbox" id="pageAttrs" role="switch"><span class="track" aria-hidden="true"></span></span>
+        </div>
+        <div class="row-item" data-k="iframe فریم داخلی">
+          <div class="row-main"><div class="row-title"><span data-i18n="popup_popup_row_title_19">ترجمهٔ فریم‌های داخلی (iframe)</span></div></div>
+          <span class="switch sm"><input type="checkbox" id="pageFrames" role="switch"><span class="track" aria-hidden="true"></span></span>
+        </div>
+      </section>
+
+      <section class="card" data-k="راست‌کلیک منو context menu">
+        <div class="card-head"><h2><span data-i18n="popup_popup_h2_12">ابزارهای هر سایت</span></h2></div>
+        <div class="row-item" data-k="چیپ انتخاب متن شناور">
+          <div class="row-main"><div class="row-title"><span data-i18n="popup_popup_row_title_20">دکمهٔ شناور بعد از انتخاب متن</span></div></div>
+          <span class="switch sm"><input type="checkbox" id="selectionButton" role="switch"><span class="track" aria-hidden="true"></span></span>
+        </div>
+        <div class="row-item" data-k="راست کلیک عکس تصویر">
+          <div class="row-main"><div class="row-title"><span data-i18n="popup_popup_row_title_21">راست‌کلیک روی تصویر: ترجمهٔ تصویر</span></div></div>
+          <span class="switch sm"><input type="checkbox" id="imageTranslate" role="switch"><span class="track" aria-hidden="true"></span></span>
+        </div>
+        <div class="row-item" data-k="خلاصه فارسی راست کلیک">
+          <div class="row-main"><div class="row-title"><span data-i18n="popup_popup_row_title_22">راست‌کلیک: خلاصهٔ فارسی</span></div></div>
+          <span class="switch sm"><input type="checkbox" id="summarizer" role="switch"><span class="track" aria-hidden="true"></span></span>
+        </div>
+        <p class="note tip"><span data-i18n="popup_popup_note_8">این دو گزینه به مدل هوش مصنوعی نیاز دارند (Gemini یا OpenAI).</span></p>
+      </section>
+
+      <section class="card" data-k="سایت‌های ترجمهٔ خودکار این سایت لیست حذف">
+        <div class="card-head"><h2><span data-i18n="popup_popup_h2_13">سایت‌های ترجمهٔ خودکار</span></h2></div>
+        <p class="note" id="autoSitesEmpty"><span data-i18n="popup_popup_autoSitesEmpty_1">هنوز سایتی اضافه نشده. در خانه، سوئیچ «ترجمهٔ خودکار این سایت» را برای سایتی که باز است روشن کن.</span></p>
+        <div id="autoSitesBlock">
+          <div id="autoSites" class="sitelist"></div>
+        </div>
+      </section>
+    </div>
+
+    <!-- ════════════════════════════════════════════════ SECTION: voice ══ -->
+    <div class="view" id="view-voice" data-view="voice" data-title="صدا و خواندن" tabindex="-1" hidden>
+      <h2 class="view-label"><span data-i18n="popup_popup_nav_title_2">صدا و خواندن</span></h2>
+
+      <section class="card" data-k="کجا خوانده شود خواندن">
+        <div class="card-head"><h2><span data-i18n="popup_popup_h2_14">کجا خوانده شود</span></h2></div>
+        <div class="row-item" data-k="دکمه بلندگو روی ترجمه">
+          <div class="row-main">
+            <div class="row-title"><span data-i18n="popup_popup_row_title_23">دکمهٔ 🔊 روی ترجمه‌ها</span>
+              <button class="info" type="button" aria-label="توضیح" data-i18n-aria-label="popup_popup_info_aria_label_5"></button>
+            </div>
+            <p class="row-help"><span data-i18n="popup_popup_row_help_23">روی کارت ترجمه، خلاصه و ترجمهٔ پست‌های ایکس یک دکمهٔ بلندگو می‌آید. یک بار دیگر بزنی، متوقف می‌شود.</span></p>
+          </div>
+          <span class="switch sm"><input type="checkbox" id="ttsButton" role="switch"><span class="track" aria-hidden="true"></span></span>
+        </div>
+
+        <div class="row-item" data-k="راست کلیک خواندن هر سایت متن انتخاب شده صفحه میانبر">
+          <div class="row-main">
+            <div class="row-title"><span data-i18n="popup_popup_row_title_24">خواندن در هر سایت (راست‌کلیک)</span>
+              <button class="info" type="button" aria-label="توضیح" data-i18n-aria-label="popup_popup_info_aria_label_5"></button>
+            </div>
+            <p class="row-help"><span data-i18n="popup_popup_row_help_24">دقیقاً کنار «ترجمهٔ این متن» و «ترجمهٔ این صفحه»، دو گزینهٔ خواندن هم می‌آید: متن انتخاب‌شده، یا کل صفحه. میان‌بر صفحه‌کلید:</span> <b>Alt+Shift+R</b> <span data-i18n="popup_popup_row_help_25">(بار دوم متوقف می‌کند).</span></p>
+          </div>
+          <span class="switch sm"><input type="checkbox" id="ttsAnywhere" role="switch"><span class="track" aria-hidden="true"></span></span>
+        </div>
+
+        <div class="row-item" data-k="ترجمه پیش از خواندن زبان اصلی انگلیسی">
+          <div class="row-main">
+            <div class="row-title"><span data-i18n="popup_popup_row_title_25">اول ترجمه کن، بعد بخوان</span></div>
+            <p class="row-help"><span data-i18n="popup_popup_row_help_26">متنی که فارسی نیست اول به فارسی ترجمه و بعد خوانده می‌شود. خاموش کنی، متن با زبان خودش به همان صدای انتخابی سپرده می‌شود.</span></p>
+          </div>
+          <span class="switch sm"><input type="checkbox" id="ttsTranslateFirst" role="switch"><span class="track" aria-hidden="true"></span></span>
+        </div>
+      </section>
+
+      <section class="card" data-k="صدا tts موتور صدا voice">
+        <div class="card-head"><h2><span data-i18n="popup_popup_h2_15">صدا</span></h2></div>
+        <div class="field">
+          <div class="field-row spaced">
+            <label class="lbl" for="ttsEngine"><span data-i18n="popup_popup_lbl_5">موتور صدا</span></label>
+            <button class="info" type="button" aria-label="توضیح موتور صدا" data-i18n-aria-label="popup_popup_info_aria_label_7"></button>
+          </div>
+          <p class="row-help"><span data-i18n="popup_popup_row_help_27">ویندوز و کروم هیچ صدای فارسی ندارند، پس صدا از سرویس گرفته می‌شود. «Bing» بدون کلید و بدون محدودیت است و صدای نورونی فارسی می‌دهد — گزینهٔ پیش‌فرض. «Gemini» کیفیت و لحن بهتری دارد ولی سهمیهٔ رایگانش خیلی کم است (حدود ۳ درخواست در دقیقه)، پس مناسب متن کوتاه است نه یک مقالهٔ کامل.</span></p>
+          <select id="ttsEngine"></select>
+        </div>
+
+        <div class="field">
+          <div class="field-row spaced">
+            <label class="lbl" for="ttsVoice"><span data-i18n="popup_popup_h2_15">صدا</span></label>
+            <span class="faint" id="ttsVoiceHint"></span>
+          </div>
+          <div class="row tight">
+            <select id="ttsVoice"></select>
+            <button id="refreshTtsModels" class="icon-btn" type="button" title="بروزرسانی صداها و مدل‌های صدا" aria-label="بروزرسانی صداها و مدل‌های صدا" data-i18n-title="popup_popup_refreshTtsModels_title_1" data-i18n-aria-label="popup_popup_refreshTtsModels_title_1">⟳</button>
+          </div>
+          <p class="row-help open small" id="ttsRefreshHint"><span data-i18n="popup_popup_ttsRefreshHint_1">⟳ فهرست تازه را از خود سرویس می‌گیرد: مدل‌های صدای Gemini، مدل‌های سرویس سازگار با OpenAI، و — اگر پل محلی روشن باشد — همهٔ صداهای فارسی مایکروسافت.</span></p>
+        </div>
+
+        <div class="field" id="ttsGeminiModelField">
+          <div class="field-row spaced">
+            <label class="lbl" for="ttsModelGemini"><span data-i18n="popup_popup_lbl_6">مدل صدای Gemini</span></label>
+          </div>
+          <select id="ttsModelGemini"></select>
+        </div>
+
+        <div class="field" id="ttsOpenaiModelField">
+          <div class="field-row spaced">
+            <label class="lbl" for="ttsModelOpenai"><span data-i18n="popup_popup_lbl_7">مدل صدای OpenAI</span></label>
+            <button class="info" type="button" aria-label="توضیح مدل صدای OpenAI" data-i18n-aria-label="popup_popup_info_aria_label_8"></button>
+          </div>
+          <p class="row-help"><span data-i18n="popup_popup_row_help_28">نام مدل را خودت بنویس یا از فهرستِ گرفته‌شده انتخاب کن — سرویس‌دهنده‌ها این نام‌ها را زیاد عوض می‌کنند و یک سرور محلی هم نام خودش را دارد. نشانی و کلید از همان بخش OpenAI در «موتور ترجمه» خوانده می‌شود.</span></p>
+          <input type="text" id="ttsModelOpenai" list="ttsOpenaiModels" placeholder="gpt-4o-mini-tts" dir="ltr">
+          <datalist id="ttsOpenaiModels"></datalist>
+        </div>
+
+        <div class="field">
+          <div class="field-row spaced">
+            <label class="lbl" for="ttsRate"><span data-i18n="popup_popup_lbl_8">سرعت خواندن</span></label>
+            <span class="faint" id="ttsRateVal"><span data-i18n="popup_popup_ttsRateVal_1">۱٫۰×</span></span>
+          </div>
+          <input type="range" id="ttsRate" min="0.5" max="2" step="0.05">
+          <p class="row-help open small" id="ttsRateHelp"><span data-i18n="popup_popup_ttsRateHelp_1">روی Gemini اثری ندارد؛ لحن و سرعت آن از کادر «لحن خواندن» گرفته می‌شود.</span></p>
+        </div>
+
+        <details class="fold" data-k="لحن سبک خواندن راوی">
+          <summary><span data-i18n="popup_popup_summary_1">لحن خواندن (فقط Gemini)</span></summary>
+          <p class="row-help open"><span data-i18n="popup_popup_row_help_29">جملهٔ راهنمای مدل برای نحوهٔ خواندن. خالی بگذاری، متن پیش‌فرض فارسی استفاده می‌شود. مثال: «با لحن آرام یک راوی مستند بخوان.»</span></p>
+          <textarea id="ttsStyle" class="fa-area" rows="3" placeholder="با لحن آرام و شمرده بخوان." data-i18n-placeholder="popup_popup_ttsStyle_placeholder_1"></textarea>
+        </details>
+
+        <div class="row actions">
+          <button id="ttsTest" class="ghost" type="button"><span data-i18n="popup_popup_ttsTest_1">آزمایش صدا</span></button>
+          <button id="ttsClearCache" class="ghost" type="button"><span data-i18n="popup_popup_ttsClearCache_1">پاک‌کردن صداهای ذخیره‌شده</span></button>
+        </div>
+        <p class="note tip" id="ttsCacheNote"></p>
+      </section>
+    </div>
+
+    <!-- ═══════════════════════════════════════════════ SECTION: bridge ══ -->
+    <div class="view" id="view-bridge" data-view="bridge" data-title="پل محلی" tabindex="-1" hidden>
+      <h2 class="view-label"><span data-i18n="popup_popup_ENGINE_LABEL_2">پل محلی</span></h2>
+
+      <section class="card" data-k="پل محلی bridge کامپیوتر آفلاین توکن پورت اتصال">
+        <div class="card-head">
+          <h2><span data-i18n="popup_popup_h2_16">اتصال</span></h2>
+          <span class="chip-mini warn" id="bridgeChip"><span data-i18n="content_youtube_togglePanel_74">خاموش</span></span>
+        </div>
+        <p class="note"><span data-i18n="popup_popup_note_9">یک برنامهٔ کوچک روی همین کامپیوتر که کارهایی را انجام می‌دهد که مرورگر اصلاً نمی‌تواند: صدای فارسی بدون وابستگی به مرورگر، رونویسی ویدیوی</span> <b><span data-i18n="popup_popup_b_1">بدون زیرنویس</span></b><span data-i18n="popup_popup_note_10">، و فرستادن تصویر و ویدیو به دو برنامهٔ خودتان. برای اجرا فایل</span> <code>bridge/bridge.cmd</code> <span data-i18n="popup_popup_note_11">داخل پوشهٔ افزونه را باز کنید.</span></p>
+
+        <div class="row-item">
+          <div class="row-main">
+            <div class="row-title"><span data-i18n="popup_popup_row_title_26">استفاده از پل محلی</span>
+              <button class="info" type="button" aria-label="توضیح" data-i18n-aria-label="popup_popup_info_aria_label_5"></button>
+            </div>
+            <p class="row-help"><span data-i18n="popup_popup_row_help_30">تا وقتی برنامهٔ پل اجرا نشده باشد هیچ اتفاقی نمی‌افتد و چیزی خراب نمی‌شود — فقط قابلیت‌هایش در دسترس نیست.</span></p>
+          </div>
+          <span class="switch sm"><input type="checkbox" id="bridgeEnabled" role="switch"><span class="track" aria-hidden="true"></span></span>
+        </div>
+
+        <div id="bridgeSection" class="section hidden">
+          <label class="field"><span data-i18n="popup_popup_field_15">توکن</span> <span class="faint"><span data-i18n="popup_popup_faint_7">— در پنجرهٔ خود پل نوشته شده</span></span>
+            <input id="bridgeToken" type="text" dir="ltr" placeholder="یک‌بار کپی و اینجا بچسبانید" spellcheck="false" autocomplete="off" data-i18n-placeholder="popup_popup_bridgeToken_placeholder_1">
+          </label>
+          <label class="field"><span data-i18n="popup_popup_field_16">پورت</span>
+            <input id="bridgePort" type="number" dir="ltr" min="1024" max="65535" placeholder="8765">
+          </label>
+          <div class="row">
+            <button id="bridgeCheck" class="primary" type="button"><span data-i18n="popup_popup_message_33">بررسی اتصال</span></button>
+          </div>
+          <div id="bridgeReport" class="report hidden" role="status"></div>
+        </div>
+      </section>
+
+      <section class="card" id="bridgeFeatures" data-k="قابلیت‌های پل محلی">
+        <div class="card-head"><h2><span data-i18n="popup_popup_h2_17">قابلیت‌ها</span></h2></div>
+        <div class="row-item" data-k="رونویسی ویسپر بدون زیرنویس asr whisper">
+          <div class="row-main">
+            <div class="row-title"><span data-i18n="popup_popup_CAP_LABELS_3">رونویسی ویدیوی بدون زیرنویس</span>
+              <button class="info" type="button" aria-label="توضیح" data-i18n-aria-label="popup_popup_info_aria_label_5"></button>
+            </div>
+            <p class="row-help"><span data-i18n="popup_popup_row_help_31">اگر ویدیویی اصلاً زیرنویس نداشته باشد، صدایش روی همین کامپیوتر به متن تبدیل می‌شود و بعد همان خط لولهٔ همیشگی ترجمه‌اش می‌کند. به</span> <code>faster-whisper</code> <span data-i18n="popup_popup_row_help_32">نیاز دارد.</span></p>
+          </div>
+          <span class="switch sm"><input type="checkbox" id="bridgeAsr" role="switch"><span class="track" aria-hidden="true"></span></span>
+        </div>
+        <label class="field"><span data-i18n="popup_popup_field_17">دقت رونویسی</span>
+          <select id="bridgeAsrModel">
+            <option value="tiny" data-i18n="popup_popup_option_23">سریع‌ترین (tiny)</option>
+            <option value="base" data-i18n="popup_popup_option_24">سریع (base)</option>
+            <option value="small" data-i18n="popup_popup_option_25">متعادل (small) — پیشنهادی</option>
+            <option value="medium" data-i18n="popup_popup_option_26">دقیق (medium)</option>
+            <option value="large-v3" data-i18n="popup_popup_option_27">دقیق‌ترین (large-v3)</option>
+          </select>
+        </label>
+        <div class="row-item" data-k="مانگا فصل کامل خودکار صفحه بعد">
+          <div class="row-main">
+            <div class="row-title"><span data-i18n="popup_popup_row_title_27">مانگا: ادامهٔ خودکار صفحه‌های تازه</span>
+              <button class="info" type="button" aria-label="توضیح" data-i18n-aria-label="popup_popup_info_aria_label_5"></button>
+            </div>
+            <p class="row-help"><span data-i18n="popup_popup_row_help_33">راست‌کلیک → «ترجمهٔ همهٔ صفحه‌های این فصل» کل فصل را یک‌جا می‌فرستد و هر صفحه به‌محض آماده‌شدن سر جای خودش می‌نشیند. با این کلید، صفحه‌هایی که بعداً با اسکرول بارگذاری می‌شوند هم خودشان ترجمه می‌شوند.</span></p>
+          </div>
+          <span class="switch sm"><input type="checkbox" id="mangaAuto" role="switch"><span class="track" aria-hidden="true"></span></span>
+        </div>
+        <div class="field">
+          <div class="field-row spaced">
+            <label class="lbl" for="mangaConcurrency"><span data-i18n="popup_popup_lbl_9">مانگا: چند صفحه هم‌زمان</span></label>
+            <span class="faint" id="mangaConcurrencyVal"><span data-i18n="popup_popup_mangaConcurrencyVal_1">۳</span></span>
+          </div>
+          <input type="range" id="mangaConcurrency" min="1" max="4" step="1" dir="ltr">
+          <p class="row-help"><span data-i18n="popup_popup_row_help_34">هر صفحه حدود ۲ ثانیه OCR و ۱۴ ثانیه</span> <b><span data-i18n="popup_popup_b_4">انتظار</span></b> <span data-i18n="popup_popup_row_help_35">برای مدل ترجمه است؛ هم‌زمانی همان انتظار را روی هم می‌اندازد (۶ صفحه: ۱۰۲ ثانیه → ۵۳ ثانیه). اگر سرویس ترجمه‌تان درخواست موازی را محدود می‌کند، پایین بیاورید.</span></p>
+        </div>
+      </section>
+    </div>
+
+    <!-- ════════════════════════════════════════════════ SECTION: video ══ -->
+    <div class="view" id="view-video" data-view="video" data-title="کیفیت ویدیو" tabindex="-1" hidden>
+      <h2 class="view-label"><span data-i18n="popup_popup_nav_title_4">کیفیت ویدیو</span></h2>
+
+      <section class="card" data-k="rtx vsr ویدیو کیفیت انویدیا شتاب سخت افزاری کدک h264 vp9 av1 ارتقا">
+        <div class="card-head">
+          <h2>RTX Video</h2>
+          <span class="pill-tag"><span data-i18n="popup_popup_pill_tag_1">مستقل از ترجمه</span></span>
+        </div>
+        <p class="note"><span data-i18n="popup_popup_note_12">این بخش با ترجمه کاری ندارد. کارت گرافیک فقط وقتی می‌تواند ویدیو را ارتقا دهد که مرورگر آن را روی «لایهٔ سخت‌افزاری» خودش پخش کند — و خیلی از سایت‌ها ناخواسته این را خراب می‌کنند.</span></p>
+
+        <div class="row-item" data-k="بهینه سازی صفحه ویدیو overlay موانع css">
+          <div class="row-main">
+            <div class="row-title"><span data-i18n="popup_popup_row_title_28">آماده‌سازی ویدیوها برای RTX VSR</span>
+              <button class="info" type="button" aria-label="توضیح" data-i18n-aria-label="popup_popup_info_aria_label_5"></button>
+            </div>
+            <p class="row-help"><span data-i18n="popup_popup_row_help_36">گوشهٔ گرد پخش‌کننده، فیلتر CSS، ماسک، شفافیت جزئی، یا نواری که پشتش را تار می‌کند — همه ویدیو را از لایهٔ سخت‌افزاری بیرون می‌اندازند. این گزینه دقیقاً همین موانع را روی هر سایتی برمی‌دارد؛ برگشت‌پذیر و بدون دست‌زدن به چیز دیگری. برای کار روی همهٔ سایت‌ها یک‌بار اجازهٔ دسترسی می‌گیرد.</span></p>
+          </div>
+          <span class="switch sm"><input type="checkbox" id="vsrHelper" role="switch"><span class="track" aria-hidden="true"></span></span>
+        </div>
+
+        <div class="row-item" data-k="کدک h264 vp9 av1 دیکد سخت افزاری">
+          <div class="row-main">
+            <div class="row-title"><span data-i18n="popup_popup_row_title_29">ترجیح کدک H.264</span>
+              <span class="chip-mini warn"><span data-i18n="popup_popup_chip_mini_3">۱۰۸۰p</span></span>
+              <button class="info" type="button" aria-label="توضیح" data-i18n-aria-label="popup_popup_info_aria_label_5"></button>
+            </div>
+            <p class="row-help"><span data-i18n="popup_popup_row_help_37">دلیل دوم کار نکردن VSR: ویدیو با VP9 یا AV1 پخش می‌شود و رمزگشایی‌اش روی CPU می‌افتد؛ آن‌وقت اصلاً تصویری روی کارت گرافیک نیست که ارتقا داده شود. با این گزینه به سایت گفته می‌شود «VP9/AV1 را نمی‌توانم» تا H.264 بدهد که هر کارت گرافیکی سخت‌افزاری رمزگشایی‌اش می‌کند. در عوض سایت‌هایی مثل یوتیوب تا ۱۰۸۰p محدود می‌شوند (که برای VSR اتفاقاً حالت ایده‌آل است). بعد از تغییر، صفحه را تازه کنید.</span></p>
+          </div>
+          <span class="switch sm"><input type="checkbox" id="vsrForceH264" role="switch"><span class="track" aria-hidden="true"></span></span>
+        </div>
+
+        <!-- v2.9.0: this switch used to live in the appearance sheet while its
+             two siblings lived here. Same concept, two places — now one. -->
+        <div class="row-item" data-k="سازگاری شتاب دهنده تاری پس زمینه blur رابط">
+          <div class="row-main">
+            <div class="row-title"><span data-i18n="popup_popup_row_title_30">رابط سازگار با شتاب‌دهنده</span>
+              <button class="info" type="button" aria-label="توضیح" data-i18n-aria-label="popup_popup_info_aria_label_5"></button>
+            </div>
+            <p class="row-help"><span data-i18n="popup_popup_row_help_38">وقتی روشن است، هیچ بخشی از افزونه که روی ویدیو کشیده می‌شود «تاری پس‌زمینه» نمی‌گیرد. آن جلوه، مرورگر را مجبور می‌کند تصویر ویدیو را بخواند و همان لحظه ویدیو از لایهٔ سخت‌افزاریِ کارت گرافیک بیرون می‌افتد و RTX VSR (و ارتقای HDR درایور) خاموش می‌شود. ظاهر کمی ساده‌تر، ویدیو سالم.</span></p>
+          </div>
+          <span class="switch sm"><input type="checkbox" id="videoSafeUi" role="switch"><span class="track" aria-hidden="true"></span></span>
+        </div>
+
+        <div class="row actions">
+          <button id="vsrCheck" class="ghost" type="button"><span data-i18n="popup_popup_vsrCheck_1">بررسی ویدیوی این تب</span></button>
+        </div>
+        <div id="vsrReport" class="report hidden" role="status"></div>
+      </section>
+    </div>
+
+    <!-- ═══════════════════════════════════════════════ SECTION: custom ══ -->
+    <div class="view" id="view-custom" data-view="custom" data-title="شخصی‌سازی ترجمه" tabindex="-1" hidden>
+      <h2 class="view-label"><span data-i18n="popup_popup_nav_title_5">شخصی‌سازی ترجمه</span></h2>
+
+      <section class="card" data-k="واژه نامه گلاسری دستور شخصی اصطلاح">
+        <div class="card-head"><h2><span data-i18n="popup_popup_h2_18">واژه‌نامه و دستور شخصی</span></h2></div>
+        <label class="field"><span data-i18n="popup_popup_field_18">واژه‌نامهٔ شخصی</span> <span class="faint"><span data-i18n="popup_popup_faint_8">— هر خط:</span> <code dir="ltr" data-i18n="glossary.example">term = ترجمه</code></span>
+          <textarea id="glossary" rows="3" class="fa-area" placeholder="LLM = مدل زبانی&#10;ship → منتشر کردن" spellcheck="false" data-i18n-placeholder="popup_popup_glossary_placeholder_1"></textarea>
+        </label>
+        <label class="field"><span data-i18n="popup_popup_customParts_2">دستور شخصی</span> <span class="faint"><span data-i18n="popup_popup_faint_9">— به انتهای همهٔ پرامپت‌ها اضافه می‌شود</span></span>
+          <textarea id="customPrompt" rows="3" class="fa-area" placeholder="مثلاً: لحن محاوره‌ای‌تر؛ اصطلاحات کریپتو ترجمه نشود" spellcheck="false" data-i18n-placeholder="popup_popup_customPrompt_placeholder_1"></textarea>
+        </label>
+      </section>
+
+      <section class="card" data-k="پرامپت ویرایش prompt جایگزینی">
+        <div class="card-head">
+          <h2><span data-i18n="popup_popup_h2_19">ویرایش پرامپت‌ها</span></h2>
+          <button class="info" type="button" aria-label="توضیح ویرایش پرامپت" data-i18n-aria-label="popup_popup_info_aria_label_9"></button>
+        </div>
+        <p class="row-help"><span data-i18n="popup_popup_row_help_39">متن کاملِ دستورِ هر بخش را می‌بینی و می‌توانی جایگزین کنی. فقط اگر می‌دانی چه می‌کنی — پرامپت خراب، کیفیت را پایین می‌آورد. واژه‌نامه و دستور شخصی همچنان به انتهای پرامپت تو اضافه می‌شوند.</span></p>
+        <label class="sr-only" for="promptTarget"><span data-i18n="popup_popup_sr_only_2">کدام پرامپت</span></label>
+        <select id="promptTarget">
+          <option value="tweet" data-i18n="popup_popup_option_28">پرامپت ترجمهٔ توییت (X)</option>
+          <option value="generic" data-i18n="popup_popup_option_29">پرامپت صفحه / زیرنویس / متن انتخاب‌شده</option>
+          <option value="image" data-i18n="popup_popup_option_30">پرامپت ترجمهٔ تصویر</option>
+          <option value="summary" data-i18n="popup_popup_option_31">پرامپت خلاصه‌سازی</option>
+          <option value="compose" data-i18n="popup_popup_option_32">پرامپت فارسی → انگلیسی</option>
+        </select>
+        <label class="sr-only" for="promptEditor"><span data-i18n="popup_popup_sr_only_3">متن پرامپت</span></label>
+        <textarea id="promptEditor" rows="8" dir="ltr" spellcheck="false" placeholder="متن پرامپت…" data-i18n-placeholder="popup_popup_promptEditor_placeholder_1"></textarea>
+        <div class="row">
+          <button id="promptSave" class="primary" type="button"><span data-i18n="popup_popup_promptSave_1">ذخیره</span></button>
+          <button id="promptReset" class="ghost" type="button"><span data-i18n="popup_popup_promptReset_1">بازگردانی به پیش‌فرض</span></button>
+        </div>
+        <div class="statusline">
+          <span id="promptStatus" class="status" role="status"></span>
+          <span id="promptState" class="status"></span>
+        </div>
+      </section>
+    </div>
+
+    <!-- ════════════════════════════════════════════════ SECTION: stats ══ -->
+    <div class="view" id="view-stats" data-view="stats" data-title="آمار و سهمیه" tabindex="-1" hidden>
+      <h2 class="view-label"><span data-i18n="popup_popup_nav_title_6">آمار و سهمیه</span></h2>
+
+      <section class="card hidden" id="quotaCard" data-k="سهمیه مصرف امروز کوتا کلید بازنشانی">
+        <div class="card-head"><h2><span data-i18n="popup_popup_h2_20">مصرف امروز</span></h2><span class="pill-tag" id="quotaCapNote"></span></div>
+        <div id="quotaBlock" class="hidden">
+          <div class="quota-head">
+            <span id="quotaUsed">—</span>
+            <span id="quotaLine" class="faint"></span>
+          </div>
+          <div class="quota-bar" id="quotaBar" role="progressbar" aria-label="مصرف سهمیهٔ امروز"
+               aria-valuemin="0" aria-valuemax="100" aria-valuenow="0" data-i18n-aria-label="popup_popup_quotaBar_aria_label_1">
+            <div id="quotaFill" class="quota-fill"></div>
+          </div>
+          <div id="quotaVerdict" class="quota-verdict"></div>
+          <div id="resetLine" class="faint small"></div>
+        </div>
+        <details class="fold hidden" id="quotaKeysFold">
+          <summary><span data-i18n="popup_popup_summary_2">مصرف هر کلید</span></summary>
+          <p class="row-help open"><span data-i18n="popup_popup_row_help_40">سهمیهٔ روزانهٔ گوگل روی</span> <b><span data-i18n="popup_popup_b_5">هر پروژه</span></b> <span data-i18n="popup_popup_row_help_41">اعمال می‌شود، نه روی کل حساب. پس هر کلید ستون خودش را دارد. اگر چند کلید از یک پروژه باشند، سهمیه‌شان مشترک است و راهی نیست که افزونه این را از بیرون بفهمد — برای همین سقف کل «حداکثرِ ممکن» است تا وقتی خود گوگل سقف واقعی یک کلید را اعلام کند.</span></p>
+          <div id="quotaKeys" class="quota-keys"></div>
+        </details>
+        <details class="fold">
+          <summary><span data-i18n="popup_popup_summary_3">سقف دستی (اختیاری)</span></summary>
+          <p class="row-help open"><span data-i18n="popup_popup_row_help_42">مصرف هر کلید خودکار شمرده می‌شود و سقفش هم خودکار تشخیص داده می‌شود. گوگل راهی برای خواندن سهمیهٔ باقی‌مانده نمی‌دهد؛ این فقط برای پلن پولی یا سقف سفارشی است. عددی که می‌نویسید سقف</span> <b><span data-i18n="popup_popup_b_6">هر کلید</span></b> <span data-i18n="popup_popup_row_help_43">است، نه مجموع.</span></p>
+          <label class="field slim"><span data-i18n="popup_popup_field_19">سقف روزانهٔ سفارشی (هر کلید)</span>
+            <input id="dailyQuota" type="number" min="0" step="1" dir="ltr" placeholder="خودکار" data-i18n-placeholder="shared_theme_THEMES_10">
+          </label>
+        </details>
+      </section>
+
+      <section class="card" data-k="آمار ترجمه کش صرفه جویی صفر کردن">
+        <div class="card-head"><h2><span data-i18n="popup_popup_h2_21">آمار ترجمه</span></h2></div>
+        <div class="tiles">
+          <div class="tile"><span class="num" id="tileToday"><span data-i18n="popup_popup_tileToday_1">۰</span></span><span class="lbl"><span data-i18n="popup_popup_lbl_10">امروز</span></span></div>
+          <div class="tile"><span class="num" id="tileTotal"><span data-i18n="popup_popup_tileToday_1">۰</span></span><span class="lbl"><span data-i18n="popup_popup_lbl_11">کل</span></span></div>
+          <div class="tile"><span class="num" id="tileCache"><span data-i18n="popup_popup_tileCache_1">۰٪</span></span><span class="lbl"><span data-i18n="popup_popup_lbl_12">صرفه‌جویی کش</span></span></div>
+        </div>
+        <p id="statsEmpty" class="note hidden"><span data-i18n="popup_popup_statsEmpty_1">هنوز آماری ثبت نشده — شروع به ترجمه کنید.</span></p>
+        <details class="fold hidden" id="statsDetails">
+          <summary><span data-i18n="popup_popup_summary_4">جزئیات بیشتر</span></summary>
+          <div id="statsBreakdown" class="breakdown"></div>
+          <div id="statsKeyList" class="keylist"></div>
+        </details>
+        <div class="row actions">
+          <button id="resetStats" class="ghost" type="button"><span data-i18n="popup_popup_message_15">صفر کردن آمار</span></button>
+          <button id="clearCache" class="ghost" type="button"><span data-i18n="popup_popup_message_17">پاک‌کردن کش</span></button>
+        </div>
+        <p class="note tip"><span data-i18n="popup_popup_note_13">شمارش‌ها تقریبی‌اند: گوگل راهی برای خواندن سهمیهٔ باقی‌مانده نمی‌دهد و تلاش‌های دوباره کمی کمتر شمرده می‌شوند.</span></p>
+      </section>
+    </div>
+
+    <!-- ════════════════════════════════════════════════ SECTION: about ══ -->
+    <div class="view" id="view-about" data-view="about" data-title="دربارهٔ ترجمان" tabindex="-1" hidden>
+      <h2 class="view-label"><span data-i18n="popup_popup_nav_title_10">دربارهٔ ترجمان</span></h2>
+
+      <section class="card" data-k="نسخه حریم خصوصی درباره نما">
+        <div class="card-head">
+          <h2><span data-i18n="popup_popup_renderSheet_1">ترجمان</span></h2>
+          <span class="pill-tag ltr" id="versionTag">v3.2.3</span>
+        </div>
+        <p class="note"><b><span data-i18n="popup_popup_b_7">نسخهٔ «نما»</span></b> <span data-i18n="popup_popup_note_14">— بازطراحی کامل رابط: خانه‌ای که از همان اول کارِ همین صفحه را انجام می‌دهد، بخش‌های نام‌دار به‌جای چهار تب شلوغ، و رنگ‌هایی که خوانایی‌شان اندازه‌گیری می‌شود نه حدس زده.</span></p>
+        <p class="note tip"><span data-i18n="popup_popup_note_15">متن پست‌ها فقط برای ترجمه به سرویسی که خودت انتخاب کرده‌ای فرستاده می‌شود و هیچ‌جای دیگری ذخیره نمی‌شود. کلیدهای API فقط روی همین مرورگر می‌مانند.</span></p>
+      </section>
+
+      <section class="card" data-k="میانبر کیبورد صفحه کلید shortcut">
+        <div class="card-head"><h2><span data-i18n="popup_popup_h2_22">میان‌برهای صفحه‌کلید</span></h2></div>
+        <dl class="keys">
+          <div><dt><span data-i18n="popup_popup_span_1">ترجمهٔ این صفحه</span></dt><dd><kbd>Alt</kbd>+<kbd>Shift</kbd>+<kbd>P</kbd></dd></div>
+          <div><dt><span data-i18n="content_page_translate_maybeShowSelChip_2">ترجمهٔ متن انتخاب‌شده</span></dt><dd><kbd>Alt</kbd>+<kbd>Shift</kbd>+<kbd>S</kbd></dd></div>
+          <div><dt><span data-i18n="popup_popup_dt_1">خواندن متن انتخاب‌شده</span></dt><dd><kbd>Alt</kbd>+<kbd>Shift</kbd>+<kbd>R</kbd></dd></div>
+          <div><dt><span data-i18n="popup_popup_dt_2">روشن/خاموش کردن افزونه</span></dt><dd><kbd>Alt</kbd>+<kbd>Shift</kbd>+<kbd>T</kbd></dd></div>
+        </dl>
+        <p class="note tip"><span data-i18n="popup_popup_note_16">برای تغییر این کلیدها، در کروم نشانی</span> <code dir="ltr">chrome://extensions/shortcuts</code> <span data-i18n="popup_popup_note_17">را باز کنید.</span></p>
+      </section>
+    </div>
+
+    <!-- ══════════════════════════════════════════════ SECTION: quality ══ -->
+    <div class="view" id="view-quality" data-view="quality" data-title="کیفیت ترجمه" tabindex="-1" hidden>
+      <h2 class="view-label"><span data-i18n="popup_popup_nav_title_7">کیفیت ترجمه</span></h2>
+
+      <section class="card" data-k="لحن رسمی محاوره‌ای register شما تو ادبیات">
+        <div class="card-head">
+          <h2><span data-i18n="popup_popup_h2_23">لحن فارسی</span></h2>
+        </div>
+        <p class="row-help open"><span data-i18n="popup_popup_row_help_44">فارسی رسمی و محاوره‌ای دو زبان جداگانه‌اند: خبر با لحن گروه دوستانه غلط به‌نظر می‌رسد و پیام دوست با لحن خبرگزاری، ماشینی. «خودکار» از خود متن تشخیص می‌دهد — معمولاً درست است؛ دو گزینهٔ دیگر آن را قطعی می‌کنند.</span></p>
+        <label class="sr-only" for="register"><span data-i18n="popup_popup_h2_23">لحن فارسی</span></label>
+        <select id="register" dir="rtl"></select>
+        <p class="note"><span data-i18n="popup_popup_note_18">برای هر سایت جداگانه هم می‌شود تعیین کرد — در کارت «در این صفحه».</span></p>
+      </section>
+
+      <section class="card" data-k="ویرایش دقیق دو مرحله‌ای کیفیت بالا بازخوانی">
+        <div class="row-item">
+          <div class="row-main">
+            <span class="row-title"><span data-i18n="popup_popup_row_title_31">ویرایش دقیق (دو مرحله‌ای)</span></span>
+            <button class="info" type="button"></button>
+            <p class="row-help"><span data-i18n="popup_popup_row_help_45">بعد از ترجمه، مدل یک بار دیگر متن فارسی خودش را می‌خواند و «بوی ترجمه» را از آن می‌گیرد: ترتیب جملهٔ انگلیسی، اصطلاح لفظ‌به‌لفظ، و لحنی که وسط متن عوض شده. حدوداً دو برابر سهمیه مصرف می‌کند، برای همین پیش‌فرض خاموش است و فقط روی کاری اعمال می‌شود که خودتان خواسته‌اید (خلاصه، مقاله، خروجی زیرنویس) — نه روی اسکرول تایم‌لاین.</span></p>
+          </div>
+          <span class="switch"><input type="checkbox" id="qualityMode" role="switch"><span class="track" aria-hidden="true"></span></span>
+        </div>
+      </section>
+
+      <section class="card" data-k="حافظه ترجمه یکدستی اصطلاح نام memory واژه">
+        <div class="card-head">
+          <h2><span data-i18n="popup_popup_renderSummaries_5">حافظهٔ ترجمه</span></h2>
+          <span class="pill-tag ltr" id="memCount"><span data-i18n="popup_popup_tileToday_1">۰</span></span>
+        </div>
+        <p class="row-help open"><span data-i18n="popup_popup_row_help_46">یکدستی مهم‌ترین تفاوت ترجمهٔ حرفه‌ای با آماتور است. افزونه معادلی را که یک بار برای یک نام یا اصطلاح انتخاب شده به یاد می‌سپارد و همه‌جا همان را به کار می‌برد — تا «Michael» یک‌جا مایکل و سه پست بعد مایکائیل نشود. به‌مرور ارزان‌تر هم می‌شود: یک اصطلاح شناخته‌شده چند توکن راهنماست، نه یک استدلال تازه.</span></p>
+        <div class="row-item">
+          <div class="row-main">
+            <span class="row-title"><span data-i18n="popup_popup_row_title_32">به یاد سپردن اصطلاح‌ها</span></span>
+          </div>
+          <span class="switch"><input type="checkbox" id="memoryEnabled" role="switch"><span class="track" aria-hidden="true"></span></span>
+        </div>
+        <details class="fold">
+          <summary><span data-i18n="popup_popup_summary_5">واژه‌های به‌یادسپرده‌شده</span></summary>
+          <div class="fold-body">
+            <pre class="report" id="memList" dir="auto"></pre>
+            <div class="row actions">
+              <button class="ghost" id="memRefresh" type="button"><span data-i18n="popup_popup_memRefresh_1">تازه‌سازی فهرست</span></button>
+              <button class="ghost" id="memClear" type="button"><span data-i18n="popup_popup_memClear_1">پاک‌کردن حافظه</span></button>
+            </div>
+          </div>
+        </details>
+        <div class="field-row spaced">
+          <label class="lbl" for="memTerm"><span data-i18n="popup_popup_lbl_13">تصحیح دستی</span></label>
+          <button class="info" type="button"></button>
+        </div>
+        <p class="row-help"><span data-i18n="popup_popup_row_help_47">هر معادلی که اینجا بنویسید «قفل» می‌شود: هیچ ترجمه‌ای بعداً آن را عوض نمی‌کند.</span></p>
+        <div class="row tight">
+          <input id="memTerm" type="text" dir="ltr" placeholder="Studio Ghibli" spellcheck="false">
+          <input id="memValue" type="text" dir="rtl" placeholder="استودیو جیبلی" spellcheck="false" data-i18n-placeholder="popup_popup_memValue_placeholder_1">
+          <button class="ghost" id="memPin" type="button"><span data-i18n="popup_popup_memPin_1">قفل کن</span></button>
+        </div>
+        <span id="memStatus" class="status" role="status"></span>
+      </section>
+    </div>
+
+    <!-- ═══════════════════════════════════════════ SECTION: updates ══ -->
+    <div class="view" id="view-updates" data-view="updates" data-title="به‌روزرسانی و تشخیص" tabindex="-1" hidden>
+      <h2 class="view-label"><span data-i18n="popup_popup_nav_title_8">به‌روزرسانی و تشخیص</span></h2>
+
+      <section class="card" data-k="بروزرسانی مدل تازه جدید update موتور نسخه">
+        <div class="card-head">
+          <h2><span data-i18n="popup_popup_h2_24">بررسی به‌روزرسانی‌ها</span></h2>
+        </div>
+        <p class="row-help open"><span data-i18n="popup_popup_row_help_48">دنیای مدل‌های هوش مصنوعی هر چند هفته عوض می‌شود و فهرست ثابت، همان روز انتشار کهنه است. این دکمه از خودِ سرویس‌ها می‌پرسد الان چه چیزی در دسترس است — مدل‌های ترجمه، مدل‌های صدا، مدل دوبلهٔ زنده، و بسته‌های پایتونِ پل محلی — و می‌گوید کدامشان از چیزی که انتخاب کرده‌اید تازه‌تر است.</span></p>
+        <div class="row">
+          <button class="primary block" id="checkAllUpdates" type="button">
+            <span><span data-i18n="popup_popup_span_2">بررسی همهٔ موتورها</span></span>
+          </button>
+        </div>
+        <span id="updStatus" class="status" role="status" aria-live="polite"></span>
+        <div class="report hidden" id="updReport"></div>
+      </section>
+
+      <section class="card" data-k="عیب یابی مشکل کار نمی‌کند تشخیص diagnose خطا">
+        <div class="card-head">
+          <h2><span data-i18n="popup_popup_h2_25">چرا کار نمی‌کند؟</span></h2>
+        </div>
+        <p class="row-help open"><span data-i18n="popup_popup_row_help_49">به‌ترتیبِ احتمال بررسی می‌کند: کلید هست؟ سهمیه مانده؟ سرویس جواب می‌دهد؟ روی این صفحه اجازهٔ اجرا هست؟ — و برای اولین ایراد، دقیقاً یک کار می‌گوید که باید بکنید.</span></p>
+        <div class="row">
+          <button class="primary block" id="runDiagnose" type="button">
+            <span><span data-i18n="popup_popup_span_3">عیب‌یابی کن</span></span>
+          </button>
+        </div>
+        <div class="report hidden" id="diagReport"></div>
+      </section>
+    </div>
+
+    <!-- ═══════════════════════════════════════════ SECTION: backup ══ -->
+    <div class="view" id="view-backup" data-view="backup" data-title="پشتیبان و بازیابی" tabindex="-1" hidden>
+      <h2 class="view-label"><span data-i18n="popup_popup_nav_title_9">پشتیبان و بازیابی</span></h2>
+
+      <section class="card" data-k="پشتیبان بکاپ backup خروجی ورودی ذخیره بازیابی انتقال کامپیوتر">
+        <div class="card-head">
+          <h2><span data-i18n="popup_popup_h2_26">گرفتن پشتیبان</span></h2>
+        </div>
+        <p class="row-help open"><span data-i18n="popup_popup_row_help_50">کلیدهای API، واژه‌نامه، دستورهای شخصی، تنظیم‌های هر مدل و حافظهٔ ترجمه همه فقط در همین پروفایل کروم ذخیره‌اند. با ریست‌شدن پروفایل، نصب دوبارهٔ کروم یا عوض‌کردن کامپیوتر، همه‌شان از بین می‌روند و برنمی‌گردند. یک فایل پشتیبان بگیرید.</span></p>
+        <div class="row-item">
+          <div class="row-main">
+            <span class="row-title"><span data-i18n="popup_popup_row_title_33">کلیدهای API هم داخل فایل باشند</span></span>
+            <button class="info" type="button"></button>
+            <p class="row-help"><span data-i18n="popup_popup_row_help_51">خاموش (پیشنهادی): فایل بدون کلید ساخته می‌شود، پس می‌شود آن را جایی نگه داشت یا ایمیل کرد بدون اینکه اعتبارنامه‌تان جابه‌جا شود. روشن: برای انتقال کامل به کامپیوتر تازه.</span></p>
+          </div>
+          <span class="switch"><input type="checkbox" id="bkKeys" role="switch"><span class="track" aria-hidden="true"></span></span>
+        </div>
+        <div class="row">
+          <button class="primary" id="bkExport" type="button"><span data-i18n="popup_popup_bkExport_1">ذخیرهٔ فایل پشتیبان</span></button>
+        </div>
+        <span id="bkStatus" class="status" role="status" aria-live="polite"></span>
+      </section>
+
+      <section class="card" data-k="بازگرداندن restore وارد کردن import فایل">
+        <div class="card-head">
+          <h2><span data-i18n="content_page_translate_dynamicPill_1">بازگرداندن</span></h2>
+        </div>
+        <p class="row-help open"><span data-i18n="popup_popup_row_help_52">فایل پشتیبان را انتخاب کنید. حالت پیش‌فرض «ادغام» است: هر چیزی که در فایل نیست دست‌نخورده می‌ماند — همان چیزی که موقع انتقال به کامپیوتر تازه می‌خواهید.</span></p>
+        <label class="field slim"><span data-i18n="popup_popup_field_20">حالت بازگرداندن</span>
+          <select id="bkMode" dir="rtl">
+            <option value="merge" data-i18n="popup_popup_option_33">ادغام با تنظیم‌های فعلی (پیشنهادی)</option>
+            <option value="replace" data-i18n="popup_popup_option_34">جایگزینی کامل</option>
+          </select>
+        </label>
+        <div class="row">
+          <button class="ghost" id="bkImport" type="button"><span data-i18n="popup_popup_bkImport_1">انتخاب فایل و بازگرداندن…</span></button>
+          <input id="bkFile" type="file" accept="application/json,.json" class="hidden">
+        </div>
+        <span id="bkImportStatus" class="status" role="status" aria-live="polite"></span>
+      </section>
+    </div>
+
+  </main>
+
+  <!-- ══════════════════════════════════════════════ appearance sheet ══ -->
+  <div class="sheet hidden" id="sheet" role="dialog" aria-modal="true" aria-labelledby="sheetTitle">
+    <div class="sheet-scrim" id="sheetScrim"></div>
+    <div class="sheet-card">
+      <div class="sheet-head">
+        <h2 id="sheetTitle"><span data-i18n="content_youtube_togglePanel_80">ظاهر</span></h2>
+        <button class="icon-btn tiny" id="sheetClose" type="button" aria-label="بستن" data-i18n-aria-label="content_manga_finish_1">
+          <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M18.3 5.7 12 12l6.3 6.3-1.4 1.4L10.6 13.4 4.3 19.7l-1.4-1.4L9.2 12 2.9 5.7l1.4-1.4 6.3 6.3 6.3-6.3 1.4 1.4Z"/></svg>
+        </button>
+      </div>
+      <div class="sheet-body">
+        <div class="sheet-group">
+          <span class="group-lbl" id="lblPreset"><span data-i18n="popup_popup_lblPreset_1">تجربه‌های آماده</span></span>
+          <p class="row-help open"><span data-i18n="popup_popup_row_help_53">هر تجربه رنگ، فرم، فاصله و حرکت را با هم تغییر می‌دهد؛ سپس هر بخش را دلخواه تنظیم کنید.</span></p>
+          <div class="preset-grid" id="presetGrid" role="radiogroup" aria-labelledby="lblPreset"></div>
+        </div>
+        <div class="sheet-group">
+          <span class="group-lbl" id="lblTheme"><span data-i18n="popup_popup_lblTheme_1">پوسته</span></span>
+          <div class="theme-grid" id="themeGrid" role="radiogroup" aria-labelledby="lblTheme"></div>
+        </div>
+        <div class="sheet-group">
+          <span class="group-lbl" id="lblAccent"><span data-i18n="popup_popup_appearanceColors_6">رنگ اصلی</span></span>
+          <div class="accent-row" id="accentRow" role="radiogroup" aria-labelledby="lblAccent"></div>
+        </div>
+        <div class="sheet-group">
+          <span class="group-lbl" id="lblSurface"><span data-i18n="popup_popup_lblSurface_1">جنس سطح‌ها</span></span>
+          <div class="seg" id="surfaceSeg" role="radiogroup" aria-labelledby="lblSurface"></div>
+        </div>
+        <div class="sheet-group">
+          <span class="group-lbl" id="lblDensity"><span data-i18n="popup_popup_lblDensity_1">اندازهٔ متن و فاصله‌ها</span></span>
+          <div class="seg" id="densitySeg" role="radiogroup" aria-labelledby="lblDensity"></div>
+        </div>
+        <div class="sheet-group">
+          <label class="group-lbl" for="font"><span data-i18n="popup_popup_group_lbl_2">فونت ترجمه‌ها</span></label>
+          <select id="font"></select>
+          <label class="sr-only" for="customFont"><span data-i18n="popup_popup_sr_only_4">نام فونت نصب‌شده روی سیستم</span></label>
+          <input id="customFont" type="text" class="hidden" placeholder="نام دقیق فونت نصب‌شده روی سیستم" spellcheck="false" data-i18n-placeholder="popup_popup_customFont_placeholder_1">
+          <div id="fontPreview" dir="rtl"><span data-i18n="popup_popup_fontPreview_1">نمونهٔ ترجمه: می‌خوام ببینم چه شکلیه! ۱۲۳</span></div>
+        </div>
+        <details class="appearance-details"><summary><span data-i18n="popup_popup_summary_6">فرم، اندازه و حرکت</span></summary><div id="appearanceControls" class="appearance-controls"></div></details>
+        <details class="appearance-details"><summary><span data-i18n="popup_popup_summary_7">رنگ‌های دلخواه</span></summary><p class="row-help open"><span data-i18n="popup_popup_row_help_54">رنگ متن خودکار خوانا می‌ماند. رنگ پس‌زمینه برای حفظ خوانایی با حالت روشن یا تیره هماهنگ می‌شود.</span></p><div id="appearanceColors" class="appearance-colors"></div></details>
+        <span id="appearanceStatus" class="status" role="status" aria-live="polite"></span>
+        <div class="sheet-group">
+          <div class="row-item flat">
+            <div class="row-main">
+              <div class="row-title"><span data-i18n="popup_popup_row_title_34">نمایش همهٔ راهنماها</span></div>
+              <p class="row-help open"><span data-i18n="popup_popup_row_help_55">توضیح هر گزینه به‌جای دکمهٔ «؟» همیشه باز باشد.</span></p>
+            </div>
+            <span class="switch sm"><input type="checkbox" id="showHints" role="switch"><span class="track" aria-hidden="true"></span></span>
+          </div>
+          <div class="row-item flat">
+            <div class="row-main">
+              <div class="row-title"><span data-i18n="popup_popup_row_title_35">پس‌زمینهٔ مات برای پنجره‌های روی صفحه</span>
+                <button class="info" type="button" aria-label="توضیح" data-i18n-aria-label="popup_popup_info_aria_label_5"></button>
+              </div>
+              <p class="row-help"><span data-i18n="popup_popup_row_help_56">پنجرهٔ ترجمه، نوار پایین صفحه و پنل یوتیوب به‌طور پیش‌فرض کمی شفاف‌اند تا زیرشان دیده شود. اگر سایتی روشن یا شلوغ باشد و متن ترجمه سخت خوانده شود، این را روشن کن تا کاملاً مات (روی پوسته‌های تیره: سیاه) شود. همین گزینه با دکمهٔ «◐» گوشهٔ خودِ همان پنجره هم هست.</span></p>
+            </div>
+            <span class="switch sm"><input type="checkbox" id="cardOpaque" role="switch"><span class="track" aria-hidden="true"></span></span>
+          </div>
+        </div>
+        <button class="ghost wide" id="resetAppearance" type="button"><span data-i18n="popup_popup_resetAppearance_1">بازگردانی ظاهر به پیش‌فرض</span></button>
+      </div>
+    </div>
+  </div>
+
+  <script src="../shared/settings.js"></script>
+  <script src="../shared/memory.js"></script>
+  <script src="../shared/theme.js"></script>
+  <script src="popup.js"></script>
+</body>
+</html>

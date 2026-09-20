@@ -1,0 +1,206 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>GXT mock YouTube — degraded dependencies</title>
+<style>
+  body { margin: 0; padding: 24px; background: #0f0f0f; color: #eee; font: 14px/1.6 sans-serif; }
+  #movie_player { position: relative; width: 640px; height: 360px; background: #000; border-radius: 12px; overflow: hidden; }
+  video { width: 100%; height: 100%; }
+  #summary { position: fixed; top: 8px; right: 8px; z-index: 99999; background: #16181c; border: 1px solid #333; border-radius: 10px; padding: 8px 12px; font: 12px/1.8 Consolas, monospace; max-width: 420px; }
+  #summary .pass { color: #0f8; }
+  #summary .fail { color: #f66; font-weight: bold; }
+</style>
+</head>
+<body>
+<div id="summary">running…</div>
+<div id="movie_player"><video muted></video>
+<!-- v3.2.2 — YouTube's OWN player chrome, at the z-index values it really
+     uses. Without these the mock player was unrealistically simple: it had no
+     z-indexed children, so DOM order alone put our UI on top and a host that
+     computed to `z-index: auto` looked perfectly fine. On the real player that
+     same host painted UNDERNEATH all of this and the UI "completely vanished".
+     A mock that cannot reproduce the site's stacking cannot catch that. -->
+<div class="ytp-gradient-bottom" style="position:absolute;left:0;right:0;bottom:0;height:170px;z-index:59;background:linear-gradient(transparent,rgba(0,0,0,.7));pointer-events:none"></div>
+<div class="ytp-chrome-bottom" style="position:absolute;left:12px;right:12px;bottom:0;height:48px;z-index:60"></div>
+<div class="ytp-chrome-top" style="position:absolute;left:0;right:0;top:0;height:48px;z-index:60"></div>
+</div>
+
+<script>
+/**
+ * THE FAILURE THIS PAGE EXISTS TO PREVENT — reported against v3.2.0.
+ *
+ * «After the update, the YouTube controls completely vanished and nothing shows
+ * up for YouTube at all.»
+ *
+ * v3.2.0 moved the in-player UI into a shadow root and got that root from
+ * `GXT.ui.surface()`, a helper in content/ui.js — a module the YouTube context
+ * had never loaded before, so the manifest gained it. The mount then read:
+ *
+ *     const surface = ensureSurface();
+ *     if (!surface) return;          //  <-- fatal, and silent
+ *
+ * Chrome re-reads a content-script list only when the EXTENSION is reloaded,
+ * not when a page is. So for every browser still running the previous
+ * registration, `content/ui.js` was absent, `ensureSurface()` returned null,
+ * and `mountPill` returned before creating anything: no controls, no panel, no
+ * caption, no console error, nothing in the DOM to suggest a cause.
+ *
+ * The lesson is not "remember to reload" — it is that **a shared helper being
+ * unavailable must never be able to erase the product**. This page loads
+ * youtube.js with its optional dependencies deliberately MISSING and requires
+ * the UI to appear anyway.
+ *
+ * `?drop=ui`    — no content/ui.js      (the exact reported condition)
+ * `?drop=css`   — no content/player.css.js (the silent-syntax-error condition)
+ * `?drop=theme` — no shared/theme.js    (no design tokens at all)
+ */
+  globalThis.__gxtYtTestMode = true;
+  globalThis.GXT_SHIM_SEED = { settings: { ytSubtitles: true }, apiKeys: ['dev-key'] };
+  globalThis.GXT_DROP = new URLSearchParams(location.search).get('drop') || 'ui';
+</script>
+<script src="chrome-shim.js?v=3300"></script>
+<script>
+  globalThis.GXT_SHIM_HANDLER = async (m) =>
+    m.type === 'TRANSLATE_TEXTS'
+      ? { ok: true, list: m.texts.map((t) => 'ف: ' + t), failed: null }
+      : { ok: false, code: 'DEV' };
+  globalThis.GXT_SHIM_CONNECT = (name) => ({
+    name, postMessage() {}, disconnect() {},
+    onMessage: { addListener() {} }, onDisconnect: { addListener() {} },
+  });
+  // Load the optional modules by hand, skipping whichever one is being dropped.
+  // document.write keeps them SYNCHRONOUS and ordered, which is what a content
+  // script list guarantees and what youtube.js is written against.
+  const drop = globalThis.GXT_DROP;
+  const need = [
+    ['settings', '../shared/settings.js?v=3300'],
+    ['memory', '../shared/memory.js?v=3300'],
+    ['theme', '../shared/theme.js?v=3300'],
+    ['ui', '../content/ui.js?v=3300'],
+    ['dub', '../content/dub.js?v=3300'],
+    ['css', '../content/player.css.js?v=3300'],
+  ];
+  for (const [id, src] of need) {
+    if (id === drop) continue;
+    document.write(`<script src="${src}"><\/script>`);
+  }
+</script>
+<script src="../content/youtube.js?v=3300"></script>
+<script>
+(async () => {
+  const results = [];
+  const check = (name, ok) => {
+    results.push([name, !!ok]);
+    console.log(`GXT-YTND ${ok ? 'PASS' : 'FAIL'} ${name}`);
+  };
+  const until = async (fn, ms = 6000) => {
+    const t0 = Date.now();
+    for (;;) {
+      let v = null;
+      try { v = fn(); } catch { v = null; }
+      if (v) return v;
+      if (Date.now() - t0 > ms) return null;
+      await new Promise((r) => setTimeout(r, 90));
+    }
+  };
+  const drop = globalThis.GXT_DROP;
+  const I = () => GXT.yt?._internal;
+
+  check(`the dropped module (${drop}) really is absent`, (() => {
+    if (drop === 'ui') return !globalThis.GXT.ui;
+    if (drop === 'css') return !globalThis.GXT.playerCss;
+    if (drop === 'theme') return !globalThis.GXT.theme;
+    return false;
+  })());
+  check('youtube.js still loaded', !!GXT.yt);
+
+  const announce = () => window.postMessage({
+    source: 'gxt-yt', videoId: 'nodeps', title: 'mock',
+    tracks: [{ baseUrl: 'mock-track.json?fmt=json3', lang: 'en', kind: '', name: 'English' }],
+  }, '*');
+  const ticker = setInterval(announce, 150);
+  announce();
+
+  // ── the whole point ─────────────────────────────────────────────────────
+  const controls = await until(() => I()?.q('#gxt-yt-controls'));
+  clearInterval(ticker);
+  check('REGRESSION: the controls appear anyway', !!controls);
+  check('REGRESSION: the subtitle button exists', !!I()?.q('#gxt-yt-pill'));
+  check('REGRESSION: the dubbing button exists', !!I()?.q('#gxt-yt-dub'));
+  const gear = I()?.qa('#gxt-yt-controls button').find((b) => b.textContent === '⚙');
+  check('REGRESSION: the settings gear exists', !!gear);
+
+  // Visible, not merely present: a stylesheet that failed to load leaves the
+  // controls in the DOM and invisible, which is indistinguishable from gone.
+  check('the controls are actually visible', (() => {
+    if (!controls) return false;
+    const r = controls.getBoundingClientRect();
+    const cs = getComputedStyle(controls);
+    return r.width > 40 && r.height > 10 && cs.visibility !== 'hidden' && cs.opacity !== '0';
+  })());
+  check('a button is big enough to hit (2.5.8)', (() => {
+    const b = I()?.q('#gxt-yt-pill');
+    if (!b) return false;
+    const r = b.getBoundingClientRect();
+    return r.width >= 24 && r.height >= 24;
+  })());
+  check('the host is positioned over the player, not in page flow', (() => {
+    const host = document.querySelector('#movie_player [data-gxt-ui]');
+    return !!host && getComputedStyle(host).position === 'absolute';
+  })());
+  // v3.2.2 — and ABOVE YouTube's chrome, hit-tested. Presence and a non-empty
+  // box are both true of a UI buried under the player's controls.
+  /**
+   * The real invariant, stated generally (v3.2.2).
+   *
+   * Not "z-index > 60" (a magic number that drifts when YouTube reskins) and not
+   * a hit test at one point (which only fires if a layer happens to overlap that
+   * exact pixel). The rule is: OUR HOST MUST PAINT ABOVE EVERY LAYER YOUTUBE PUTS
+   * IN THE PLAYER. That is checkable against whatever is actually there, and it
+   * is precisely what `all: initial` breaking z-index violated.
+   */
+  const paintsOnTop = () => {
+    const host = document.querySelector('#movie_player [data-gxt-ui]');
+    if (!host) return false;
+    const hz = Number(getComputedStyle(host).zIndex); // 'auto' -> NaN -> fail
+    if (!Number.isFinite(hz)) return false;
+    return [...document.querySelectorAll('#movie_player > *')]
+      .filter((el) => el !== host)
+      .map((el) => Number(getComputedStyle(el).zIndex))
+      .filter(Number.isFinite)
+      .every((z) => hz > z);
+  };
+  check('the host paints above every YouTube player layer', paintsOnTop());
+  // v3.2.3 — and it must not be reset to `initial` typography either. With no
+  // theme module the tokens come from the literal fallbacks in HOST_STYLE, so
+  // this checks the weaker but decisive property: not a serif at 16px.
+  check('the host is not left with initial typography', (() => {
+    const host = document.querySelector('#movie_player [data-gxt-ui]');
+    if (!host) return false;
+    const c = getComputedStyle(host);
+    const family = c.fontFamily.split(',')[0].toLowerCase();
+    return !/times|^serif$/.test(family.replace(/["']/g, '')) && c.fontSize !== '16px';
+  })());
+  check('REGRESSION: a control is genuinely hit-testable', (() => {
+    const b = I()?.q('#gxt-yt-pill');
+    if (!b) return false;
+    const r = b.getBoundingClientRect();
+    const hit = document.elementFromPoint(Math.round(r.left + r.width / 2), Math.round(r.top + r.height / 2));
+    return !!hit && hit.getAttribute?.('data-gxt-ui') === 'yt';
+  })());
+
+  // And the panel — the surface the report said could not be reached.
+  gear?.click();
+  const panel = await until(() => I()?.q('#gxt-yt-panel'));
+  check('REGRESSION: the settings panel still opens', !!panel);
+  check('the panel is visible', !!panel && panel.getBoundingClientRect().width > 100);
+
+  document.getElementById('summary').innerHTML = results
+    .map(([n, ok]) => `<div class="${ok ? 'pass' : 'fail'}">${ok ? 'PASS' : 'FAIL'} ${n}</div>`)
+    .join('');
+  console.log(`GXT-YTND SUMMARY ${results.filter((r) => r[1]).length}/${results.length}`);
+})();
+</script>
+</body>
+</html>

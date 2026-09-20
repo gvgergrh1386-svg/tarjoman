@@ -1,0 +1,63 @@
+<!doctype html><meta charset="utf-8"><title>Background native storage regressions</title>
+<script src="../background/audio-cache.js"></script>
+<script>
+'use strict';
+(async () => {
+  let passed = 0, total = 0;
+  const assert = (ok, message) => { if (!ok) throw new Error(message); };
+  async function test(name, fn) {
+    total++;
+    try { await fn(); passed++; console.log('GXT-BACKGROUND PASS ' + name); }
+    catch (error) { console.log('GXT-BACKGROUND FAIL ' + name + ': ' + error.message); }
+  }
+  const cache = GXT.audioCache;
+  const nativeTransaction = IDBDatabase.prototype.transaction;
+  async function duringRead(action, run) {
+    let injected = false, operation;
+    IDBDatabase.prototype.transaction = function (...args) {
+      const transaction = nativeTransaction.apply(this, args);
+      if (!injected && args[1] === 'readonly') {
+        injected = true;
+        transaction.addEventListener('complete', () => { operation = action(); });
+      }
+      return transaction;
+    };
+    try { await run(); await operation; assert(injected, 'injection was never executed'); }
+    finally { IDBDatabase.prototype.transaction = nativeTransaction; }
+  }
+  await test('native IndexedDB read touch cannot resurrect after clear', async () => {
+    await cache.clearAll(); await cache.put('a', { mime: 'audio/wav', data: 'OLD' }); await cache.stats();
+    await duringRead(() => cache.clearAll(), () => cache.get('a'));
+    assert((await cache.stats()).count === 0, 'old read rewrote a cleared clip');
+  });
+  await test('native IndexedDB touch cannot overwrite a newer clip', async () => {
+    await cache.clearAll(); await cache.put('a', { mime: 'audio/wav', data: 'OLD' }); await cache.stats();
+    await duringRead(() => cache.put('a', { mime: 'audio/wav', data: 'NEW' }), () => cache.get('a'));
+    const hit = await cache.get('a'); assert(hit?.data === 'NEW', 'old read replaced the newer clip');
+  });
+  await test('native IndexedDB 100 put/read/clear cycles leave no clips', async () => {
+    for (let i = 0; i < 100; i++) {
+      await cache.put('cycle', { mime: 'audio/wav', data: String(i) });
+      assert((await cache.get('cycle'))?.data === String(i), 'clip mismatch');
+      await cache.clearAll();
+      assert((await cache.stats()).count === 0, 'clear left a clip');
+    }
+  });
+  await test('native IndexedDB clear rejects a delayed synthesis cache write', async () => {
+    const generation = cache.generation?.() ?? 0;
+    await cache.clearAll();
+    await cache.put('late-synthesis', { mime: 'audio/wav', data: 'OLD' }, { generation });
+    assert((await cache.stats()).count === 0, 'old synthesis repopulated cleared audio cache');
+  });
+  await test('native IndexedDB concurrent pruning retains the newest bounded cache', async () => {
+    await cache.clearAll(); cache._internal.setMaxBytes(40);
+    await Promise.all(Array.from({ length: 100 }, (_, i) => cache.put('prune-' + i, { mime: 'audio/wav', data: 'x' })));
+    await cache._internal.prune();
+    const stats = await cache.stats();
+    assert(stats.count > 0 && stats.bytes <= 40, 'overlapping prunes removed the whole cache or exceeded the cap');
+    assert((await cache.get('prune-99'))?.data === 'x', 'the latest clip was evicted');
+    cache.setMaxMb(250); await cache.clearAll();
+  });
+  console.log(`GXT-BACKGROUND SUMMARY ${passed}/${total}`);
+})().catch(error => console.error(error));
+</script>

@@ -1,0 +1,42 @@
+<!doctype html><html><meta charset="utf-8"><title>YouTube settings lifecycle</title>
+<style>#movie_player{position:relative;width:720px;height:405px}video{width:100%;height:100%}</style>
+<div id="movie_player"><video muted></video><div class="ytp-chrome-bottom" style="position:absolute;bottom:0;height:48px;width:100%"><button class="ytp-subtitles-button" aria-pressed="true">CC</button></div></div><pre id="summary"></pre>
+<script>
+globalThis.__gxtYtTestMode=true;
+globalThis.GXT_SHIM_SEED={settings:{enabled:true,ytAuto:false,ytDub:false},apiKeys:['dev-key']};
+const player=document.getElementById('movie_player'),video=player.querySelector('video');
+let videoId='settings-a';const track={languageCode:'en',baseUrl:'https://www.youtube.com/api/timedtext?v=settings-a&lang=en&pot=fixture',name:{simpleText:'English'}};
+player.getPlayerResponse=()=>({videoDetails:{videoId,title:'Settings test'},playabilityStatus:{status:'OK'},captions:{playerCaptionsTracklistRenderer:{captionTracks:[track]}}});
+player.getOption=(mod,key)=>key==='tracklist'?[track]:track;player.loadModule=()=>{};player.unloadModule=()=>{};player.setOption=()=>{};
+const nativeCc=player.querySelector('button');nativeCc.onclick=()=>nativeCc.setAttribute('aria-pressed',nativeCc.getAttribute('aria-pressed')==='true'?'false':'true');
+const realFetch=window.fetch.bind(window);
+window.fetch=(input,init)=>String(input).includes('/api/timedtext')?Promise.resolve(new Response(JSON.stringify({events:[{tStartMs:0,dDurationMs:4000,segs:[{utf8:'The original sentence.'}]}]}))):realFetch(input,init);
+Object.defineProperty(video,'currentTime',{configurable:true,get:()=>1});Object.defineProperty(video,'paused',{configurable:true,get:()=>true});
+history.replaceState(null,'','/watch?v='+videoId);
+let nativeMutations=0;new MutationObserver(records=>nativeMutations+=records.length).observe(nativeCc,{attributes:true});
+let route=message=>({ok:true,list:message.texts.map(t=>'فارسی '+t)});const sent=[];
+globalThis.GXT_SHIM_HANDLER=message=>{sent.push(message);return route(message)};
+</script>
+<script src="/dev/chrome-shim.js"></script><script src="/shared/settings.js"></script><script src="/shared/theme.js"></script><script src="/content/ui.js"></script><script src="/content/player.css.js"></script><script src="/content/dub.js"></script><script src="/content/yt-main.js"></script><script src="/content/youtube.js"></script>
+<script>
+const sleep=ms=>new Promise(r=>setTimeout(r,ms));const assert=(ok,reason='assertion failed')=>{if(!ok)throw Error(reason)};
+const defer=()=>{let resolve;const promise=new Promise(r=>resolve=r);return{promise,resolve}};
+async function until(fn,reason='timed out',ms=3500){const end=Date.now()+ms;while(Date.now()<end){if(fn())return;await sleep(15)}throw Error(reason)}
+const I=()=>GXT.yt._internal,Q=sel=>I().q(sel),painted=()=>I().surfaceRoot()?.textContent||'';
+let config;async function settings(patch){config={...config,...patch};await chrome.storage.local.set({settings:config})}
+async function activate(){await until(()=>I().trackCount()===1&&Q('#gxt-yt-pill'));Q('#gxt-yt-pill').click();await until(()=>I().subState()==='active')}
+function wav(){const b=new ArrayBuffer(2044),v=new DataView(b);for(const[offset,s]of[[0,'RIFF'],[8,'WAVE'],[12,'fmt '],[36,'data']])for(let i=0;i<s.length;i++)v.setUint8(offset+i,s.charCodeAt(i));v.setUint32(4,2036,true);v.setUint32(16,16,true);v.setUint16(20,1,true);v.setUint16(22,1,true);v.setUint32(24,16000,true);v.setUint32(28,32000,true);v.setUint16(32,2,true);v.setUint16(34,16,true);v.setUint32(40,2000,true);return btoa(String.fromCharCode(...new Uint8Array(b)))}
+const audioData=wav(),engines=[];
+function engine(send,overrides={}){const el=document.createElement('video');el.muted=true;const instance=GXT.dub.create({video:el,send,settings:{...GXT.DEFAULTS,...overrides}});engines.push(instance);instance.start();instance.setSegments([{id:'same',start:5000,end:8000,text:'متن فارسی'}]);return instance}
+const tests=[
+ ['dedicated Google to Bing updates current cue without CC toggle',async()=>{await settings({ytProvider:'google'});route=m=>({ok:true,list:m.texts.map(()=>config.ytProvider)});await activate();await until(()=>painted().includes('google'));const count=nativeMutations;await settings({ytProvider:'bing'});await until(()=>painted().includes('bing'),'dedicated Bing not applied');assert(nativeMutations===count,'native CC changed during translation-only update');assert(video.currentTime===1&&video.paused,'playback altered')}],
+ ['dedicated Bing to Google applies without disabling caption',async()=>{await settings({ytProvider:'bing'});route=m=>({ok:true,list:m.texts.map(()=>config.ytProvider)});await activate();await until(()=>painted().includes('bing'));await settings({ytProvider:'google'});await until(()=>painted().includes('google'),'dedicated Google not applied');assert(I().subState()==='active')}],
+ ['engine change retires pending response and does not reacquire track',async()=>{const old=defer();let calls=0;await settings({ytProvider:'google'});route=m=>++calls===1?old.promise:{ok:true,list:m.texts.map(()=>'CURRENT BING')};await activate();await until(()=>calls===1);const count=nativeMutations;await settings({ytProvider:'bing'});await until(()=>calls>=2,'fresh engine did not start while old pending');old.resolve({ok:true,list:['STALE GOOGLE']});await sleep(80);await until(()=>painted().includes('CURRENT BING'));assert(!painted().includes('STALE GOOGLE'));assert(count===nativeMutations)}],
+ ['A to B to A never revalidates the first A operation',async()=>{const pending=[];await settings({ytProvider:'google'});route=m=>{const d=defer();pending.push({d,m});return d.promise};await activate();await until(()=>pending.length===1);await settings({ytProvider:'bing'});await until(()=>pending.length===2);await settings({ytProvider:'google'});await until(()=>pending.length===3);pending[2].d.resolve({ok:true,list:['FINAL A']});await until(()=>painted().includes('FINAL A'));pending[0].d.resolve({ok:true,list:['STALE A']});pending[1].d.resolve({ok:true,list:['STALE B']});await sleep(80);assert(painted().includes('FINAL A')&&!painted().includes('STALE'))}],
+ ['rapid engine settings changes preserve final generation over 20 cycles',async()=>{await settings({ytProvider:'google'});let n=0;route=m=>({ok:true,list:m.texts.map(()=>'GEN-'+(++n))});await activate();await until(()=>n>0);for(let i=0;i<20;i++){const prev=n;await settings({ytProvider:i%2?'google':'bing'});await until(()=>n>prev,'no request cycle '+i)}assert(I().subState()==='active')}],
+ ['dedicated model and target language invalidate current translation',async()=>{await settings({ytProvider:'gemini',ytModel:'model-one',ytTargetLang:'fa'});let calls=0;route=m=>({ok:true,list:m.texts.map(()=>'MODEL-'+(++calls))});await activate();await until(()=>calls>0);let prev=calls;await settings({ytModel:'model-two'});await until(()=>calls>prev,'model override ignored');prev=calls;await settings({ytTargetLang:'en'});await until(()=>calls>prev,'target language ignored')}],
+ ['manual caption metadata travels in dedicated YouTube request',async()=>{route=m=>({ok:true,list:m.texts.map(()=>'MANUAL')});await activate();await until(()=>sent.some(m=>m.type==='TRANSLATE_TEXTS'));const m=sent.find(m=>m.type==='TRANSLATE_TEXTS');assert(m.source==='youtube','YouTube scope missing');assert(m.captionKind==='manual','manual caption classification missing')}],
+ ['translation mode regenerates without playback or CC mutation',async()=>{let count=0;route=m=>({ok:true,list:m.texts.map(()=>'MODE-'+(++count))});await activate();await until(()=>count>0);const before=count,cc=nativeMutations;await settings({register:'formal'});await until(()=>count>before);assert(nativeMutations===cc,'native CC changed');assert(video.currentTime===1&&video.paused)}],
+];
+(async()=>{await sleep(70);config=await GXT.getSettings();let passed=0;const lines=[];for(const[name,fn]of tests){let error='';try{await fn();passed++}catch(e){error=e.message}const line=`GXT-YT-INSTANT ${error?'FAIL':'PASS'} ${name}${error?': '+error:''}`;console.log(line);lines.push(line);await settings({enabled:false});await settings({enabled:true,provider:'gemini',ytProvider:'inherit',ytModel:'',ytTargetLang:'fa',register:'auto',model:GXT.DEFAULTS.model});sent.length=0;await sleep(30)}document.getElementById('summary').textContent=lines.join('\n');console.log(`GXT-YT-INSTANT SUMMARY ${passed}/${tests.length}`)})();
+</script></html>

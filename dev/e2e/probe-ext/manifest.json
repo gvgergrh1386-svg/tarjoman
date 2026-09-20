@@ -1,0 +1,16 @@
+{
+  "manifest_version": 3,
+  "name": "GXT isolated-world probe",
+  "version": "1.0.0",
+  "description": "Answers one question: what actually works from a content script's isolated world?",
+  "permissions": ["scripting"],
+  "host_permissions": ["http://127.0.0.1/*"],
+  "content_scripts": [
+    {
+      "matches": ["http://127.0.0.1/*"],
+      "js": ["probe.js"],
+      "run_at": "document_start",
+      "all_frames": false
+    }
+  ]
+}

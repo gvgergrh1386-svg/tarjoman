@@ -1,0 +1,247 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>GXT translation-quality evaluation</title>
+<style>
+  body { font: 13px/1.7 Consolas, monospace; background: #111; color: #eee; padding: 16px; }
+  .pass { color: #0f8; }
+  .fail { color: #f44; font-weight: bold; }
+  .info { color: #9ab; }
+  h1 { font-size: 15px; }
+  pre { white-space: pre-wrap; }
+</style>
+</head>
+<body>
+<h1>Translation-quality evaluation</h1>
+<div id="out">running…</div>
+
+<script src="../../shared/settings.js"></script>
+<script src="../../shared/memory.js"></script>
+<script src="../../background/prompt.js"></script>
+<script src="../../background/gemini.js"></script>
+<script>
+/**
+ * THE GAP THIS CLOSES
+ * ───────────────────
+ * This project had 429 automated checks and not one of them measured
+ * TRANSLATION QUALITY — which is the entire product. Every prompt decision
+ * ever made here (the v8 rewrite, retiring «خخخ», raising the thinking floor
+ * to `low`, temperature 0.3) was judged by eye, once, on a handful of
+ * examples. So "did that change make it better?" had no answer, and a
+ * regression in the date engine or the credit labels could ship invisibly.
+ *
+ * WHAT IT MEASURES, AND WHY IT IS SPLIT IN TWO
+ *
+ *   CONTRACT (here, always): the promises that are binary and machine-
+ *   checkable — every ⟦n⟧ token survives, @mentions are untouched, a
+ *   Gregorian date comes back with its Jalali equivalent, ED in a staff list
+ *   is «کارگردان قسمت», «خخخ» never appears, the output is actually Persian.
+ *   These are exactly the things that regress silently, and they need no
+ *   judge to score.
+ *
+ *   FLUENCY (run_eval.py --judge): a matter of degree, scored by a second
+ *   model against the same items.
+ *
+ * Keeping them apart is the point: a prompt change can be shown to improve
+ * style WITHOUT quietly breaking an entity rule, and the two numbers move
+ * independently.
+ *
+ * It runs against the SHIPPED background/prompt.js and background/gemini.js —
+ * the same code the extension calls — so a passing score cannot be a score
+ * for something else.
+ */
+(async () => {
+  const out = document.getElementById('out');
+  const params = new URLSearchParams(location.search);
+  const key = params.get('key') || '';
+  const model = params.get('model') || 'gemini-3.6-flash';
+  const only = params.get('only') || '';
+
+  const log = (text, cls) => {
+    const line = document.createElement('div');
+    if (cls) line.className = cls;
+    line.textContent = text;
+    out.appendChild(line);
+  };
+
+  out.textContent = '';
+
+  const corpus = await (await fetch('corpus.json')).json();
+  const items = corpus.items.filter((i) => !only || i.id === only || i.kind === only);
+
+  // ─────────────────────────────────────────────────────────── scorers
+
+  const PERSIAN_RE = /[؀-ۿ]/g;
+  const LATIN_RE = /[A-Za-z]/g;
+  const EMOJI_RE = /\p{Extended_Pictographic}/gu;
+  const count = (text, re) => (String(text).match(re) || []).length;
+
+  /** Share of letters that are Persian. Latin proper nouns are legitimate, so
+   *  this is a ratio and never a ban. */
+  function persianRatio(text) {
+    const fa = count(text, PERSIAN_RE);
+    const en = count(text, LATIN_RE);
+    return fa + en === 0 ? 0 : fa / (fa + en);
+  }
+
+  const CHECKS = {
+    persian: (src, got, c) => {
+      const ratio = persianRatio(got);
+      const floor = typeof c.n === 'number' ? c.n : 0.5;
+      return [ratio >= floor, `Persian ratio ${ratio.toFixed(2)} < ${floor}`];
+    },
+    contains: (src, got, c) => {
+      const missing = c.v.filter((v) => !got.includes(v));
+      return [!missing.length, `missing: ${missing.join(', ')}`];
+    },
+    absent: (src, got, c) => {
+      const present = c.v.filter((v) => got.includes(v));
+      return [!present.length, `must not contain: ${present.join(', ')}`];
+    },
+    regexp: (src, got, c) => [new RegExp(c.v, 'u').test(got), `no match for /${c.v}/`],
+    keepLatin: (src, got, c) => {
+      const missing = c.v.filter((v) => !got.includes(v));
+      return [!missing.length, `not preserved: ${missing.join(', ')}`];
+    },
+    tokens: (src, got) => {
+      const wanted = [...src.matchAll(/⟦(\d+)⟧/g)].map((m) => m[0]);
+      const bad = wanted.filter((t) => count(got, new RegExp(t, 'g')) !== 1);
+      return [!bad.length, `token count wrong: ${bad.join(', ')}`];
+    },
+    emojiCount: (src, got) => {
+      const a = count(src, EMOJI_RE);
+      const b = count(got, EMOJI_RE);
+      return [a === b, `${a} emoji in, ${b} out`];
+    },
+    linesEqual: (src, got) => {
+      const a = src.split('\n').length;
+      const b = got.split('\n').length;
+      return [a === b, `${a} lines in, ${b} out`];
+    },
+    maxCount: (src, got, c) => {
+      const n = count(got, new RegExp(c.v, 'g'));
+      return [n <= c.n, `«${c.v}» used ${n} times (max ${c.n})`];
+    },
+    maxLenRatio: (src, got, c) => {
+      const ratio = got.length / Math.max(1, src.length);
+      return [ratio <= c.n, `output is ${ratio.toFixed(2)}× the source`];
+    },
+  };
+
+  // ──────────────────────────────────────────── verifying the instrument
+  //
+  // An evaluator that scores wrongly is worse than no evaluator: it produces
+  // confident numbers that justify the wrong prompt change. So the scorers are
+  // themselves tested, against pairs whose verdict is known — and this mode
+  // needs no API key, so it runs in the ordinary suite alongside everything
+  // else.
+
+  if (params.get('selftest')) {
+    const cases = [
+      // [check, source, output, expected]
+      [{ k: 'tokens' }, 'see ⟦0⟧ now', 'الان ⟦0⟧ را ببین', true],
+      [{ k: 'tokens' }, 'see ⟦0⟧ now', 'الان ببین', false],
+      [{ k: 'tokens' }, 'see ⟦0⟧ now', '⟦0⟧ الان ⟦0⟧ ببین', false],
+      [{ k: 'persian' }, 'hello', 'سلام دنیا', true],
+      [{ k: 'persian' }, 'hello', 'hello world', false],
+      [{ k: 'persian', n: 0.9 }, 'x', 'سلام world', false],
+      [{ k: 'keepLatin', v: ['@a', '$B'] }, 'x', 'سلام @a و $B', true],
+      [{ k: 'keepLatin', v: ['@a'] }, 'x', 'سلام ای', false],
+      [{ k: 'absent', v: ['خخخ'] }, 'x', 'وای چه باحال', true],
+      [{ k: 'absent', v: ['خخخ'] }, 'x', 'خخخ', false],
+      [{ k: 'contains', v: ['مهر'] }, 'x', '۱۱ مهر ۱۴۰۵', true],
+      [{ k: 'contains', v: ['مهر'] }, 'x', 'اکتبر', false],
+      [{ k: 'emojiCount' }, 'a 🔥 b 🚀', 'الف 🔥 ب 🚀', true],
+      [{ k: 'emojiCount' }, 'a 🔥 b 🚀', 'الف ب', false],
+      [{ k: 'linesEqual' }, 'a\nb\nc', 'الف\nب\nپ', true],
+      [{ k: 'linesEqual' }, 'a\nb\nc', 'الف ب پ', false],
+      [{ k: 'regexp', v: '<g1>.*</g1>' }, 'x', 'متن <g1>سند</g1> را', true],
+      [{ k: 'regexp', v: '<g1>.*</g1>' }, 'x', 'متن سند را', false],
+      [{ k: 'maxCount', v: 'توسط', n: 1 }, 'x', 'توسط تیم درست شد', true],
+      [{ k: 'maxCount', v: 'توسط', n: 1 }, 'x', 'توسط تیم توسط کاربر', false],
+      [{ k: 'maxLenRatio', n: 2 }, 'abcd', 'الفب', true],
+      [{ k: 'maxLenRatio', n: 2 }, 'abcd', 'الفبالفبالفبالفب', false],
+    ];
+    let good = 0;
+    for (const [check, src, got, expected] of cases) {
+      const [ok] = CHECKS[check.k](src, got, check);
+      const right = ok === expected;
+      if (right) good += 1;
+      const name = `${check.k} ${expected ? 'accepts' : 'rejects'} «${got.slice(0, 24)}»`;
+      console.log(`GXT-EVALTEST ${right ? 'PASS' : 'FAIL'} ${name}`);
+      log(`${right ? 'PASS' : 'FAIL'} ${name}`, right ? 'pass' : 'fail');
+    }
+    console.log(`GXT-EVALTEST SUMMARY ${good}/${cases.length}`);
+    return;
+  }
+
+  if (!key) {
+    log('no API key supplied — pass ?key=… (or ?selftest=1 to check the scorers)', 'fail');
+    console.log('GXT-EVAL SUMMARY 0/0');
+    return;
+  }
+
+  // ───────────────────────────────────────────────────────── the run
+
+  const results = [];
+  const failures = [];
+  const outputs = {};
+
+  /** One item through the REAL pipeline for its kind. */
+  async function translate(item) {
+    if (item.kind === 'tweet') {
+      const { map } = await GXT.gemini.translateBatch(
+        [{ id: 0, text: item.text, lang: 'en' }],
+        { keys: [key], model }
+      );
+      return map.get(0)?.t || '';
+    }
+    const { list } = await GXT.gemini.translateTexts([item.text], {
+      keys: [key], model, kind: item.kind === 'subtitle' ? 'subtitle' : 'page',
+    });
+    return list[0] || '';
+  }
+
+  for (const item of items) {
+    let got = '';
+    let error = '';
+    try {
+      got = await translate(item);
+    } catch (e) {
+      error = String(e && e.message || e);
+    }
+    outputs[item.id] = got;
+    if (error || !got) {
+      results.push([item.id, false]);
+      failures.push(`${item.id}: NO OUTPUT — ${error || 'empty'}`);
+      log(`FAIL ${item.id} — ${error || 'empty output'}`, 'fail');
+      continue;
+    }
+    const problems = [];
+    for (const check of item.checks) {
+      const fn = CHECKS[check.k];
+      if (!fn) continue;
+      const [ok, why] = fn(item.text, got, check);
+      if (!ok) problems.push(`${check.k}: ${why}`);
+    }
+    const ok = !problems.length;
+    results.push([item.id, ok]);
+    log(`${ok ? 'PASS' : 'FAIL'} ${item.id}`, ok ? 'pass' : 'fail');
+    log(`     ${got}`, 'info');
+    if (!ok) {
+      for (const p of problems) log(`     · ${p}`, 'fail');
+      failures.push(`${item.id}: ${problems.join(' | ')}`);
+    }
+    console.log(`GXT-EVAL ${ok ? 'PASS' : 'FAIL'} ${item.id}${ok ? '' : ' :: ' + problems.join(' | ')}`);
+  }
+
+  const passed = results.filter((r) => r[1]).length;
+  // The machine-readable payload run_eval.py stores as a scorecard, so two
+  // runs (two prompts, two models) can be compared item by item.
+  console.log('GXT-EVAL-DATA ' + JSON.stringify({ model, passed, total: results.length, outputs, failures }));
+  console.log(`GXT-EVAL SUMMARY ${passed}/${results.length}`);
+})();
+</script>
+</body>
+</html>

@@ -1,0 +1,14 @@
+{
+  "name": "tarjoman",
+  "version": "3.7.7",
+  "private": true,
+  "description": "Bilingual browser translation tools",
+  "license": "MIT",
+  "scripts": {
+    "test": "python tools/test_all.py",
+    "test:i18n": "node dev/i18n-regressions.cjs",
+    "build": "python tools/build_release.py",
+    "verify": "python tools/verify_release.py"
+  },
+  "devDependencies": { "acorn": "8.18.0" }
+}

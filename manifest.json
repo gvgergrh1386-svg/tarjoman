@@ -1,0 +1,149 @@
+{
+  "manifest_version": 3,
+  "name": "__MSG_extensionName__",
+  "short_name": "__MSG_extensionShort__",
+  "version": "3.7.7",
+  "description": "__MSG_extensionDescription__",
+  "minimum_chrome_version": "116",
+  "icons": {
+    "16": "icons/icon16.png",
+    "32": "icons/icon32.png",
+    "48": "icons/icon48.png",
+    "128": "icons/icon128.png"
+  },
+  "action": {
+    "default_popup": "popup/popup.html",
+    "default_title": "__MSG_extensionShort__",
+    "default_icon": {
+      "16": "icons/icon16.png",
+      "32": "icons/icon32.png",
+      "48": "icons/icon48.png",
+      "128": "icons/icon128.png"
+    }
+  },
+  "background": {
+    "service_worker": "background/service-worker.js"
+  },
+  "content_scripts": [
+    {
+      "matches": [
+        "https://x.com/*",
+        "https://mobile.x.com/*",
+        "https://twitter.com/*",
+        "https://mobile.twitter.com/*"
+      ],
+      "js": [
+        "shared/settings.js",
+        "shared/memory.js",
+        "shared/theme.js",
+        "content/ui.js",
+        "content/dom.js",
+        "content/render.js",
+        "content/main.js",
+        "content/composer.js"
+      ],
+      "css": [
+        "content/fonts.css",
+        "content/content.css"
+      ],
+      "run_at": "document_idle"
+    },
+    {
+      "matches": [
+        "https://www.youtube.com/*"
+      ],
+      "js": [
+        "shared/settings.js",
+        "shared/memory.js",
+        "shared/theme.js",
+        "content/ui.js",
+        "content/dub.js",
+        "content/player.css.js",
+        "content/youtube.js"
+      ],
+      "css": [
+        "content/fonts.css"
+      ],
+      "run_at": "document_idle"
+    },
+    {
+      "matches": [
+        "https://www.youtube.com/*"
+      ],
+      "js": [
+        "content/yt-main.js"
+      ],
+      "run_at": "document_start",
+      "world": "MAIN"
+    }
+  ],
+  "permissions": [
+    "storage",
+    "unlimitedStorage",
+    "contextMenus",
+    "scripting",
+    "activeTab"
+  ],
+  "host_permissions": [
+    "https://generativelanguage.googleapis.com/*",
+    "https://pbs.twimg.com/*"
+  ],
+  "optional_host_permissions": [
+    "http://*/*",
+    "https://*/*"
+  ],
+  "commands": {
+    "translate-page": {
+      "suggested_key": {
+        "default": "Alt+Shift+P"
+      },
+      "description": "__MSG_commandtranslate_page__"
+    },
+    "translate-selection": {
+      "suggested_key": {
+        "default": "Alt+Shift+S"
+      },
+      "description": "__MSG_commandtranslate_selection__"
+    },
+    "toggle-enabled": {
+      "suggested_key": {
+        "default": "Alt+Shift+T"
+      },
+      "description": "__MSG_commandtoggle_enabled__"
+    },
+    "translate-screen": {
+      "description": "__MSG_commandtranslate_screen__"
+    },
+    "read-selection": {
+      "suggested_key": {
+        "default": "Alt+Shift+R"
+      },
+      "description": "__MSG_commandread_selection__"
+    }
+  },
+  "web_accessible_resources": [
+    {
+      "resources": [
+        "fonts/*.woff2"
+      ],
+      "matches": [
+        "https://x.com/*",
+        "https://mobile.x.com/*",
+        "https://twitter.com/*",
+        "https://mobile.twitter.com/*",
+        "https://www.youtube.com/*"
+      ]
+    },
+    {
+      "resources": [
+        "fonts/Vazirmatn-Regular.woff2",
+        "fonts/Vazirmatn-Bold.woff2"
+      ],
+      "matches": [
+        "http://*/*",
+        "https://*/*"
+      ]
+    }
+  ],
+  "default_locale": "en"
+}

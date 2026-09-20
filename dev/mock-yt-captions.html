@@ -1,0 +1,247 @@
+﻿<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>GXT mock YouTube captions (PoToken)</title>
+<style>
+  body { margin: 0; padding: 24px; background: #0f0f0f; color: #eee; font: 14px/1.6 Roboto, "Segoe UI", sans-serif; }
+  #movie_player { position: relative; width: 640px; height: 360px; background: #000; border-radius: 12px; overflow: hidden; }
+  video { width: 100%; height: 100%; }
+  #summary { position: fixed; top: 8px; right: 8px; z-index: 99999; background: #16181c; border: 1px solid #333; border-radius: 10px; padding: 8px 12px; font: 12px/1.7 Consolas, monospace; max-width: 460px; }
+  #summary .pass { color: #0f8; }
+  #summary .fail { color: #f66; font-weight: bold; }
+</style>
+</head>
+<body>
+<div id="summary">running…</div>
+<div id="movie_player"><video muted></video>
+<!-- v3.2.2 — YouTube's OWN player chrome, at the z-index values it really
+     uses. Without these the mock player was unrealistically simple: it had no
+     z-indexed children, so DOM order alone put our UI on top and a host that
+     computed to `z-index: auto` looked perfectly fine. On the real player that
+     same host painted UNDERNEATH all of this and the UI "completely vanished".
+     A mock that cannot reproduce the site's stacking cannot catch that. -->
+<div class="ytp-gradient-bottom" style="position:absolute;left:0;right:0;bottom:0;height:170px;z-index:59;background:linear-gradient(transparent,rgba(0,0,0,.7));pointer-events:none"></div>
+<div class="ytp-chrome-bottom" style="position:absolute;left:12px;right:12px;bottom:0;height:48px;z-index:60"></div>
+<div class="ytp-chrome-top" style="position:absolute;left:0;right:0;top:0;height:48px;z-index:60"></div>
+</div>
+
+<script>
+  globalThis.__gxtYtTestMode = true;
+  globalThis.GXT_SHIM_SEED = { settings: { ytAheadSec: 90, ytAuto: true }, apiKeys: ['dev-key'] };
+
+  // ---- Simulate YouTube's CURRENT timedtext behaviour -------------------
+  // A caption URL stamped with exp=xpe returns an EMPTY 200 body unless it
+  // carries the runtime proof-of-origin token. Only pot + fmt=json3 works.
+  const GOOD_POT = 'GOODPOTTOKEN';
+  globalThis.GXT_CC_REQUESTS = [];
+  const trackEvents = [];
+  // 60 cues, one every 3s (3 minutes): long enough that the 25s urgent window
+  // and the 90s look-ahead cover clearly different slices, which is what makes
+  // the v2.1.0 scheduling assertions meaningful.
+  for (let i = 0; i < 60; i += 1) {
+    trackEvents.push({ tStartMs: i * 3000, dDurationMs: 2800, segs: [{ utf8: 'line ' + i }] });
+  }
+  const realFetch = window.fetch.bind(window);
+  window.fetch = async (input, init) => {
+    const raw = typeof input === 'string' ? input : input?.url;
+    const u = new URL(raw, location.href);
+    if (u.pathname.indexOf('/api/timedtext') === -1) return realFetch(input, init);
+    globalThis.GXT_CC_REQUESTS.push(u.search);
+    const pot = u.searchParams.get('pot');
+    const fmt = u.searchParams.get('fmt');
+    // No valid token -> YouTube answers 200 with a completely empty body.
+    if (pot !== GOOD_POT) return new Response('', { status: 200 });
+    // Token present but wrong format -> XML, which must not be JSON.parsed.
+    if (fmt !== 'json3') return new Response('<transcript><text>x</text></transcript>', { status: 200 });
+    return new Response(JSON.stringify({ events: trackEvents }), { status: 200 });
+  };
+</script>
+<script src="chrome-shim.js?v=3300"></script>
+<script>
+  globalThis.GXT_YT_CALLS = [];
+  globalThis.GXT_SHIM_HANDLER = async (message) => {
+    if (message.type !== 'TRANSLATE_TEXTS') return { ok: false, code: 'DEV' };
+    globalThis.GXT_YT_CALLS.push(message.texts.length);
+    await new Promise((r) => setTimeout(r, 60));
+    return { ok: true, list: message.texts.map((t) => 'ف: ' + t), failed: null };
+  };
+</script>
+<script src="../shared/settings.js?v=3300"></script>
+<script src="../shared/memory.js?v=3300"></script>
+<script src="../shared/theme.js?v=3300"></script>
+<script src="../content/ui.js?v=3300"></script>
+<script src="../content/player.css.js?v=3300"></script>
+<script src="../content/youtube.js?v=3300"></script>
+<script>
+(async () => {
+  // v3.2.0 — the in-player UI lives in a shadow root now (style isolation from
+  // YouTube's own CSS, which is what the old inline styles were buying). These
+  // two cross that boundary; `document.getElementById` no longer can.
+  const Q = (sel) => GXT.yt?._internal?.q?.(sel) || null;
+  const QA = (sel) => GXT.yt?._internal?.qa?.(sel) || [];
+  const results = [];
+  const check = (name, ok, extra) => {
+    results.push([name, !!ok, extra || '']);
+    console.log(`GXT-CC-TEST ${ok ? 'PASS' : 'FAIL'} ${name}${extra ? ' — ' + extra : ''}`);
+  };
+  const until = async (fn, timeout = 9000, step = 100) => {
+    const t0 = Date.now();
+    for (;;) {
+      let v = null;
+      try { v = fn(); } catch { v = null; }
+      if (v) return v;
+      if (Date.now() - t0 > timeout) return null;
+      await new Promise((r) => setTimeout(r, step));
+    }
+  };
+  const videoEl = document.querySelector('#movie_player video');
+  let fakeTime = 1;
+  Object.defineProperty(videoEl, 'currentTime', { configurable: true, get: () => fakeTime, set: (v) => { fakeTime = v; } });
+  Object.defineProperty(videoEl, 'paused', { configurable: true, get: () => false });
+
+  // Stand in for yt-main.js: when the extension asks the player to load its
+  // caption module, the "player" issues its own token-carrying request.
+  let probeSeen = false;
+  window.addEventListener('message', (e) => {
+    if (e.source !== window || e.data?.source !== 'gxt-yt-cmd') return;
+    if (e.data.cmd !== 'captionsProbe') return;
+    probeSeen = true;
+    setTimeout(() => window.postMessage({
+      source: 'gxt-yt-cc',
+      url: `https://www.youtube.com/api/timedtext?v=3300-cc-1&lang=en&fmt=srv3&exp=xpe&pot=${'GOODPOTTOKEN'}`,
+    }, '*'), 80);
+  });
+
+  // Announce a track whose baseUrl has BOTH problems: exp=xpe (PoToken wall)
+  // and a pre-existing fmt=srv3 (so json3 must be forced, not appended).
+  const announce = (videoId) => window.postMessage({
+    source: 'gxt-yt',
+    videoId,
+    title: 'mock',
+    tracks: [{
+      baseUrl: `https://www.youtube.com/api/timedtext?v=${videoId}&lang=en&fmt=srv3&exp=xpe`,
+      lang: 'en', kind: '',
+    }],
+  }, '*');
+  setTimeout(() => announce('vid-cc-1'), 150);
+
+  const pill = await until(() => Q('#gxt-yt-pill'));
+  check('pill appears for a video with captions', !!pill);
+
+  // NOTE: the pill is deliberately NOT clicked — `ytAuto` is on, so the video
+  // has to start translating by itself (v2.1.0, item 3).
+  const capsule = await until(() => Q('#gxt-yt-overlay span'), 12000);
+  check('v2.1.0: auto-start begins translation with no click', !!capsule);
+  check('overlay activates despite exp=xpe PoToken wall', !!capsule);
+
+  check('player was probed for a token-carrying URL', probeSeen);
+
+  const reqs = globalThis.GXT_CC_REQUESTS;
+  check('v3.3.8 avoids the predictably empty unsigned exp=xpe request',
+    reqs.every((q) => !q.includes('exp=xpe') || q.includes('pot=')),
+    `${reqs.length} caption requests`);
+  check('recovered using the player-issued pot token',
+    reqs.some((q) => q.includes('pot=GOODPOTTOKEN') && q.includes('fmt=json3')));
+  check('fmt forced to json3 (baseUrl said srv3)',
+    reqs.every((q) => !q.includes('fmt=srv3') || q.includes('fmt=json3')));
+
+  // Cues actually parsed + translated through the normal pipeline.
+  videoEl.dispatchEvent(new Event('timeupdate'));
+  const shown = await until(() => (capsule?.textContent || '').includes('line 0') && capsule);
+  check('cue text rendered from the recovered track', !!shown,
+    (shown?.textContent || '').slice(0, 40));
+  const translated = await until(() => (capsule?.textContent || '').includes('ف: line 0'));
+  check('recovered cues flow into translation', !!translated);
+
+  // ---- v2.1.0, item 5: the urgent window must not queue behind the prefetch
+  await until(() => globalThis.GXT_YT_CALLS.length >= 2, 4000);
+  const calls = globalThis.GXT_YT_CALLS;
+  check('v2.1.0: the FIRST subtitle request is the small urgent batch',
+    calls[0] > 0 && calls[0] <= 10, `sizes: ${calls.slice(0, 3).join(', ')}`);
+  check('v2.1.0: the look-ahead runs CONCURRENTLY, not after it',
+    calls.length >= 2 && calls[1] > calls[0], `sizes: ${calls.slice(0, 3).join(', ')}`);
+
+  // ---- v2.1.0, item 3: a manual stop outranks auto-start, per video --------
+  Q('#gxt-yt-pill').click();
+  const stopped = await until(() => !Q('#gxt-yt-overlay'), 4000);
+  check('v2.1.0: a manual stop overrides auto-start', !!stopped);
+
+  announce('vid-cc-1'); // the player re-announces the SAME video
+  await new Promise((r) => setTimeout(r, 800));
+  check('v2.1.0: the video the user stopped does not auto-restart',
+    !Q('#gxt-yt-overlay'));
+
+  announce('vid-cc-2'); // …but a NEW video gets a fresh decision
+  const restarted = await until(() => Q('#gxt-yt-overlay span'), 12000);
+  check('v2.1.0: the next video auto-starts again', !!restarted);
+
+  // ══════════════ v3.3.0 — the receiver half of the caption bug ══════════
+  //
+  // The page script's half is covered by dev/mock-yt-main.html. These are the
+  // two defects that lived on THIS side of the message channel.
+  {
+    const I2 = () => GXT.yt._internal;
+
+    /**
+     * (a) CROSS-VIDEO CAPTION URLS. `resetForNewVideo` cleared eleven pieces of
+     * state and not the captured-caption-URL cache, and `pickCapturedUrl`
+     * accepted any entry whose URL happened to carry no `v` parameter, from any
+     * video, for ever. So the second video of a session could be handed the
+     * first one's caption URL and would display the WRONG SUBTITLES — silently,
+     * which is worse than displaying none.
+     */
+    I2().noteCapturedCaptionUrl(
+      'https://www.youtube.com/api/timedtext?v=vid-cc-OLD&lang=en&fmt=json3'
+    );
+    I2().noteCapturedCaptionUrl(
+      'https://www.youtube.com/api/timedtext?lang=en&fmt=json3' // no v at all
+    );
+    const leaked = I2().pickCapturedUrl({ lang: 'en' });
+    check('REGRESSION: another video\'s caption URL is never reused',
+      !leaked.includes('vid-cc-OLD'), `picked: ${leaked || '(none)'}`);
+    check('REGRESSION: nor is a URL that names no video at all',
+      !leaked || /[?&]v=vid-cc-2\b/.test(leaked), `picked: ${leaked || '(none)'}`);
+
+    /**
+     * (b) WRONG-LANGUAGE SUBSTITUTION. A captured URL is the FIRST candidate
+     * tried, because it is the one carrying a working token. The fallback used to
+     * be «the most recently captured URL, whatever language it is for» — so a
+     * viewer who chose the Japanese source track while the player had fetched
+     * English got the ENGLISH captions, translated and displayed as the Japanese
+     * ones. Confidently wrong text, with nothing about it that looks like a bug.
+     */
+    const vid = I2().videoId();
+    I2().noteCapturedCaptionUrl(
+      `https://www.youtube.com/api/timedtext?v=${vid}&lang=en&fmt=json3&pot=TOK`
+    );
+    const forJa = I2().pickCapturedUrl({ lang: 'ja' });
+    check('REGRESSION: an English caption URL is never used for a Japanese track',
+      !forJa || !/lang=en\b/.test(forJa), `picked: ${forJa || '(none)'}`);
+    // The right track still gets it, and the TOKEN is still borrowable for any
+    // language — that is what makes the correct path fast.
+    check('the matching language still uses the captured URL',
+      /lang=en\b/.test(I2().pickCapturedUrl({ lang: 'en' })));
+
+    // …and a navigation drops them, rather than letting the cache grow for the
+    // whole session.
+    const before = I2().capturedCount();
+    announce('vid-cc-3');
+    // Wait for the VIDEO ID to change, not for a track count that was already
+    // non-zero — that returned instantly and the assertion ran before the reset
+    // had happened, so it measured nothing.
+    await until(() => (I2().videoId() === 'vid-cc-3' ? true : null), 4000);
+    check('REGRESSION: a video change forgets other videos\' caption URLs',
+      I2().capturedCount() < before,
+      `${before} → ${I2().capturedCount()}`);
+  }
+
+  const passed = results.filter((r) => r[1]).length;
+  document.getElementById('summary').innerHTML =
+    `<b>${passed}/${results.length} checks passed</b>` +
+    results.map(([n, ok, x]) => `<div class="${ok ? 'pass' : 'fail'}">${ok ? 'PASS' : 'FAIL'} — ${n}${x ? ' (' + x + ')' : ''}</div>`).join('');
+  console.log(`GXT-CC-TEST SUMMARY ${passed}/${results.length}`);
+})();
+</script>
+</body>
+</html>

@@ -1,0 +1,40 @@
+'use strict';
+// Node VM loads the production classic scripts, without Chrome or a build step.
+const fs = require('node:fs'), vm = require('node:vm'), path = require('node:path');
+const root = path.resolve(process.argv[2] || path.join(__dirname, '..'));
+const ctx = vm.createContext({ console, matchMedia: () => ({ matches: false }) });
+for (const name of ['shared/settings.js', 'shared/theme.js']) vm.runInContext(fs.readFileSync(path.join(root, name), 'utf8'), ctx, { filename: name });
+const T = ctx.GXT.theme, D = ctx.GXT.DEFAULTS;
+const map = (s, opts) => Object.fromEntries([...T.tokens(s, opts).matchAll(/--gxt-([\w-]+):\s*([^;]+);/g)].map(m => [m[1], m[2]]));
+let passed = 0, total = 0;
+function test(name, fn) { total++; try { if (!fn()) throw Error('contract failed'); passed++; console.log('GXT-THEME PASS ' + name); } catch (e) { console.log('GXT-THEME FAIL ' + name + ': ' + e.message); } }
+test('composition presets provide at least twelve distinct choices', () => T.PRESETS.length >= 12);
+test('presets change geometry, motion and surfaces beyond palette', () => {
+  const shapes = new Set(T.PRESETS.map(p => { const t = map(T.presetSettings(p.id)); return [t['radius-md'], t['ctl-h'], t['elev-1'], t['card-alpha'], t['dur-2']].join('|'); })); return shapes.size >= 10;
+});
+test('radius control changes actual legacy component tokens', () => map({uiRadius:0})['radius-lg'] === '0px' && map({uiRadius:20})['radius-lg'] !== map({uiRadius:0})['radius-lg']);
+test('shadow can be fully removed', () => map({uiShadow:0})['elev-3'] === 'none');
+test('custom blur remains live in extension pages', () => map({uiSurface:'glass',uiBlur:24})['backdrop'] === 'blur(24px)');
+test('video safe default still forbids backdrop reads for every preset', () => T.PRESETS.every(p => map(T.presetSettings(p.id), {inPage:true})['backdrop'] === 'none'));
+test('unsafe transparency is clamped only on arbitrary page backgrounds', () => map({uiOpacity:55})['card-alpha'] === '55%' && map({uiOpacity:55}, {inPage:true})['card-alpha'] === '84%');
+test('text scale changes the actual reading size independently', () => parseFloat(map({uiTextScale:1.2})['fs-md']) > parseFloat(map({})['fs-md']) && map({uiTextScale:1.2})['sp-4'] === map({})['sp-4']);
+test('control scale changes buttons and coherent switch travel', () => { const a=map({uiControlScale:1.2}); return parseFloat(a['ctl-h'])>36 && Math.abs(parseFloat(a['sw-w'])-parseFloat(a['sw-knob'])-6-parseFloat(a['sw-travel']))<0.1; });
+test('compact control settings preserve minimum accessible target size', () => parseFloat(map({uiDensity:'compact',uiControlScale:0.1})['ctl-h-sm']) >= 24);
+test('spacing scale changes real section spacing', () => parseFloat(map({uiSpacingScale:1.4})['sp-6']) > parseFloat(map({})['sp-6']));
+test('heading scale changes title but keeps body stable', () => map({uiTitleScale:1.2})['fs-xl'] !== map({})['fs-xl'] && map({uiTitleScale:1.2})['fs-md'] === map({})['fs-md']);
+test('reduced motion has zero duration regardless of speed', () => map({uiMotion:'reduce',uiMotionSpeed:1.8})['dur-3'] === '0ms');
+test('motion speed changes the real transition duration', () => parseFloat(map({uiMotionSpeed:2})['dur-2']) < parseFloat(map({uiMotionSpeed:1})['dur-2']));
+test('button and switch shapes have independent tokens', () => map({uiButtonShape:'square'})['radius-pill'] === '2px' && map({uiSwitchShape:'square'})['switch-radius'] === '4px');
+test('user colors keep derived readable foreground', () => { const t=map({uiCustomAccent:'#ffff00'}); return t['accent-brand']==='#ffff00' && T.contrast(t['accent-fg'],t['accent-solid'])>=4.48; });
+test('custom surfaces retain contrasting ink even for middle gray input', () => { const t=map({uiTheme:'graphite',uiBackground:'#777777',uiCardColor:'#777777'}, {inPage:true}); return T.contrast(t.fg,T.compositeOver(t['bg-elev'],'#ffffff',.84))>=7; });
+test('status colors are derived from user hues with readable contrast', () => {const t=map({uiTheme:'daylight',uiSuccessColor:'#ffff00',uiWarningColor:'#eeeeee',uiErrorColor:'#ffaaaa'}); return ['ok','warn','err'].every(k=>T.contrast(t[k],t['bg-elev'])>=7);});
+test('appearance settings identity covers every new effective knob', () => ['uiRadius','uiBlur','uiTextScale','uiControlScale','uiSpacingScale','uiMotion','uiCustomAccent','uiPanelStyle'].every(k => T.settingsKey({[k]:'changed'}) !== T.settingsKey({})));
+test('appearance identity excludes provider and credentials', () => T.settingsKey({provider:'google',openaiApiKey:'a'}) === T.settingsKey({provider:'bing',openaiApiKey:'b'}));
+test('legacy settings migrate without changing rendered tokens', () => {const old={uiTheme:'paper',uiAccent:'rose',uiDensity:'compact',uiSurface:'solid'}; return T.tokens(old)===T.tokens({...D,...old});});
+test('reset clears every appearance override and preserves playback preference', () => {const a=T.resetSettings(); return a.uiTheme==='auto' && a.uiRadius===null && a.uiCustomAccent==='' && a.uiMotion==='auto' && !('videoSafeUi' in a);});
+test('malformed appearance import never emits CSS injection or nonfinite tokens', () => {const s={uiRadius:'0; color:red',uiBlur:Infinity,uiOpacity:NaN,uiCustomAccent:'red;display:none',uiScale:-100,uiWeight:'oops'}; const t=T.tokens(s); return !t.includes('NaN')&&!t.includes('Infinity')&&!t.includes('display:none')&&!t.includes('color:red');});
+test('palette cache stays bounded after many distinct imported colors', () => {for(let i=0;i<600;i++) T.tokens({uiCustomAccent:'#'+i.toString(16).padStart(6,'0')}); return T.cacheSize()<=256;});
+test('general web video defaults are opt-in with independent capabilities', () => D.webVideoEnabled===false && D.webVideoSubtitles===true && D.webVideoDub===true && D.webVideoDisplay==='auto');
+test('YouTube target and model default preserve legacy translation', () => D.ytTargetLang==='fa' && D.ytModel==='');
+console.log(`GXT-THEME SUMMARY ${passed}/${total}`);
+process.exitCode = passed === total ? 0 : 1;

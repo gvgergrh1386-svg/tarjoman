@@ -1,0 +1,14 @@
+name: Feature request
+description: Describe a user problem and proposed improvement.
+body:
+  - type: textarea
+    id: problem
+    attributes:
+      label: User problem and proposed behavior
+    validations:
+      required: true
+  - type: textarea
+    id: compatibility
+    attributes:
+      label: Compatibility and alternatives
+      description: Consider Persian/English, region, privacy and existing behavior.

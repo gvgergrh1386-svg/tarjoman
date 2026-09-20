@@ -1,0 +1,165 @@
+<!doctype html>
+<html lang="en">
+<meta charset="utf-8">
+<title>YouTube native auto-translation acquisition regression</title>
+<style>
+body{background:#111;color:#eee;font:13px/1.6 monospace;padding:20px}
+#movie_player{position:relative;width:720px;height:405px;background:#000}
+video{width:100%;height:100%}.pass{color:#5e9}.fail{color:#f77}
+</style>
+<div id="movie_player"><video></video>
+  <div class="ytp-chrome-bottom" style="position:absolute;bottom:0;height:48px;width:100%">
+    <button class="ytp-subtitles-button" aria-pressed="true">CC</button>
+  </div>
+</div>
+<div id="summary">running…</div>
+<script>
+globalThis.__gxtYtTestMode = true;
+globalThis.GXT_SHIM_SEED = { settings: { ytAuto: false, ytDub: false }, apiKeys: ['dev-key'] };
+const player = document.getElementById('movie_player');
+const nativeCc = player.querySelector('.ytp-subtitles-button');
+let videoId = 'auto-translate-a';
+let selectedTrack = { languageCode: 'en', kind: 'asr', vss_id: 'a.en', displayName: 'English auto',
+  translationLanguage: { languageCode: 'ja', languageName: 'Japanese' } };
+let nativeClicks = 0;
+const trackSelections = [];
+const captionRequests = [];
+const unexpectedFetches = [];
+let hangFetch = false;
+player.getPlayerResponse = () => ({ videoDetails: { videoId, title: 'Native translated captions' }, playabilityStatus: { status: 'OK' } });
+// The captions MODULE is the only source in this fixture, and has no baseUrl.
+player.getOption = (module, key) => key === 'tracklist' ? [selectedTrack] : key === 'track' ? selectedTrack : null;
+player.loadModule = () => {};
+player.unloadModule = () => {};
+const nativeUrl = () => {
+  const u = new URL('https://www.youtube.com/api/timedtext');
+  for (const [key, value] of Object.entries({ v: videoId, lang: 'en', kind: 'asr', fmt: 'srv3', exp: 'xpe', pot: 'fixture-proof' })) u.searchParams.set(key, value);
+  if (selectedTrack.translationLanguage) u.searchParams.set('tlang', selectedTrack.translationLanguage.languageCode);
+  return u.href;
+};
+player.setOption = (module, key, track) => {
+  if (module !== 'captions' || key !== 'track') return;
+  trackSelections.push({ ...track });
+  // Model the difficult case: choosing only languageCode retains native
+  // auto-translation. The player also mutates the object getOption returned.
+  Object.assign(selectedTrack, track);
+  void fetch(nativeUrl());
+};
+nativeCc.addEventListener('click', () => {
+  nativeClicks += 1;
+  nativeCc.setAttribute('aria-pressed', nativeCc.getAttribute('aria-pressed') === 'true' ? 'false' : 'true');
+});
+const realFetch = window.fetch.bind(window);
+window.fetch = async (input, init) => {
+  const u = new URL(typeof input === 'string' ? input : input?.url || input, location.href);
+  if (u.hostname !== 'www.youtube.com' || u.pathname !== '/api/timedtext') {
+    unexpectedFetches.push(u.href);
+    return realFetch(input, init);
+  }
+  captionRequests.push(u.href);
+  if (hangFetch && u.searchParams.get('fmt') === 'json3') return new Promise(() => {});
+  if (u.searchParams.get('fmt') !== 'json3') return new Response('<transcript/>');
+  if (u.searchParams.has('tlang')) return new Response('', { status: 200 });
+  return new Response(JSON.stringify({ events: [
+    { tStartMs: 0, dDurationMs: 4000, segs: [{ utf8: 'Original English sentence.' }] },
+    { tStartMs: 4000, dDurationMs: 4000, segs: [{ utf8: 'Another original sentence (in English).' }] },
+  ] }));
+};
+const video = player.querySelector('video');
+Object.defineProperty(video, 'currentTime', { configurable: true, get: () => 1 });
+Object.defineProperty(video, 'paused', { configurable: true, get: () => true });
+history.replaceState(null, '', `/watch?v=${videoId}`);
+</script>
+<script src="/dev/chrome-shim.js"></script>
+<script>
+const translationCalls = [];
+globalThis.GXT_SHIM_HANDLER = async (message) => {
+  if (message.type !== 'TRANSLATE_TEXTS') return { ok: false };
+  translationCalls.push(message.texts);
+  return { ok: true, list: message.texts.map((line) => 'فارسی: ' + line), failed: null };
+};
+</script>
+<script src="/shared/settings.js"></script>
+<script src="/shared/memory.js"></script>
+<script src="/shared/theme.js"></script>
+<script src="/content/ui.js"></script>
+<script src="/content/player.css.js"></script>
+<script src="/content/yt-main.js"></script>
+<script src="/content/youtube.js"></script>
+<script>
+(async () => {
+  const results = [];
+  const check = (name, ok) => {
+    results.push([name, !!ok]);
+    console.log(`GXT-YTAUTO ${ok ? 'PASS' : 'FAIL'} ${name}`);
+  };
+  const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
+  const until = async (fn, timeout = 4500) => {
+    const deadline = Date.now() + timeout;
+    while (Date.now() < deadline) { if (fn()) return true; await sleep(40); }
+    return false;
+  };
+  const I = () => GXT.yt._internal;
+  const Q = (selector) => I().q(selector);
+  await until(() => I().trackCount() === 1 && Q('#gxt-yt-pill'));
+  check('real MAIN discovery supplies tracklist-only ASR metadata', I().trackCount() === 1);
+
+  // The captured request is already AUTO-TRANSLATED by native YouTube.
+  // Extension activation must recover the original without a manual CC edit.
+  await fetch(nativeUrl());
+  await until(() => I().capturedCount() > 0);
+  const nativeSelectionsBefore = trackSelections.length;
+  const startAt = performance.now();
+  Q('#gxt-yt-pill').click();
+  const active = await until(() => I().subState() === 'active');
+  check('native auto-translated CC starts from its captured source URL', active);
+  check('auto-translated capture avoids the slow native probing ladder', performance.now() - startAt < 2000 && trackSelections.length === nativeSelectionsBefore);
+  check('caption fetch keeps proof token and ASR kind while removing tlang', captionRequests.some((raw) => {
+    const u = new URL(raw);
+    return u.searchParams.get('fmt') === 'json3' && u.searchParams.get('pot') === 'fixture-proof' && u.searchParams.get('kind') === 'asr' && !u.searchParams.has('tlang');
+  }));
+  await until(() => translationCalls.length > 0);
+  check('our translation engine receives original English rather than native Japanese', translationCalls.flat().includes('Original English sentence.'));
+  check('meaningful parenthesized speech is preserved for translation', translationCalls.flat().includes('Another original sentence (in English).'));
+  Q('#gxt-yt-pill').click();
+  await until(() => nativeCc.getAttribute('aria-pressed') === 'true');
+  check('stopping restores the viewers native auto-translation target', selectedTrack.translationLanguage?.languageCode === 'ja' && nativeCc.getAttribute('aria-pressed') === 'true');
+
+  // A new video has no captured URL at all. Discovery still only has the
+  // native module's track; probing must temporarily clear translationLanguage.
+  videoId = 'auto-translate-b';
+  history.replaceState(null, '', `/watch?v=${videoId}`);
+  document.dispatchEvent(new CustomEvent('yt-navigate-finish'));
+  await until(() => I().videoId() === videoId && I().trackCount() === 1);
+  const selectionOffset = trackSelections.length;
+  Q('#gxt-yt-pill').click();
+  const probedActive = await until(() => I().subState() === 'active');
+  check('tracklist without baseUrl acquires captions using the real native probe', probedActive);
+  check('the probe explicitly selects an untranslated source clone', trackSelections.slice(selectionOffset).some((t) => t.languageCode === 'en' && t.kind === 'asr' && t.translationLanguage === null));
+  Q('#gxt-yt-pill').click();
+  await until(() => nativeCc.getAttribute('aria-pressed') === 'true');
+  check('the native translated track survives even when the player mutates getOption objects', selectedTrack.translationLanguage?.languageCode === 'ja');
+  check('missing caption URLs never become fetches of the watch page or null paths', unexpectedFetches.length === 0);
+
+  // Even a settled-empty later message cannot erase a previously found track.
+  window.postMessage({ source: 'gxt-yt', videoId, settled: true, tracks: [] }, '*');
+  await sleep(80);
+  check('a transient settled-empty report cannot erase known captions', I().trackCount() === 1 && !Q('#gxt-yt-pill').disabled);
+
+  // Exercise actual hanging network cancellation, not a pure helper probe.
+  hangFetch = true;
+  Q('#gxt-yt-pill').click();
+  await until(() => I().subState() === 'loading');
+  Q('#gxt-yt-pill').click();
+  await sleep(80);
+  check('cancel stops a hanging caption fetch immediately', I().subState() === 'idle' && !Q('#gxt-yt-overlay'));
+  await sleep(500);
+  check('a cancelled fetch cannot reactivate captions or leave native CC borrowed', I().subState() === 'idle' && nativeCc.getAttribute('aria-pressed') === 'true');
+  hangFetch = false;
+
+  const passed = results.filter((r) => r[1]).length;
+  document.getElementById('summary').textContent = `${passed}/${results.length}: ` + results.map(([n, ok]) => `${ok ? 'PASS' : 'FAIL'} ${n}`).join('\n');
+  console.log(`GXT-YTAUTO SUMMARY ${passed}/${results.length}`);
+})();
+</script>
+</html>

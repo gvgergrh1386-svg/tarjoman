@@ -1,0 +1,21 @@
+name: Bug report
+description: Report a reproducible problem using redacted or synthetic data.
+body:
+  - type: textarea
+    id: environment
+    attributes:
+      label: Version and environment
+      description: Tarjoman version, browser/OS, UI language, content target and region.
+    validations:
+      required: true
+  - type: textarea
+    id: reproduction
+    attributes:
+      label: Reproduction, expected and actual behavior
+      description: Never include keys, tokens, full backups or private content.
+    validations:
+      required: true
+  - type: textarea
+    id: evidence
+    attributes:
+      label: Redacted logs or synthetic fixture

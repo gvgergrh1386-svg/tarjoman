@@ -1,0 +1,1278 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>GXT design-system + accessibility conformance</title>
+<style>
+  body { font: 13px/1.7 Consolas, monospace; background: #111; color: #eee; padding: 16px; }
+  .pass { color: #0f8; }
+  .fail { color: #f44; font-weight: bold; }
+  h1 { font-size: 15px; }
+</style>
+</head>
+<body>
+<h1>Design-system &amp; accessibility conformance (v3.2.5)</h1>
+<div id="out">running…</div>
+
+<script src="../shared/settings.js?v=3300"></script>
+<script src="../shared/memory.js?v=3300"></script>
+<script src="../shared/theme.js?v=3300"></script>
+<script>
+/**
+ * WHY THIS SUITE EXISTS
+ * ─────────────────────
+ * A design system's promises ("every ink level clears AAA", "the primary
+ * button is legible on every accent") are only real if something measures
+ * them. Before v2.9 nothing did, and four contrast defects shipped and stayed:
+ * white on the sky accent was 3.00:1, faint ink on graphite was 4.03:1, the
+ * warn colour on the light themes was 3.15:1, and no accent's foreground had
+ * ever been checked at all.
+ *
+ * These checks run against the SHIPPED shared/theme.js — the same functions
+ * the extension calls — so the suite cannot pass while the product fails.
+ */
+(async () => {
+  const out = document.getElementById('out');
+  const results = [];
+  const t = async (name, fn) => {
+    try { await fn(); results.push([name, true, '']); }
+    catch (e) { results.push([name, false, String((e && e.message) || e)]); }
+  };
+  const assert = (cond, msg) => { if (!cond) throw new Error(msg || 'assertion failed'); };
+
+  const T = GXT.theme;
+  const round = (n) => Math.round(n * 100) / 100;
+
+  /** Read one token out of a settings combination, resolved to a real value. */
+  function tokenMap(settings, opts) {
+    const map = {};
+    for (const decl of T.tokens(settings, opts).split(';')) {
+      const i = decl.indexOf(':');
+      if (i < 0) continue;
+      map[decl.slice(0, i).trim()] = decl.slice(i + 1).trim();
+    }
+    return map;
+  }
+
+  const REAL_THEMES = T.THEMES.filter((x) => x.id !== 'auto');
+  const combos = [];
+  for (const theme of REAL_THEMES) {
+    for (const accent of T.ACCENTS) combos.push({ theme, accent });
+  }
+
+  // ───────────────────────────────────────────── colour mathematics
+  await t('contrast() matches the WCAG reference values', () => {
+    assert(round(T.contrast('#ffffff', '#000000')) === 21, 'white/black must be 21:1');
+    assert(round(T.contrast('#777777', '#ffffff')) === 4.48, `mid grey on white was ${round(T.contrast('#777777', '#ffffff'))}`);
+    assert(T.contrast('#1d9bf0', '#ffffff') < 3.01, 'the historic sky/white pairing must measure as failing');
+  });
+
+  await t('ramp() reaches the requested ratio and stops there', () => {
+    const bg = '#0e1014';
+    const base = '#7d8798';
+    for (const ratio of [4.5, 7, 10, 15]) {
+      const c = T.ramp(base, '#ffffff', bg, ratio);
+      const got = T.contrast(c, bg);
+      assert(got >= ratio - 0.02, `ramp(${ratio}) produced ${round(got)}`);
+      // Overshoot is only a defect when the ramp actually had to move: a base
+      // that already clears the ratio is returned untouched on purpose, so the
+      // authored hue is preserved whenever it is already good enough.
+      if (T.contrast(base, bg) < ratio) {
+        assert(got <= ratio + 0.35, `ramp(${ratio}) overshot to ${round(got)}`);
+      } else {
+        assert(c === base, `ramp(${ratio}) moved a colour that already passed`);
+      }
+    }
+  });
+
+  // ───────────────────────────────────────── AAA across the whole matrix
+  await t('every ink level clears AAA (7:1) on every theme × accent', () => {
+    for (const { theme, accent } of combos) {
+      const p = T.palette(theme, accent);
+      const bg = theme.vars.bg;
+      for (const [name, value, floor] of [
+        ['fg', p.fg, 14.5],
+        ['fg-muted', p.fgMuted, 9.5],
+        ['fg-faint', p.fgFaint, 7],
+      ]) {
+        const got = T.contrast(value, bg);
+        assert(got >= floor, `${theme.id}/${accent.id} ${name} = ${round(got)}:1 (need ${floor})`);
+      }
+    }
+  });
+
+  /**
+   * v2.9.5 — the guarantee has to hold on the surface the card REALLY has.
+   *
+   * The checks above measure ink against the theme's own opaque background.
+   * That is the popup's situation, but not the situation of the surfaces the
+   * extension draws on other people's pages: `.card`, `.pill` and `.toast`
+   * paint at `--gxt-card-alpha` (84%) and, because a backdrop blur would knock
+   * a video out of its hardware overlay plane, with nothing blurred behind
+   * them. So their real background is the card composited over an arbitrary
+   * page.
+   *
+   * MEASURED on v2.9.0, default theme over an ordinary WHITE page:
+   *   fg 9.10  ·  fg-muted 6.09  ·  fg-faint 4.40  ·  err 4.25
+   * Two of those are under the 4.5:1 AA floor, on the surface most people read
+   * translations in. The tokens were honest about what they were derived
+   * against; that surface just was not the one being painted.
+   *
+   * A white page and a black one bound every other page, because contrast
+   * against the composite is monotone in the page's luminance.
+   */
+  await t('REGRESSION: in-page ink clears AAA composited over ANY page', () => {
+    const alpha = 0.84;
+    for (const { theme, accent } of combos) {
+      const p = T.palette(theme, accent, alpha);
+      for (const page of ['#ffffff', '#000000']) {
+        const real = T.compositeOver(theme.vars['bg-elev'], page, alpha);
+        for (const [name, value] of [
+          ['fg', p.fg],
+          ['fg-muted', p.fgMuted],
+          ['fg-faint', p.fgFaint],
+          ['accent-on-soft', p.accentOnSoft],
+          ['ok', p.ok],
+          ['warn', p.warn],
+          ['err', p.err],
+        ]) {
+          const got = T.contrast(value, real);
+          assert(
+            got >= 7,
+            `${theme.id}/${accent.id} ${name} over ${page} = ${round(got)}:1 (need AAA 7:1)`
+          );
+        }
+      }
+    }
+  });
+
+  /**
+   * v2.9.5 — the same audit, applied to the oldest surface in the product.
+   *
+   * The translation box on X does NOT use the theme's ink. It derives its own
+   * from `currentColor` at partial alpha, which is a genuinely good decision:
+   * it tracks X's light / dim / lights-out themes without having to detect
+   * them. But partial alpha means the real colour is a composite, and nothing
+   * had ever measured it. At the shipped 55% the label and the box's buttons
+   * were 4.08:1 on X's light theme — under the AA floor, on the surface this
+   * extension exists to draw.
+   *
+   * The percentages here must track content.css. If someone edits that file,
+   * this fails and says by how much.
+   */
+  await t('REGRESSION: the X box ink clears AAA on all three X themes', () => {
+    const MIX = 0.72; // must equal --gxt-muted in content/content.css
+    const X_THEMES = [
+      ['light', '#ffffff', '#0f1419'],
+      ['dim', '#15202b', '#f7f9f9'],
+      ['lights-out', '#000000', '#e7e9ea'],
+    ];
+    for (const [name, bg, ink] of X_THEMES) {
+      const muted = T.compositeOver(ink, bg, MIX);
+      const got = T.contrast(muted, bg);
+      assert(got >= 7, `X ${name}: --gxt-muted = ${round(got)}:1 (need AAA 7:1)`);
+      // De-emphasis must still be visible, or "muted" is a lie and the fix
+      // has flattened the box's hierarchy instead of raising its floor.
+      const body = T.contrast(ink, bg);
+      assert(body / got >= 1.8, `X ${name}: muted is too close to body text (${round(body / got)}×)`);
+    }
+  });
+
+  await t('the opaque palette is untouched by the in-page derivation', () => {
+    // The popup paints on its own window. If asking for a translucent palette
+    // could change the opaque one, every measurement above would be measuring
+    // something the window does not use.
+    for (const { theme, accent } of combos) {
+      T.palette(theme, accent, 0.84);
+      const opaque = T.palette(theme, accent);
+      const expected = ['bg', 'bg-elev', 'bg-sunken']
+        .map((k) => theme.vars[k])
+        .reduce((a, b) => (T.contrast(theme.toward, a) < T.contrast(theme.toward, b) ? a : b));
+      assert(opaque.plain === expected, `${theme.id}: opaque palette derived against ${opaque.plain}`);
+    }
+  });
+
+  await t('«مات» asks for the opaque palette, because it really is opaque', () => {
+    // cardOpaque paints on the theme's deepest colour with no page behind it,
+    // so deriving for a composite there would darken ink for no reason.
+    const solid = tokenMap({ uiTheme: 'graphite', cardOpaque: true }, { inPage: true });
+    const glass = tokenMap({ uiTheme: 'graphite', cardOpaque: false }, { inPage: true });
+    const popup = tokenMap({ uiTheme: 'graphite' });
+    assert(solid['--gxt-fg'] === popup['--gxt-fg'], 'opaque mode did not use the opaque ink');
+    assert(glass['--gxt-fg'] !== popup['--gxt-fg'], 'translucent mode was not re-derived at all');
+  });
+
+  await t('the ink ramp stays a visible three-step hierarchy', () => {
+    for (const { theme, accent } of combos) {
+      const p = T.palette(theme, accent);
+      const bg = theme.vars.bg;
+      const a = T.contrast(p.fg, bg);
+      const b = T.contrast(p.fgMuted, bg);
+      const c = T.contrast(p.fgFaint, bg);
+      assert(a > b && b > c, `${theme.id}/${accent.id} ramp not monotone: ${round(a)}/${round(b)}/${round(c)}`);
+      assert(b / c >= 1.25, `${theme.id}/${accent.id} muted and faint too close`);
+    }
+  });
+
+  await t('the accent as TEXT clears AAA on every theme', () => {
+    for (const { theme, accent } of combos) {
+      const p = T.palette(theme, accent);
+      const got = T.contrast(p.accentInk, theme.vars.bg);
+      assert(got >= 7, `${theme.id}/${accent.id} accent-ink = ${round(got)}:1`);
+    }
+  });
+
+  await t('REGRESSION: text on the filled accent clears AA on every accent', () => {
+    // The historic defect: `--gxt-accent-fg` was the literal #ffffff, so the
+    // primary button and the active tab were 3.00:1 on sky, 3.19 on amber and
+    // 3.39 on emerald. All six must now clear 4.5:1.
+    for (const { theme, accent } of combos) {
+      const p = T.palette(theme, accent);
+      const got = T.contrast(p.onAccent, p.accentSolid);
+      assert(got >= 4.48, `${theme.id}/${accent.id} on-accent = ${round(got)}:1`);
+    }
+  });
+
+  await t('the filled accent stays distinguishable from the surface behind it', () => {
+    for (const { theme, accent } of combos) {
+      const p = T.palette(theme, accent);
+      const got = T.contrast(p.accentSolid, theme.vars.bg);
+      assert(got >= 2.99, `${theme.id}/${accent.id} accent-solid vs bg = ${round(got)}:1`);
+    }
+  });
+
+  await t('hover never costs contrast on a filled accent', () => {
+    for (const { theme, accent } of combos) {
+      const p = T.palette(theme, accent);
+      const rest = T.contrast(p.onAccent, p.accentSolid);
+      const hover = T.contrast(p.onAccent, p.accentHover);
+      assert(hover >= rest - 0.01, `${theme.id}/${accent.id} hover drops ${round(rest)}→${round(hover)}`);
+    }
+  });
+
+  await t('non-text accent uses clear the 3:1 floor (WCAG 1.4.11)', () => {
+    for (const { theme, accent } of combos) {
+      const p = T.palette(theme, accent);
+      const got = T.contrast(p.accentEdge, theme.vars.bg);
+      assert(got >= 2.99, `${theme.id}/${accent.id} accent-edge = ${round(got)}:1`);
+    }
+  });
+
+  await t('REGRESSION: ok / warn / error are legible AS TEXT on every theme', () => {
+    // `--gxt-warn: #b98a00` on the white theme measured 3.15:1 and was used for
+    // the engine status line — the single most important sentence in the popup.
+    for (const { theme, accent } of combos) {
+      const p = T.palette(theme, accent);
+      for (const name of ['ok', 'warn', 'err']) {
+        const got = T.contrast(p[name], theme.vars.bg);
+        assert(got >= 7, `${theme.id}/${accent.id} ${name} = ${round(got)}:1`);
+      }
+    }
+  });
+
+  await t('the authored accent hue survives derivation', () => {
+    // Legibility must not turn every accent into the same grey-blue: the
+    // derived solid has to stay recognisably the colour the user picked.
+    const hue = (hex) => {
+      const [r, g, b] = [1, 3, 5].map((i) => parseInt(hex.substr(i, 2), 16) / 255);
+      const max = Math.max(r, g, b);
+      const min = Math.min(r, g, b);
+      if (max === min) return 0;
+      const d = max - min;
+      let h;
+      if (max === r) h = ((g - b) / d) % 6;
+      else if (max === g) h = (b - r) / d + 2;
+      else h = (r - g) / d + 4;
+      return ((h * 60) + 360) % 360;
+    };
+    for (const { theme, accent } of combos) {
+      const p = T.palette(theme, accent);
+      const drift = Math.abs(hue(p.accentSolid) - hue(accent.color));
+      assert(Math.min(drift, 360 - drift) < 12, `${theme.id}/${accent.id} hue drifted ${Math.round(drift)}°`);
+    }
+  });
+
+  // ─────────────────────────────────────────────────── token contract
+  await t('every documented token is emitted for every appearance', () => {
+    const REQUIRED = [
+      'bg', 'bg-elev', 'bg-sunken', 'card', 'line', 'line-strong',
+      'fg', 'fg-muted', 'fg-faint',
+      'accent', 'accent-brand', 'accent-solid', 'accent-fg', 'accent-ink',
+      'accent-hover', 'accent-soft', 'accent-line', 'accent-on-soft',
+      'ok', 'warn', 'err', 'ok-edge', 'warn-edge', 'err-edge',
+      'ok-soft', 'warn-soft', 'err-soft', 'ok-on-soft', 'warn-on-soft', 'err-on-soft',
+      'sp-1', 'sp-2', 'sp-3', 'sp-4', 'sp-5', 'sp-6', 'row-y', 'card-p', 'tap',
+      'fs-2xs', 'fs-xs', 'fs-sm', 'fs-md', 'fs-lg', 'fs-xl', 'fs-2xl',
+      'fs-body', 'fs-title', 'fs-small',
+      'lh-tight', 'lh', 'lh-loose',
+      'radius-sm', 'radius-md', 'radius-lg', 'radius-xl', 'radius-pill',
+      'elev-1', 'elev-2', 'elev-3', 'shadow', 'shadow-sm',
+      'focus-ring', 'focus-ring-inset',
+      'dur-1', 'dur-2', 'dur-3', 'ease', 'ease-emphasized', 'motion',
+      'backdrop', 'scheme', 'font', 'blur', 'card-alpha',
+    ];
+    for (const theme of T.THEMES) {
+      for (const density of T.DENSITIES) {
+        const map = tokenMap({ uiTheme: theme.id, uiDensity: density.id, uiAccent: 'violet' });
+        for (const name of REQUIRED) {
+          assert(map[`--gxt-${name}`], `${theme.id}/${density.id} is missing --gxt-${name}`);
+        }
+      }
+    }
+  });
+
+  await t('all three densities keep body text at or above 12.5px', () => {
+    for (const density of T.DENSITIES) {
+      const map = tokenMap({ uiDensity: density.id });
+      const body = parseFloat(map['--gxt-fs-md']);
+      const smallest = parseFloat(map['--gxt-fs-2xs']);
+      assert(body >= 12.5, `${density.id} body text is ${body}px`);
+      assert(smallest >= 11, `${density.id} smallest step is ${smallest}px`);
+    }
+  });
+
+  await t('«بزرگ» really is larger than «راحت» at every step', () => {
+    const big = tokenMap({ uiDensity: 'large' });
+    const normal = tokenMap({ uiDensity: 'comfortable' });
+    for (const step of ['fs-2xs', 'fs-xs', 'fs-sm', 'fs-md', 'fs-lg', 'fs-xl', 'fs-2xl', 'row-y', 'tap']) {
+      assert(
+        parseFloat(big[`--gxt-${step}`]) > parseFloat(normal[`--gxt-${step}`]),
+        `${step} did not grow`
+      );
+    }
+  });
+
+  // ───────────────────────────────────────── video-safety (v2.0.1 rule)
+  await t('REGRESSION: in-page surfaces never carry a backdrop filter by default', () => {
+    const inPage = tokenMap({ uiSurface: 'glass' }, { inPage: true });
+    assert(inPage['--gxt-backdrop'] === 'none', `in-page backdrop was ${inPage['--gxt-backdrop']}`);
+    assert(!/blur\(0/.test(inPage['--gxt-backdrop']), 'blur(0px) is not a substitute for none');
+    const popup = tokenMap({ uiSurface: 'glass' });
+    assert(/blur\(16px\)/.test(popup['--gxt-backdrop']), 'the popup should keep its glass');
+    const optedOut = tokenMap({ uiSurface: 'glass', videoSafeUi: false }, { inPage: true });
+    assert(/blur\(16px\)/.test(optedOut['--gxt-backdrop']), 'opting out should restore the blur');
+  });
+
+  await t('opaque mode paints on the theme’s deepest colour', () => {
+    const map = tokenMap({ uiTheme: 'graphite', cardOpaque: true }, { inPage: true });
+    assert(map['--gxt-card'] === 'var(--gxt-bg)', `card was ${map['--gxt-card']}`);
+    assert(map['--gxt-card-alpha'] === '100%', 'alpha not forced');
+    assert(map['--gxt-backdrop'] === 'none', 'opaque mode must drop the blur too');
+  });
+
+  // ──────────────────────────────────────── appearance ≠ cache namespace
+  await t('REGRESSION: re-skinning never invalidates the translation cache', () => {
+    const base = GXT.cacheNamespace({ ...GXT.DEFAULTS });
+    for (const patch of [
+      { uiTheme: 'paper' }, { uiAccent: 'rose' }, { uiDensity: 'large' },
+      { uiSurface: 'solid' }, { showHints: true }, { cardOpaque: true },
+      { videoSafeUi: false },
+    ]) {
+      assert(
+        GXT.cacheNamespace({ ...GXT.DEFAULTS, ...patch }) === base,
+        `${Object.keys(patch)[0]} changed the cache namespace`
+      );
+    }
+  });
+
+  await t('apply() is idempotent and stamps the data attributes', () => {
+    const el = document.createElement('div');
+    T.apply(el, { uiTheme: 'paper', uiAccent: 'amber', uiDensity: 'large', uiSurface: 'solid' });
+    const first = el.style.cssText;
+    T.apply(el, { uiTheme: 'paper', uiAccent: 'amber', uiDensity: 'large', uiSurface: 'solid' });
+    assert(el.style.cssText === first, 'apply() grew the style attribute on a second call');
+    assert(el.getAttribute('data-theme') === 'paper', 'data-theme');
+    assert(el.getAttribute('data-accent') === 'amber', 'data-accent');
+    assert(el.getAttribute('data-density') === 'large', 'data-density');
+    assert(el.getAttribute('data-scheme') === 'light', 'data-scheme');
+  });
+
+  await t('an unknown appearance id falls back instead of rendering unstyled', () => {
+    const map = tokenMap({ uiTheme: 'nope', uiAccent: 'nope', uiDensity: 'nope', uiSurface: 'nope' });
+    assert(map['--gxt-bg'], 'no background token');
+    assert(map['--gxt-fs-md'], 'no type scale');
+    assert(T.resolve({ uiDensity: 'nope' }).density.id === 'comfortable', 'density fallback');
+  });
+
+  // ══════════════════════════════════════════════════════════════════════
+  //                    PART B — the popup as actually rendered
+  // ══════════════════════════════════════════════════════════════════════
+  //
+  // Part A proves the palette is sound. It cannot prove the WINDOW is: a token
+  // that never reaches a component, a card that paints muted ink on the wrong
+  // surface, a switch with no accessible name — none of that shows up in a
+  // colour table. So the real popup is mounted here (through the same preview
+  // harness the design work used) and measured through getComputedStyle.
+
+  const frame = document.createElement('iframe');
+  // Embedded preview readiness is asserted below; only the standalone preview
+  // emits its own suite summary, otherwise two suites race to finish this page.
+  frame.src = `popup-preview.html?audit=1&ui=${Date.now()}`;
+  frame.width = 520;
+  frame.height = 700;
+  frame.style.cssText = 'position:fixed; inset-inline-end:-9999px; border:0;';
+  document.body.appendChild(frame);
+
+  const ready = await new Promise((resolve) => {
+    const started = Date.now();
+    const poll = setInterval(() => {
+      const doc = frame.contentDocument;
+      // init() is asynchronous; the summaries are the last thing it writes.
+      const done = doc?.getElementById('sumEngine')?.textContent?.trim();
+      if (done && done !== '—') {
+        clearInterval(poll);
+        resolve(true);
+      } else if (Date.now() - started > 15000) {
+        clearInterval(poll);
+        resolve(false);
+      }
+    }, 120);
+  });
+
+  const win = frame.contentWindow;
+  const doc = frame.contentDocument;
+  const $$ = (sel) => [...doc.querySelectorAll(sel)];
+  const byId = (id) => doc.getElementById(id);
+
+  await t('the popup mounts and finishes initialising', () => {
+    assert(ready, 'init() never populated the home summaries');
+  });
+
+  // ───────────────────────────────────────────────── colour, as rendered
+  /**
+   * Parse whatever getComputedStyle hands back.
+   *
+   * This has to understand `color(srgb r g b / a)` as well as `rgb()`: Chrome
+   * serialises every `color-mix()` in that form, and `--gxt-card`,
+   * `--gxt-accent-soft` and all three status tints are color-mix values. An
+   * earlier version of this parser returned null for them, silently skipped
+   * those layers, and therefore measured text against the wrong background —
+   * a measuring instrument that lies is worse than none.
+   */
+  const rgba = (value) => {
+    const text = String(value);
+    const fn = text.match(/rgba?\(([^)]+)\)/);
+    if (fn) {
+      const parts = fn[1].split(/[,\s/]+/).filter(Boolean).map(Number);
+      return { r: parts[0], g: parts[1], b: parts[2], a: parts.length > 3 ? parts[3] : 1 };
+    }
+    const srgb = text.match(/color\(srgb\s+([^)]+)\)/);
+    if (srgb) {
+      const parts = srgb[1].split(/[\s/]+/).filter(Boolean).map(Number);
+      return {
+        r: parts[0] * 255,
+        g: parts[1] * 255,
+        b: parts[2] * 255,
+        a: parts.length > 3 ? parts[3] : 1,
+      };
+    }
+    return null;
+  };
+
+  const hexOf = (c) =>
+    `#${[c.r, c.g, c.b].map((v) => Math.round(v).toString(16).padStart(2, '0')).join('')}`;
+
+  /** Composite the stack of (semi-transparent) backgrounds behind `el` down to
+   *  the first opaque one, so a card painted at 84% alpha is measured against
+   *  what the eye actually sees rather than against its own token. */
+  function effectiveBg(el) {
+    const stack = [];
+    let node = el;
+    while (node) {
+      const color = rgba(win.getComputedStyle(node).backgroundColor);
+      if (color && color.a > 0) {
+        stack.push(color);
+        if (color.a >= 0.999) break;
+      }
+      node = node.parentElement;
+    }
+    if (!stack.length) return { r: 255, g: 255, b: 255 };
+    let base = stack[stack.length - 1];
+    for (let i = stack.length - 2; i >= 0; i -= 1) {
+      const top = stack[i];
+      base = {
+        r: top.r * top.a + base.r * (1 - top.a),
+        g: top.g * top.a + base.g * (1 - top.a),
+        b: top.b * top.a + base.b * (1 - top.a),
+      };
+    }
+    return base;
+  }
+
+  const visible = (el) => {
+    const style = win.getComputedStyle(el);
+    if (style.display === 'none' || style.visibility === 'hidden') return false;
+    if (parseFloat(style.opacity) < 0.2) return false;
+    return el.offsetWidth > 0 && el.offsetHeight > 0;
+  };
+
+  /** Elements that own visible text of their own (not just via children). */
+  function textElements() {
+    return $$('body *').filter((el) => {
+      if (!visible(el)) return false;
+      if (/^(SCRIPT|STYLE|SVG|PATH|DATALIST|OPTION|INPUT)$/.test(el.tagName)) return false;
+      return [...el.childNodes].some((n) => n.nodeType === 3 && n.textContent.trim().length > 1);
+    });
+  }
+
+  function auditContrast(label) {
+    const problems = [];
+    for (const el of textElements()) {
+      const style = win.getComputedStyle(el);
+      const fg = rgba(style.color);
+      if (!fg || fg.a < 0.5) continue;
+      const bg = effectiveBg(el);
+      const ratio = T.contrast(hexOf(fg), hexOf(bg));
+      // Text sitting ON a filled accent is an AA-for-UI-text surface by
+      // design (see the palette notes); everything else is held to AAA.
+      const onAccent = T.contrast(hexOf(bg), doc.documentElement.style.getPropertyValue('--gxt-accent-solid').trim() || '#000') < 1.6;
+      const floor = onAccent ? 4.45 : 6.9;
+      if (ratio < floor) {
+        problems.push(
+          `${label}: ${el.className || el.tagName} «${el.textContent.trim().slice(0, 22)}» ` +
+            `${round(ratio)}:1 (${hexOf(fg)} on ${hexOf(bg)}, need ${floor})`
+        );
+      }
+    }
+    return problems;
+  }
+
+  await t('REGRESSION: every rendered label clears its contrast floor (all themes)', () => {
+    const problems = [];
+    for (const theme of ['graphite', 'midnight', 'daylight', 'paper']) {
+      for (const accent of ['sky', 'amber', 'emerald']) {
+        T.apply(doc.documentElement, { uiTheme: theme, uiAccent: accent });
+        problems.push(...auditContrast(`${theme}/${accent}`));
+      }
+    }
+    T.apply(doc.documentElement, { uiTheme: 'graphite', uiAccent: 'sky' });
+    assert(!problems.length, problems.slice(0, 4).join(' | '));
+  });
+
+  await t('no rendered text is smaller than 11px at any density', () => {
+    const problems = [];
+    for (const density of ['compact', 'comfortable', 'large']) {
+      T.apply(doc.documentElement, { uiTheme: 'graphite', uiDensity: density });
+      for (const el of textElements()) {
+        const size = parseFloat(win.getComputedStyle(el).fontSize);
+        if (size < 11) {
+          problems.push(`${density}: ${el.className || el.tagName} at ${size}px`);
+        }
+      }
+    }
+    T.apply(doc.documentElement, { uiTheme: 'graphite', uiDensity: 'comfortable' });
+    assert(!problems.length, problems.slice(0, 4).join(' | '));
+  });
+
+  // ─────────────────────────────────────────────────────── accessibility
+  const accessibleName = (el) => {
+    if (el.getAttribute('aria-label')) return el.getAttribute('aria-label').trim();
+    const by = el.getAttribute('aria-labelledby');
+    if (by) {
+      return by
+        .split(/\s+/)
+        .map((id) => doc.getElementById(id)?.textContent || '')
+        .join(' ')
+        .trim();
+    }
+    if (el.id && doc.querySelector(`label[for="${el.id}"]`)) {
+      return doc.querySelector(`label[for="${el.id}"]`).textContent.trim();
+    }
+    if (el.closest('label')) return el.closest('label').textContent.trim();
+    if (el.title) return el.title.trim();
+    return (el.textContent || '').trim();
+  };
+
+  await t('REGRESSION: every switch has an accessible name', () => {
+    // The historic defect: ~40 checkboxes sized 0×0 inside a <label> that
+    // wrapped only the track, so each one announced as an anonymous checkbox.
+    const inputs = $$('.switch input');
+    assert(inputs.length > 25, `expected the full set of switches, found ${inputs.length}`);
+    const nameless = inputs.filter((el) => accessibleName(el).length < 2).map((el) => el.id);
+    assert(!nameless.length, `unnamed: ${nameless.join(', ')}`);
+  });
+
+  await t('every switch reports its state as a switch', () => {
+    const wrong = $$('.switch input').filter((el) => el.getAttribute('role') !== 'switch');
+    assert(!wrong.length, wrong.map((el) => el.id).join(', '));
+  });
+
+  await t('every form control has a label', () => {
+    const controls = $$('select, textarea, input:not([type="checkbox"]):not([type="radio"])')
+      .filter(visible);
+    const nameless = controls.filter((el) => accessibleName(el).length < 2);
+    assert(!nameless.length, nameless.map((el) => el.id || el.tagName).join(', '));
+  });
+
+  await t('every «؟» disclosure announces its state and its target', () => {
+    const buttons = $$('.info');
+    assert(buttons.length > 10, `only ${buttons.length} disclosures found`);
+    for (const button of buttons) {
+      const id = button.getAttribute('aria-controls');
+      assert(id, `a «؟» has no aria-controls (${button.closest('.card')?.querySelector('h2')?.textContent})`);
+      assert(doc.getElementById(id), `aria-controls points at a missing element: ${id}`);
+      assert(button.getAttribute('aria-expanded') === 'false', 'a disclosure starts expanded');
+    }
+  });
+
+  await t('a «؟» toggles both the help text and aria-expanded', () => {
+    const button = $$('.info')[0];
+    const help = doc.getElementById(button.getAttribute('aria-controls'));
+    button.click();
+    assert(button.getAttribute('aria-expanded') === 'true', 'aria-expanded did not follow');
+    assert(help.classList.contains('open'), 'the help did not open');
+    button.click();
+    assert(button.getAttribute('aria-expanded') === 'false', 'aria-expanded stuck open');
+  });
+
+  await t('every interactive control meets the 24×24 target-size rule (2.5.8)', () => {
+    const small = $$('button, .switch, select, input[type="range"]')
+      .filter(visible)
+      .filter((el) => {
+        const rect = el.getBoundingClientRect();
+        return rect.width < 24 || rect.height < 24;
+      })
+      .map((el) => `${el.id || el.className} ${Math.round(el.getBoundingClientRect().width)}×${Math.round(el.getBoundingClientRect().height)}`);
+    assert(!small.length, small.slice(0, 5).join(' | '));
+  });
+
+  await t('no id is used twice in the document', () => {
+    // A duplicate id shipped once before: two elements shared `keyList`, so
+    // getElementById always returned the first and the statistics list stayed
+    // permanently empty (v1.9.6).
+    const seen = new Map();
+    for (const el of $$('[id]')) seen.set(el.id, (seen.get(el.id) || 0) + 1);
+    const dupes = [...seen].filter(([, n]) => n > 1).map(([id]) => id);
+    assert(!dupes.length, dupes.join(', '));
+  });
+
+  await t('the appearance dialog is a real dialog', () => {
+    const sheet = byId('sheet');
+    assert(sheet.getAttribute('role') === 'dialog', 'no dialog role');
+    assert(sheet.getAttribute('aria-modal') === 'true', 'not modal');
+    const label = sheet.getAttribute('aria-labelledby');
+    assert(label && doc.getElementById(label), 'no accessible name');
+  });
+
+  await t('REGRESSION: the appearance dialog traps focus and gives it back', () => {
+    const opener = byId('appearanceBtn');
+    opener.focus();
+    opener.click();
+    assert(!byId('sheet').classList.contains('hidden'), 'the sheet did not open');
+    assert(byId('sheet').contains(doc.activeElement), 'focus did not enter the sheet');
+    // Tab from the last item must wrap to the first, not escape to the page.
+    const items = [...byId('sheet').querySelectorAll('button, input, select')].filter(
+      (el) => !el.disabled && el.offsetParent !== null
+    );
+    items[items.length - 1].focus();
+    items[items.length - 1].dispatchEvent(
+      new win.KeyboardEvent('keydown', { key: 'Tab', bubbles: true })
+    );
+    assert(byId('sheet').contains(doc.activeElement), 'Tab escaped the dialog');
+    byId('sheetClose').click();
+    assert(byId('sheet').classList.contains('hidden'), 'the sheet did not close');
+    assert(doc.activeElement === opener, 'focus was not returned to the opener');
+  });
+
+  await t('REGRESSION: the dialog makes the window behind it inert', () => {
+    // v2.9.5. The Tab trap above was the ONLY thing keeping the settings
+    // behind the scrim out of reach — they stayed in the accessibility tree
+    // and stayed hit-testable, so `aria-modal` was a claim the window did not
+    // honour for a screen reader's virtual cursor or for a stray click.
+    const opener = byId('appearanceBtn');
+    opener.click();
+    const behind = [doc.querySelector('.appbar'), doc.querySelector('main')];
+    for (const region of behind) {
+      assert(region.hasAttribute('inert'), 'a region behind the modal is still live');
+    }
+    byId('sheetClose').click();
+    for (const region of behind) {
+      assert(!region.hasAttribute('inert'), 'inertness outlived the dialog');
+    }
+    // Focus must land somewhere real: focusing INTO an inert subtree silently
+    // does nothing, which is how a close handler strands focus on <body>.
+    assert(doc.activeElement === opener, 'focus was not restored after inertness lifted');
+  });
+
+  await t('REGRESSION: each appearance group is ONE tab stop (ARIA radiogroup)', () => {
+    // v2.9.5. These groups already moved with the arrow keys, which is only
+    // half the pattern — the other half is that exactly one member is tabbable.
+    // Without it the sheet cost 16 tab stops to cross instead of 4, and Tab
+    // duplicated the arrows.
+    byId('appearanceBtn').click();
+    for (const id of ['themeGrid', 'accentRow', 'surfaceSeg', 'densitySeg']) {
+      const options = [...byId(id).querySelectorAll('[role="radio"]')];
+      const tabbable = options.filter((o) => o.tabIndex === 0);
+      assert(tabbable.length === 1, `${id} offers ${tabbable.length} tab stops, expected 1`);
+      const checked = options.find((o) => o.getAttribute('aria-checked') === 'true');
+      assert(tabbable[0] === checked, `${id}: the tab stop is not the chosen option`);
+    }
+    byId('sheetClose').click();
+  });
+
+  await t('the appearance choices are announced as radio groups', () => {
+    for (const id of ['themeGrid', 'accentRow', 'surfaceSeg', 'densitySeg']) {
+      const group = byId(id);
+      assert(group.getAttribute('role') === 'radiogroup', `${id} is not a radiogroup`);
+      const options = [...group.querySelectorAll('[role="radio"]')];
+      assert(options.length >= 2, `${id} has ${options.length} options`);
+      const checked = options.filter((o) => o.getAttribute('aria-checked') === 'true');
+      assert(checked.length === 1, `${id} has ${checked.length} checked options`);
+    }
+  });
+
+  await t('all three densities are offered, «بزرگ» included', () => {
+    const labels = [...byId('densitySeg').querySelectorAll('[role="radio"]')].map((b) => b.textContent);
+    assert(labels.length === 3, `found ${labels.length} densities`);
+    assert(labels.includes('بزرگ'), `no large option: ${labels.join('/')}`);
+  });
+
+  // ────────────────────────────────────────────── information architecture
+  await t('the home screen leads with an action, not with settings', () => {
+    byId('navBack').click();
+    const home = byId('view-home');
+    assert(home.classList.contains('active'), 'home is not the default view');
+    const first = home.querySelector('section, nav');
+    assert(first?.id === 'ctxCard', `the first block is ${first?.id || first?.className}`);
+    assert(byId('actTranslate'), 'no page-translate action');
+    assert(byId('actSummary') && byId('actRead'), 'the secondary actions are missing');
+  });
+
+  await t('every destination on the home list resolves to a real view', () => {
+    const rows = $$('.nav-row[data-goto]');
+    assert(rows.length >= 8, `only ${rows.length} destinations`);
+    for (const row of rows) {
+      assert(byId(`view-${row.dataset.goto}`), `no view for «${row.dataset.goto}»`);
+    }
+  });
+
+  await t('every home row shows live state instead of a placeholder', () => {
+    for (const row of $$('.nav-row')) {
+      const sub = row.querySelector('.nav-sub').textContent.trim();
+      assert(sub && sub !== '—', `«${row.querySelector('.nav-title').textContent}» has no summary`);
+    }
+  });
+
+  await t('navigating shows one view, retitles the bar and moves focus', () => {
+    byId('navBack').click();
+    doc.querySelector('.nav-row[data-goto="youtube"]').click();
+    const shown = $$('.view').filter((v) => v.classList.contains('active'));
+    assert(shown.length === 1 && shown[0].id === 'view-youtube', 'wrong view active');
+    assert(byId('viewTitle').textContent === 'یوتیوب', `title is «${byId('viewTitle').textContent}»`);
+    assert(doc.activeElement === shown[0], 'focus did not move into the view');
+    assert(!byId('navBack').classList.contains('hidden'), 'no way back');
+    byId('navBack').click();
+    assert(byId('view-home').classList.contains('active'), 'back did not return home');
+  });
+
+  await t('every settings control lives inside exactly one destination', () => {
+    // A control outside a view is unreachable now that the shell navigates.
+    const orphans = $$('.card')
+      .filter((card) => !card.closest('.view'))
+      .map((card) => card.querySelector('h2')?.textContent);
+    assert(!orphans.length, orphans.join(', '));
+  });
+
+  await t('the settings that used to be split across tabs now sit together', () => {
+    // X's behaviour was on one tab and X's tools on another; the two RTX
+    // switches were in a feature tab while the third was in the appearance
+    // sheet. Both splits were real navigation defects.
+    for (const id of ['replaceOriginal', 'xImageButton', 'composerTranslate', 'xExtraZones']) {
+      assert(byId(id).closest('.view').dataset.view === 'x', `${id} is not in the X section`);
+    }
+    for (const id of ['vsrHelper', 'vsrForceH264', 'videoSafeUi']) {
+      assert(
+        byId(id).closest('.view').dataset.view === 'video',
+        `${id} is not with the other video settings`
+      );
+    }
+  });
+
+  // ─────────────────────────────────────────────────────────────── search
+  await t('search reaches settings in every destination and names the section', () => {
+    const search = byId('search');
+    search.value = 'دوزبانه';
+    search.dispatchEvent(new win.Event('input', { bubbles: true }));
+    const hits = $$('.view.searchhit');
+    assert(hits.length >= 2, `«دوزبانه» matched ${hits.length} sections`);
+    for (const view of hits) {
+      const label = view.querySelector('.view-label');
+      assert(label && win.getComputedStyle(label).display !== 'none', 'a hit has no visible section name');
+    }
+    assert(byId('searchCount').textContent.includes('بخش'), 'no result count announced');
+  });
+
+  await t('search finds a control that is not a switch', () => {
+    const search = byId('search');
+    search.value = 'پرامپت';
+    search.dispatchEvent(new win.Event('input', { bubbles: true }));
+    assert(
+      byId('view-custom').classList.contains('searchhit'),
+      'the prompt editor is unreachable by search'
+    );
+  });
+
+  await t('REGRESSION: following a search result stops filtering', () => {
+    /**
+     * v2.9.5. MEASURED before the fix: search «یوتیوب», then open the
+     * «یوتیوب» result. You land on a destination showing 1 of its 3 cards with
+     * 4 rows hidden — because the term was still filtering while `goto` had
+     * taken over which views are shown. Two systems both owning `hidden`.
+     *
+     * Nothing on screen explained it, so the section simply looked as though it
+     * did not contain «متن زیرنویس» or «دوبله». The product appears smaller
+     * than it is, at the exact moment someone is exploring it.
+     */
+    const search = byId('search');
+    search.value = 'یوتیوب';
+    search.dispatchEvent(new win.Event('input', { bubbles: true }));
+    const row = doc.querySelector('.nav-row:not(.no-match)[data-goto="youtube"]');
+    assert(row, '«یوتیوب» did not survive its own search term');
+    row.click();
+
+    assert(doc.querySelector('.view.active').dataset.view === 'youtube', 'navigation did not happen');
+    assert(!doc.body.classList.contains('searching'), 'still in search mode after navigating');
+    assert(search.value === '', 'the search box kept a term that is no longer filtering');
+    const cards = [...doc.querySelectorAll('#view-youtube .card')];
+    const hidden = cards.filter((c) => c.classList.contains('no-match'));
+    assert(hidden.length === 0, `${hidden.length} of ${cards.length} cards stayed filtered out`);
+    const rows = [...doc.querySelectorAll('#view-youtube .row-item.no-match')];
+    assert(rows.length === 0, `${rows.length} settings stayed hidden inside the destination`);
+    byId('navBack').click();
+  });
+
+  await t('clearing the search restores the previous destination', () => {
+    byId('searchClear').click();
+    assert(!doc.body.classList.contains('searching'), 'still in search mode');
+    assert($$('.view.active').length === 1, 'more than one view survived');
+    assert(byId('noResults').classList.contains('hidden'), 'the empty state stayed up');
+  });
+
+  await t('REGRESSION: search reaches the appearance settings', () => {
+    // These live in a dialog, which no amount of card filtering can see into —
+    // so «فونت», «پوسته» and «اندازهٔ متن» were unfindable while being exactly
+    // the kind of thing people search for.
+    const search = byId('search');
+    search.value = 'فونت';
+    search.dispatchEvent(new win.Event('input', { bubbles: true }));
+    const row = doc.querySelector('.nav-row[data-sheet]');
+    assert(row && !row.classList.contains('no-match'), 'the appearance row did not match');
+    assert(byId('view-home').classList.contains('searchhit'), 'home was not offered as a result');
+  });
+
+  await t('a destination can be found by its own name', () => {
+    const search = byId('search');
+    search.value = 'مانگا';
+    search.dispatchEvent(new win.Event('input', { bubbles: true }));
+    const shown = $$('.nav-row:not(.no-match)');
+    assert(shown.length >= 1, 'no destination matched «مانگا»');
+    assert(
+      shown.some((r) => r.dataset.goto === 'bridge'),
+      `matched ${shown.map((r) => r.dataset.goto || r.id).join(',')}`
+    );
+    // The action card is not a search result.
+    assert(win.getComputedStyle(byId('ctxCard')).display === 'none', 'the action card leaked into results');
+    byId('searchClear').click();
+  });
+
+  await t('the appearance row opens the sheet', () => {
+    const row = doc.querySelector('.nav-row[data-sheet]');
+    row.click();
+    assert(!byId('sheet').classList.contains('hidden'), 'the sheet did not open');
+    byId('sheetClose').click();
+  });
+
+  await t('a search with no match says so instead of showing nothing', () => {
+    const search = byId('search');
+    search.value = 'zzzzqqq';
+    search.dispatchEvent(new win.Event('input', { bubbles: true }));
+    assert(!byId('noResults').classList.contains('hidden'), 'no empty state');
+    assert(!$$('.view.searchhit').length, 'a section still claims a hit');
+    byId('searchClear').click();
+  });
+
+  // ══════════════════════════════════════════════════════════════════════
+  //                     PART C — the surfaces drawn ON a page
+  // ══════════════════════════════════════════════════════════════════════
+  //
+  // content/ui.js builds the result window, the toast and the floating pill
+  // inside one shadow root. It loads here without an extension context (every
+  // chrome.* call in it is guarded), so the same layer the extension ships can
+  // be measured directly.
+
+  // content/player.css.js is loaded alongside it (v3.2.5) because the two are
+  // ONE stylesheet at runtime: `GXT.ui.surface()` concatenates the shared sheet
+  // and the player sheet into a single <style>, so they share the `:host`
+  // fallback block. Measuring the shared sheet alone let a token that only the
+  // player sheet reads go undefined without anything noticing — which is exactly
+  // what had happened to `--gxt-ok`, `--gxt-warn` and `--gxt-elev-2`.
+  for (const src of ['../content/ui.js?v=3300', '../content/player.css.js?v=3300']) {
+    await new Promise((resolve) => {
+      const s = document.createElement('script');
+      s.src = src;
+      s.onload = resolve;
+      s.onerror = resolve;
+      document.head.appendChild(s);
+    });
+  }
+
+  await t('the in-page layer loads outside an extension context', () => {
+    assert(GXT.ui && typeof GXT.ui.card === 'function', 'GXT.ui.card missing');
+  });
+
+  await t('REGRESSION: a result window is a dialog that can be closed from the keyboard', () => {
+    GXT.ui.configure({ ...GXT.DEFAULTS });
+    const card = GXT.ui.card({ title: 'ترجمهٔ فارسی' });
+    const el = card.el;
+    assert(el.getAttribute('role') === 'dialog', 'no dialog role');
+    assert(el.getAttribute('aria-label') === 'ترجمهٔ فارسی', 'no accessible name');
+    // NON-modal on purpose: the page behind stays usable, so aria-modal would
+    // be a false promise to a screen reader.
+    assert(!el.hasAttribute('aria-modal'), 'a floating result must not claim to be modal');
+    assert(el.tabIndex === -1, 'the card cannot take focus');
+    card.setTitle('خلاصهٔ فارسی');
+    assert(el.getAttribute('aria-label') === 'خلاصهٔ فارسی', 'the name did not follow the title');
+    el.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true }));
+    assert(!card.isOpen(), 'Escape did not close the card');
+  });
+
+  await t('REGRESSION: an arriving translation is announced', async () => {
+    const card = GXT.ui.card({ title: 'ترجمه' });
+    const body = card.body;
+    assert(body.getAttribute('aria-live') === 'polite', 'the body is not a live region');
+    assert(body.getAttribute('aria-busy') === 'false', 'a fresh card must not claim to be loading');
+    body.classList.add('dots');
+    await new Promise((r) => setTimeout(r, 0));
+    assert(body.getAttribute('aria-busy') === 'true', 'the loading state was not reported');
+    body.classList.remove('dots');
+    await new Promise((r) => setTimeout(r, 0));
+    assert(body.getAttribute('aria-busy') === 'false', 'the card stayed busy after the result');
+    card.close();
+  });
+
+  await t('a failure clears the loading state as well as showing the message', () => {
+    const card = GXT.ui.card({ title: 'ترجمه' });
+    card.body.classList.add('dots');
+    GXT.ui.showFailure(card.body, { code: 'BAD_KEY' });
+    assert(card.body.getAttribute('aria-busy') === 'false', 'still busy after a failure');
+    assert(card.body.textContent.includes('کلید'), 'no message rendered');
+    card.close();
+  });
+
+  await t('a toast is announced without stealing focus', () => {
+    const before = document.activeElement;
+    GXT.ui.toast('نمونه', 50);
+    const node = GXT.ui.root().querySelector('.toast');
+    assert(node, 'no toast rendered');
+    assert(node.getAttribute('role') === 'status', 'a toast must be a status region');
+    assert(document.activeElement === before, 'the toast moved focus');
+  });
+
+  await t('REGRESSION: credentials never reach a page-visible surface', () => {
+    // The v2.7.0 defect: the diagnostics box printed the full API key into the
+    // page's own DOM, so any site that could fail one translation could read
+    // every key. Masking happens in the worker; this asserts the renderer-side
+    // formatter cannot undo it.
+    const text = GXT.ui.formatDetail({
+      provider: 'gemini',
+      model: 'x',
+      code: 'RATE_LIMIT',
+      attempts: [{ key: 'AIza' + 'SyD-1234567890abcdefghijklmnopqrstuv', code: 'QUOTA' }],
+    });
+    assert(!text.includes('1234567890abcdefghij'), 'an unmasked key reached the card');
+  });
+
+  // ══════════════════════════════════ v3.2.5: the subtitle scrim ══
+  //
+  // The YouTube caption was the last surface outside the design system, and the
+  // reason it stayed out was a real one: it sits on arbitrary footage, so
+  // legibility there beats matching the panel. Bringing it in is only defensible
+  // if the claim «the themed caption is at least as legible as the fixed bar it
+  // replaces» is MEASURED — otherwise it is a preference dressed up as an
+  // improvement. This is that measurement, over the two frames that bound every
+  // possible frame: a white title card and a black letterbox.
+  await t('the themed subtitle scrim clears AAA over any video frame', () => {
+    const worst = { ratio: Infinity, where: '' };
+    for (const { theme, accent } of combos) {
+      const map = tokenMap({ uiTheme: theme.id, uiAccent: accent.id }, { inPage: true });
+      const ink = map['--gxt-cap-fg'];
+      assert(ink && ink.startsWith('#'), `no --gxt-cap-fg for ${theme.id}`);
+      for (const frame of ['#ffffff', '#000000']) {
+        const surface = T.compositeOver(theme.vars['bg-elev'], frame, T.CAP_ALPHA);
+        const ratio = T.contrast(ink, surface);
+        if (ratio < worst.ratio) {
+          worst.ratio = ratio;
+          worst.where = `${theme.id}/${accent.id} over ${frame}`;
+        }
+      }
+    }
+    // AAA for body text. The old hard-coded bar measured 10.70:1 at its worst.
+    assert(worst.ratio >= 7, `caption ink ${round(worst.ratio)}:1 on ${worst.where}`);
+    assert(
+      worst.ratio >= 10.7,
+      `the themed caption (${round(worst.ratio)}:1 on ${worst.where}) is WORSE than the ` +
+        'fixed bar it replaced (10.70:1) — the whole justification for theming it'
+    );
+  });
+
+  await t('the bilingual caption line is a colour, not a fade', () => {
+    // `.orig` used to be `opacity: .85`. Element opacity on a caption thins the
+    // SCRIM as well as the ink, so it does not de-emphasise — it de-legibilises.
+    for (const { theme, accent } of combos) {
+      const map = tokenMap({ uiTheme: theme.id, uiAccent: accent.id }, { inPage: true });
+      const ink = map['--gxt-cap-fg-muted'];
+      assert(ink && ink.startsWith('#'), `no --gxt-cap-fg-muted for ${theme.id}`);
+      for (const frame of ['#ffffff', '#000000']) {
+        const surface = T.compositeOver(theme.vars['bg-elev'], frame, T.CAP_ALPHA);
+        const ratio = T.contrast(ink, surface);
+        assert(ratio >= 4.5, `${theme.id}/${accent.id}: original line ${round(ratio)}:1 over ${frame}`);
+      }
+    }
+  });
+
+  await t('«مات» makes the caption opaque too', () => {
+    // The opacity escape hatch exists for footage a translucent surface cannot
+    // survive. A caption that stayed translucent while the cards went solid
+    // would leave the worst case exactly where it was.
+    const map = tokenMap({ cardOpaque: true }, { inPage: true });
+    assert(map['--gxt-cap-alpha'] === '100%', `cap-alpha was ${map['--gxt-cap-alpha']}`);
+    assert(map['--gxt-cap-bg'] === 'var(--gxt-bg)', `cap-bg was ${map['--gxt-cap-bg']}`);
+  });
+
+  // ═══════════════════════════════ v3.2.5: the control scale ══
+  await t('every density carries a complete control scale', () => {
+    // The switch's knob travel must equal `sw-w - sw-knob - 6` (the knob is
+    // inset 3px), or it does not land flush at both ends — which is the kind of
+    // thing that was previously re-guessed per size and got it wrong once.
+    for (const density of T.DENSITIES) {
+      const v = density.vars;
+      for (const key of ['ctl-h', 'ctl-h-sm', 'ctl-px', 'ctl-px-sm',
+                         'sw-w', 'sw-h', 'sw-knob', 'sw-travel']) {
+        assert(v[key], `${density.id} is missing --gxt-${key}`);
+      }
+      const px = (k) => parseFloat(v[k]);
+      assert(
+        px('sw-travel') === px('sw-w') - px('sw-knob') - 6,
+        `${density.id}: sw-travel ${v['sw-travel']} should be ${px('sw-w') - px('sw-knob') - 6}px`
+      );
+      // WCAG 2.2 target size (2.5.8): 24×24 minimum, at EVERY density.
+      assert(px('ctl-h-sm') >= 24, `${density.id}: ctl-h-sm ${v['ctl-h-sm']} is under the 24px floor`);
+      assert(px('ctl-h') >= px('ctl-h-sm'), `${density.id}: ctl-h is smaller than ctl-h-sm`);
+      // And the type scale's floor, which the in-player panel used to break with
+      // seven separate `font-size: 10.5px` declarations.
+      for (const key of ['fs-2xs', 'fs-xs', 'fs-sm', 'fs-md', 'fs-lg', 'fs-xl', 'fs-2xl']) {
+        assert(parseFloat(v[key]) >= 11, `${density.id}: --gxt-${key} is ${v[key]}, under 11px`);
+      }
+    }
+  });
+
+  await t('the control scale grows monotonically with density', () => {
+    // «بزرگ» exists for a reader who needs bigger targets. A scale that does not
+    // actually grow at every step is a setting that lies.
+    const order = ['compact', 'comfortable', 'large'];
+    const keys = ['ctl-h', 'ctl-h-sm', 'ctl-px', 'sw-w', 'sw-h', 'sw-knob', 'fs-md', 'fs-lg'];
+    for (const key of keys) {
+      let last = 0;
+      for (const id of order) {
+        const value = parseFloat(T.DENSITIES.find((d) => d.id === id).vars[key]);
+        assert(value > last, `--gxt-${key} does not grow at ${id} (${value} after ${last})`);
+        last = value;
+      }
+    }
+  });
+
+  // ══════════════════ v3.2.5: the in-page sheet must be self-sufficient ══
+  await t('REGRESSION: the in-page fallback block defines every token it uses', () => {
+    /**
+     * The in-page stylesheet ships a `:host` block of fallback tokens for the
+     * case where shared/theme.js is absent — which is a REAL configuration, not
+     * a hypothetical: Chrome re-reads a content-script list only when the
+     * EXTENSION is reloaded, so a browser that is still running the previous
+     * registration has no theme module (dev/mock-yt-nodeps covers it).
+     *
+     * That block had drifted: `ok`, `warn`, `accent-hover`, `elev-2`, `bg-elev`
+     * and the `sp-1/4/5/6` steps were all read by a rule and defined nowhere, so
+     * on that path the player's status lines fell back to the inherited colour,
+     * its buttons lost their elevation, and `padding: var(--gxt-sp-4)` collapsed
+     * to nothing. Nothing noticed, because a missing custom property is not an
+     * error — it is just an empty string.
+     *
+     * The sheet is read out of the live shadow root, so this measures what ships.
+     */
+    const root = GXT.ui.root();
+    const shared = [...root.querySelectorAll('style')].map((s) => s.textContent).join('\n');
+    assert(shared.length > 2000, 'the in-page stylesheet is suspiciously short');
+    // Both halves of the runtime sheet — see the loader note above.
+    const sheet = `${shared}\n${GXT.playerCss || ''}`;
+    assert((GXT.playerCss || '').length > 2000,
+      'content/player.css.js produced no stylesheet (a stray backtick in it?)');
+
+    // Every token the sheet READS, and every token its :host block DEFINES.
+    // A `var(--x, fallback)` still counts as read: the fallback is the
+    // no-theme-module path's *second* line of defence, not its first.
+    const used = new Set([...sheet.matchAll(/var\(\s*(--gxt-[a-z0-9-]+)/g)].map((m) => m[1]));
+    const hostBlock = shared.slice(shared.indexOf(':host'), shared.indexOf('}', shared.indexOf(':host')));
+    const defined = new Set([...hostBlock.matchAll(/(--gxt-[a-z0-9-]+)\s*:/g)].map((m) => m[1]));
+    const missing = [...used].filter((token) => !defined.has(token));
+    assert(!missing.length, `read but never defined: ${missing.join(', ')}`);
+  });
+
+  await t('REGRESSION: the in-page sheet declares no literal colours or sizes', () => {
+    /**
+     * The point of the design system is that a component cannot express a colour
+     * or a size that the theme does not know about. Comments are stripped first —
+     * this file's prose legitimately quotes the old literals it replaced.
+     *
+     * Two exceptions, both deliberate and both named here so that adding a third
+     * has to be an argument rather than an oversight:
+     *  · `#fff` on the switch knob — a knob is white in light and dark alike,
+     *    which is what every platform switch does;
+     *  · `#000` inside a mask gradient and a `color-mix` percentage stop, where
+     *    the colour is an alpha channel and not a colour at all.
+     */
+    const root = GXT.ui.root();
+    const sheet = [...root.querySelectorAll('style')]
+      .map((s) => s.textContent).join('\n')
+      .replace(/\/\*[\s\S]*?\*\//g, '');
+    // @font-face src URLs are not declarations about appearance. Nor is the
+    // `:host` fallback block, whose entire job is to hold literal values for the
+    // case where no theme module published any — it is the ONE place in the sheet
+    // where a raw hex is the correct thing to write.
+    const body = sheet
+      .replace(/@font-face\s*\{[^}]*\}/g, '')
+      .replace(/:host\s*\{[^}]*\}/g, '');
+
+    const hexes = [...body.matchAll(/#[0-9a-fA-F]{3,8}\b/g)].map((m) => m[0].toLowerCase());
+    const unexpected = hexes.filter((h) => h !== '#fff' && h !== '#000' && h !== '#ffffff' && h !== '#000000');
+    assert(!unexpected.length, `literal colours: ${[...new Set(unexpected)].join(', ')}`);
+
+    const sizes = [...body.matchAll(/font-size:\s*([\d.]+)px/g)].map((m) => m[1]);
+    assert(!sizes.length, `literal font-sizes: ${sizes.join(', ')}`);
+  });
+
+  await t('REGRESSION: the shadow host re-declares typography after all:initial', () => {
+    /**
+     * `all: initial` is applied INLINE to lock the page out, and it also sets
+     * `font-family: Times New Roman; font-size: 16px; color: black` — which every
+     * descendant of the shadow root inherits, and which a `:host` rule cannot
+     * override without `!important`. That shipped in v3.2.2 on the YouTube
+     * surface: the entire in-player UI drew in a serif at the wrong size while
+     * `--gxt-font` sat unused on the same element.
+     *
+     * This layer only escaped it because each top-level component declares its
+     * own `font:`. The reset now re-declares typography in the same inline
+     * string, so anything mounted directly into the root is safe too.
+     */
+    const root = GXT.ui.root();
+    const host = root.host;
+
+    // The assertion is on COMPUTED values, not on the style attribute: Chrome
+    // expands `all: initial` into ~7KB of longhands, so the attribute never
+    // literally contains "all:" and any string match on it would be a test that
+    // can only ever pass or only ever fail for the wrong reason. Computed values
+    // are also the thing that was actually wrong in v3.2.2.
+    const hostStyle = getComputedStyle(host);
+    assert(/vazirmatn|segoe|tahoma/i.test(hostStyle.fontFamily),
+      `the host computes to ${hostStyle.fontFamily} — the all:initial serif is winning`);
+    assert(parseFloat(hostStyle.fontSize) < 16,
+      `the host computes to ${hostStyle.fontSize} — the all:initial 16px is winning`);
+
+    // The reset must still be doing its job: `all: initial` sets `position:
+    // static`, and a page rule cannot reach in to change that.
+    assert(hostStyle.position === 'static', `the host is ${hostStyle.position}, not reset`);
+
+    // And it reaches a descendant, which is the case each component's own
+    // `font:` declaration used to be quietly covering for.
+    const probe = document.createElement('div');
+    probe.className = 'note';
+    probe.textContent = 'آزمون';
+    root.appendChild(probe);
+    const font = getComputedStyle(probe).fontFamily;
+    const size = parseFloat(getComputedStyle(probe).fontSize);
+    const lh = getComputedStyle(probe).lineHeight;
+    probe.remove();
+    assert(!/times/i.test(font), `a bare node in the root renders in ${font}`);
+    assert(size < 16, `a bare node in the root renders at ${size}px (the all:initial default)`);
+    assert(lh !== 'normal', 'a bare node in the root inherited line-height: normal');
+  });
+
+  await t('REGRESSION: a text action in a card body looks like a control', () => {
+    /**
+     * Found by RENDERING the manga panel, not by reading the CSS.
+     *
+     * `.btn` is deliberately quiet — transparent border, no fill — which is right
+     * in a card header, where the buttons are icons (close, mute, opacity) and a
+     * border round each would be noise. In a card BODY it is wrong: the manga
+     * panel's «تصویر اصلی» / «دانلود CBZ» / «بستن» row rendered as three pieces of
+     * plain text with nothing to suggest any of them could be pressed. The pill
+     * had already solved this for itself; the body had not.
+     *
+     * Asserted on computed style rather than on a screenshot, because the mock
+     * pages tear their cards down at the end of a run and a picture of one is a
+     * matter of timing.
+     */
+    GXT.ui.configure({ ...GXT.DEFAULTS });
+    const card = GXT.ui.card({ title: 'آزمون', anchorPoint: { x: 60, y: 60 } });
+    const inBody = GXT.ui.button('دانلود', () => {});
+    const inHead = GXT.ui.button('کپی', () => {});
+    card.body.appendChild(GXT.ui.actions([inBody]));
+    card.addAction(inHead);
+    const body = getComputedStyle(inBody);
+    const head = getComputedStyle(inHead);
+    const invisible = (cs) =>
+      cs.borderTopStyle === 'none' ||
+      parseFloat(cs.borderTopWidth) === 0 ||
+      /rgba\([^)]*,\s*0\)/.test(cs.borderTopColor);
+    assert(!invisible(body),
+      `a body action has no visible edge (border: ${body.borderTopWidth} ${body.borderTopColor})`);
+    // …and the header stays quiet, so the fix did not just add noise everywhere.
+    assert(invisible(head), 'a header icon button grew a border it does not need');
+    card.close();
+  });
+
+  await t('the component set renders and is announced', () => {
+    // The components added in v3.2.5 exist because five call sites were building
+    // these three ideas by hand, differently. A component that is not accessible
+    // is not an improvement on the style string it replaced.
+    const root = GXT.ui.root();
+    const meter = GXT.ui.meter('پیشرفت');
+    root.appendChild(meter);
+    assert(meter.getAttribute('role') === 'progressbar', 'the meter is not a progressbar');
+    meter.set(0.5);
+    assert(meter.getAttribute('aria-valuenow') === '50', 'the meter does not report its value');
+    assert(meter.firstElementChild.style.width === '50%', 'the meter did not paint');
+    meter.set(2); // out of range
+    assert(meter.getAttribute('aria-valuenow') === '100', 'the meter did not clamp');
+    meter.remove();
+
+    const callout = GXT.ui.callout('هشدار', { tone: 'warn', buttons: [GXT.ui.button('باشه')] });
+    root.appendChild(callout);
+    assert(callout.getAttribute('role') === 'status', 'a warning callout is not announced');
+    assert(callout.querySelector('.actions .btn'), 'the callout lost its actions');
+    assert(GXT.ui.callout('x', { tone: 'err' }).getAttribute('role') === 'alert',
+      'an error callout must be an alert, not a status');
+    callout.remove();
+
+    const toggle = GXT.ui.toggle('روشن', true, () => {});
+    root.appendChild(toggle);
+    assert(toggle.input.getAttribute('role') === 'switch', 'the toggle is not a switch');
+    assert(toggle.input.checked === true, 'the toggle did not take its initial state');
+    assert(toggle.input.getAttribute('aria-label') === 'روشن', 'the toggle is unnamed');
+    toggle.remove();
+  });
+
+  // ═══════════════════════════════════════════════════════════ report
+  frame.remove();
+  out.replaceChildren();
+  for (const [name, ok, msg] of results) {
+    const div = document.createElement('div');
+    div.className = ok ? 'pass' : 'fail';
+    div.textContent = `${ok ? 'PASS' : 'FAIL'} ${name}${msg ? ' — ' + msg : ''}`;
+    out.appendChild(div);
+    console.log(`GXT-UI ${ok ? 'PASS' : 'FAIL'} ${name}${msg ? ' — ' + msg : ''}`);
+  }
+  console.log(`GXT-UI SUMMARY ${results.filter((r) => r[1]).length}/${results.length}`);
+})();
+</script>
+</body>
+</html>

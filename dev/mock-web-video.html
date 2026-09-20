@@ -1,0 +1,132 @@
+<!doctype html><meta charset="utf-8"><title>General web video regression fixtures</title>
+<style>body{font:14px system-ui;margin:20px;background:#eee}.player{position:relative;background:#202633;margin:14px 0;width:640px;height:360px}video{display:block;width:100%;height:100%;background:#28394c}.bar{position:absolute;left:0;right:0;height:46px;background:#666;display:flex;align-items:center}.bar.top{top:0}.bar.bottom{bottom:0}.floating{position:absolute;left:42%;top:42%;width:80px;height:50px}button{min-height:30px}#summary{position:fixed;right:5px;top:5px;z-index:2147483647;background:white;padding:6px}</style>
+<h1>General web video — browser fixtures</h1><div id="summary">running</div><main id="fixtures"></main>
+<script>globalThis.GXT_SHIM_SEED={settings:{webVideoEnabled:true,webVideoSubtitles:true,webVideoDub:true,webVideoDisplay:'auto',webVideoSiteMode:'all',webVideoAllowedSites:[],webVideoBlockedSites:[]}};globalThis.webRequests=[];globalThis.GXT_SHIM_HANDLER=async(m)=>{webRequests.push(m);return {ok:true,list:m.texts?.map(t=>'ترجمه '+t)}};globalThis.webIntervalCalls=0;const nativeInterval=window.setInterval;window.setInterval=(...args)=>{webIntervalCalls++;return nativeInterval(...args)};</script>
+<script src="chrome-shim.js"></script><script src="../shared/settings.js"></script><script src="../shared/theme.js"></script><script src="../shared/memory.js"></script><script src="../content/dub.js"></script><script src="../shared/video-sources.js"></script><script src="../content/web-video.js"></script>
+<script>
+(async()=>{
+  const checks=[];const check=async(name,fn)=>{let ok=false,detail='';try{ok=!!(await fn())}catch(e){detail=e.message}checks.push([name,ok,detail]);console.log(`GXT-WEBVIDEO ${ok?'PASS':'FAIL'} ${name}${detail?' — '+detail:''}`)};
+  const wait=(ms=70)=>new Promise(r=>setTimeout(r,ms));const settle=async()=>{await wait();await wait()};const fixture=document.querySelector('#fixtures');
+  function make(id,w=640,h=360,controls='native') { const p=document.createElement('section');p.className='player';p.style.width=w+'px';p.style.height=h+'px';p.id=id;const v=document.createElement('video');v.id=id+'-video';if(controls==='native')v.controls=true;p.append(v);if(['top','bottom','floating'].includes(controls)){const bar=document.createElement('div');bar.className=controls==='floating'?'floating':'bar '+controls;bar.setAttribute('role','toolbar');bar.innerHTML='<button aria-label="Play">Play</button><input type="range" aria-label="Timeline">';p.append(bar)}fixture.append(p);return v;}
+  function track(v,label='English',lang='en',text='Hello world',mode='hidden'){const t=v.addTextTrack('subtitles',label,lang);t.mode=mode;t.addCue(new VTTCue(0,8,text));t.addCue(new VTTCue(9,15,'Second sentence.'));return t;}
+  await settle();const W=GXT.webVideo;
+  await check('3.7.0 missing general-video controller is reproduced',()=>!!W);
+  if(W){
+  await check('no-video page has no player hosts',()=>W.snapshot().players.length===0);
+  const native=make('native');const nt=track(native);await settle();
+  const rec=v=>W._test.get(v);const host=v=>rec(v)?.host;
+  await check('native HTML player identified with accessible textTracks',()=>rec(native)&&rec(native).sources.length===1);
+  await check('source has language kind player video and page-generation identity',()=>{const s=rec(native).sources[0];return s.language==='en'&&s.kind==='subtitles'&&s.playerId&&s.videoId&&Number.isInteger(s.pageGeneration)&&s.id});
+  await check('large player receives full controls inside bounds',()=>rec(native).layout.mode==='full'&&rec(native).layout.x>=0&&rec(native).layout.y>=0&&host(native).isConnected);
+  await check('actual toolbar geometry has its planned width without host clamping',()=>Math.abs(rec(native).toolbar.getBoundingClientRect().width-rec(native).layout.width)<1);
+  await rec(native).toggleSubtitles();await settle();
+  await check('caption translation uses independent web-video source scope',()=>webRequests.some(m=>m.source==='web-video'&&m.kind==='subtitle')&&rec(native).cues[0].translation==='ترجمه Hello world');
+  await check('native track mode preserved while translating',()=>nt.mode==='hidden');
+  native.currentTime=1;native.dispatchEvent(new Event('timeupdate'));await settle();
+  await check('current translated cue rendered as plain text',()=>host(native).shadowRoot.querySelector('.caption').textContent.includes('ترجمه'));
+  const top=make('top',640,360,'top');track(top);top.scrollIntoView();await settle();
+  await check('top toolbar is excluded from placement',()=>{const r=rec(top);return r&&r.layout.y>=48});
+  const bottom=make('bottom',640,360,'bottom');track(bottom);bottom.scrollIntoView();await settle();
+  await check('bottom custom timeline and volume remain uncovered',()=>rec(bottom).layout.y+rec(bottom).layout.height<310);
+  const floating=make('floating',640,360,'floating');track(floating);floating.scrollIntoView();await settle();
+  await check('floating central control is excluded',()=>rec(floating).layout.y<100);
+  const vertical=make('vertical',220,500);track(vertical);vertical.scrollIntoView();await settle();
+  await check('vertical player selects compact or icon controls',()=>['compact','icon'].includes(rec(vertical).layout.mode));
+  const tiny=make('tiny',110,62);tiny.scrollIntoView();await settle();
+  await check('tiny player has external fallback instead of overlay',()=>rec(tiny).layout.mode==='external'&&rec(tiny).toolbar.hidden);
+  await check('external fallback is discoverable',()=>W.snapshot().externalCount>0&&document.querySelector('[data-gxt-web-video-dock]'));
+  const small=make('small',180,120);small.scrollIntoView();await settle();
+  await check('small player uses one expandable icon',()=>rec(small).layout.mode==='icon');
+  const huge=make('huge',1000,620);huge.scrollIntoView();await settle();
+  await check('very large player fits full controls',()=>rec(huge).layout.mode==='full');
+  huge.parentElement.style.width='190px';huge.parentElement.style.height='120px';await settle();
+  await check('ResizeObserver updates existing control size',()=>rec(huge).layout.mode==='icon');
+  const absent=make('absent');absent.scrollIntoView();await settle();
+  await check('no-caption player reports unavailable subtitles and offers independent Live dubbing',()=>rec(absent).sources.length===0&&rec(absent).subButton.disabled&&!rec(absent).dubButton.disabled&&rec(absent).status.textContent.includes('زیرنویس'));
+  const multi=make('multi');const mt=track(multi);track(multi,'French','fr','Bonjour');multi.scrollIntoView();await settle();
+  await check('multiple caption sources remain selectable',()=>rec(multi).sources.length===2&&rec(multi).select.options.length===2);
+  await rec(multi).selectSource(rec(multi).sources[1].id);await rec(multi).toggleSubtitles();await settle();
+  await check('switching source translates correct language',()=>rec(multi).cues[0].text==='Bonjour');
+  const manual=make('showing');const manualTrack=track(manual,'Manual','en','Manual cue','showing');manual.scrollIntoView();await settle();await rec(manual).toggleSubtitles();await settle();
+  await check('native showing captions never disabled by discovery',()=>manualTrack.mode==='showing');
+  const auto=make('auto');track(auto,'English (auto-generated)');auto.scrollIntoView();await settle();
+  await check('automatic source marked only by explicit metadata',()=>rec(auto).sources[0].automatic===true&&rec(manual).sources[0].automatic===null);
+  const before=rec(native).videoGeneration;native.src='changed.mp4';await settle();
+  await check('same-element src replacement invalidates video generation',()=>rec(native).videoGeneration>before&&rec(native).cues.length===0);
+  let resolveOld;const pending=make('pending');track(pending);pending.scrollIntoView();await settle();GXT_SHIM_HANDLER=m=>new Promise(r=>{resolveOld=r});await rec(pending).toggleSubtitles();await wait();const pg=rec(pending).generation;pending.src='replacement.mp4';await settle();resolveOld?.({ok:true,list:['STALE','STALE']});await settle();
+  await check('late caption response cannot cross source generation',()=>rec(pending).generation>pg&&!rec(pending).cues.some(c=>c.translation==='STALE'));
+  GXT_SHIM_HANDLER=async m=>({ok:true,list:m.texts?.map(t=>'fresh '+t)});
+  const oldHost=host(top);top.parentElement.remove();await settle();
+  await check('removed video releases listeners and leaves no orphan controls',()=>!rec(top)&&!oldHost.isConnected);
+  const rebuilt=make('top-rebuilt');rebuilt.scrollIntoView();await settle();
+  await check('rebuilt player gets a fresh unique identity',()=>rec(rebuilt)&&rec(rebuilt).id!==oldHost.dataset.playerId);
+  await check('multiple videos retain isolated player ownership',()=>new Set(W.snapshot().players.map(p=>p.id)).size===W.snapshot().players.length);
+  await GXT.setSettings({webVideoDisplay:'interaction'});await settle();
+  await check('interaction policy hides untouched controls',()=>rec(rebuilt).toolbar.hidden);
+  rebuilt.dispatchEvent(new PointerEvent('pointerdown',{bubbles:true}));await settle();
+  await check('user interaction reveals the relevant player',()=>!rec(rebuilt).toolbar.hidden);
+  const tokenBefore=host(rebuilt).style.cssText;await GXT.setSettings({uiTheme:'paper'});await settle();
+  await check('theme change repaints existing host without refresh',()=>host(rebuilt).style.cssText!==tokenBefore);
+  const beforeCount=W.snapshot().players.length;await rec(rebuilt).disableSite();await settle();
+  await check('disable this site immediately removes every control',()=>beforeCount>0&&W.snapshot().players.length===0&&!document.querySelector('[data-gxt-web-video]'));
+  await GXT.setSettings({webVideoBlockedSites:[],webVideoDisplay:'auto'});await settle();
+  await check('reenabling site recreates supported players',()=>W.snapshot().players.length>0);
+  await GXT.setSettings({webVideoSiteMode:'allowlist',webVideoAllowedSites:[]});await settle();
+  await check('allowlist denies sites not explicitly selected',()=>W.snapshot().players.length===0);
+  await GXT.setSettings({webVideoAllowedSites:[location.hostname]});await settle();
+  await check('allowlist enables selected exact hostname',()=>W.snapshot().players.length>0);
+  await check('hostname matching never accepts lookalike domains',()=>!W._internal.siteAllowed({...GXT.DEFAULTS,webVideoEnabled:true,webVideoSiteMode:'allowlist',webVideoAllowedSites:['example.com']},'evil-example.com'));
+  for(let i=0;i<25;i++){const v=make('cycle'+i);await wait(5);v.parentElement.remove()}await settle();
+  await check('repeated player lifecycle leaves no detached records',()=>W.snapshot().players.every(p=>p.connected)&&document.querySelectorAll('[data-gxt-web-video]').length===W.snapshot().players.length);
+  await check('no permanent scan interval is installed',()=>webIntervalCalls===0);
+  await check('VTT parser validates timing and strips cue tags from speech',()=>{const c=GXT.videoSources.parseVtt('WEBVTT\n\n00:00.000 --> 00:03.000\n<v Alice>Hello <b>world</b>\n\n00:08.000 --> 00:02.000\nbad');return c.length===1&&c[0].text==='Hello world'&&c[0].speaker==='Alice'});
+  await check('arbitrary script URLs rejected by caption source resolver',()=>GXT.videoSources.safeURL('javascript:alert(1)',location.href)===null);
+  const fileVideo=make('file-track');const fileTrack=document.createElement('track');fileTrack.kind='subtitles';fileTrack.src='web-video-en.vtt';fileTrack.srclang='en';fileTrack.label='HTTP WebVTT';fileVideo.append(fileTrack);fileVideo.scrollIntoView();await settle();
+  await rec(fileVideo).toggleSubtitles();await settle();
+  await check('real HTTP track WebVTT is fetched and parsed',()=>rec(fileVideo).sources.some(s=>s.type==='track'&&s.url.endsWith('web-video-en.vtt'))&&rec(fileVideo).cues.some(c=>c.text.includes('real WebVTT')));
+  await rec(fileVideo).toggleSubtitles();await settle();
+  await check('disabled native track is restored after caption use ends',()=>fileTrack.track.mode==='disabled');
+  const declared=make('declared');declared.dataset.subtitles=JSON.stringify([{src:'web-video-fr.vtt',language:'fr',label:'French declared'}]);declared.scrollIntoView();await settle();await rec(declared).toggleSubtitles();await settle();
+  await check('player-associated declarative page subtitles load correctly',()=>rec(declared).sources[0].type==='page-data'&&rec(declared).cues[0].text.includes('Bonjour'));
+  const unrelated=make('unrelated');unrelated.scrollIntoView();await settle();
+  await check('unrelated page subtitle data never binds to another video',()=>rec(unrelated).sources.length===0);
+  declared.scrollIntoView();await settle();const declaredEpoch=rec(declared).generation;declared.dataset.subtitles=JSON.stringify([{src:'web-video-en.vtt',language:'en',label:'English replacement'}]);await settle();
+  await check('changing an accessible source immediately retires and reloads active captions',()=>rec(declared).generation>declaredEpoch&&rec(declared).cues.some(c=>c.text.includes('real WebVTT')));
+  fileVideo.scrollIntoView();await settle();await rec(fileVideo).toggleSubtitles();fileTrack.track.mode='showing';await rec(fileVideo).toggleSubtitles();await settle();
+  await check('native user caption selection survives extension cleanup',()=>fileTrack.track.mode==='showing');
+  const failedSource=make('failed-source');failedSource.dataset.subtitles=JSON.stringify([{src:'missing-subtitle.vtt',language:'en'}]);failedSource.scrollIntoView();await settle();await rec(failedSource).toggleSubtitles();await settle();
+  await check('subtitle fetch failure remains visible after control state update',()=>rec(failedSource).cues.length===0&&rec(failedSource).status.textContent.includes('قابل دریافت نیست'));
+  const imported=make('imported');imported.scrollIntoView();await settle();await rec(imported).importFile(new File(['WEBVTT\n\n00:00.000 --> 00:08.000\nImported local cue'], 'local.vtt'));
+  await rec(imported).toggleSubtitles();await settle();
+  await check('local VTT independently enables captionless player',()=>rec(imported).sources[0].type==='local-file'&&rec(imported).cues[0].translation==='fresh Imported local cue');
+  const moved=make('moved');moved.scrollIntoView();await settle();const movedId=rec(moved).id;const newContainer=document.createElement('section');newContainer.className='player';fixture.append(newContainer);newContainer.append(moved);moved.scrollIntoView();await settle();
+  await check('moving the same video rebinds its real container without duplicate UI',()=>rec(moved).id===movedId&&rec(moved).container===newContainer);
+  const lazyBefore=W.snapshot().players.length;const lazy=make('below-fold');lazy.parentElement.style.marginTop='4000px';await settle();
+  await check('offscreen video stays lightweight until it enters the viewport',()=>!rec(lazy)&&W.snapshot().players.length===lazyBefore);
+  lazy.scrollIntoView();await settle();
+  await check('IntersectionObserver activates a newly visible player',()=>!!rec(lazy));
+  const epoch=make('epoch');track(epoch);epoch.scrollIntoView();await settle();const replies=[];GXT_SHIM_HANDLER=m=>new Promise(resolve=>replies.push({m,resolve}));
+  await GXT.setSettings({provider:'google'});await rec(epoch).toggleSubtitles();await settle();const firstGeneration=rec(epoch).generation;
+  await GXT.setSettings({provider:'bing'});await settle();await GXT.setSettings({provider:'google'});await settle();
+  const own=replies.filter(r=>r.m.texts?.includes('Hello world'));
+  own.at(-1)?.resolve({ok:true,list:['CURRENT','CURRENT']});await settle();own[0]?.resolve({ok:true,list:['OLD A','OLD A']});await settle();
+  await check('A to B to A translation settings reject oldest same-value reply',()=>own.length>=3&&rec(epoch).generation>firstGeneration&&rec(epoch).cues[0].translation==='CURRENT');
+  for(const r of replies)r.resolve({ok:false});GXT_SHIM_HANDLER=async m=>({ok:true,list:m.texts?.map(t=>'fresh '+t)});await settle();
+  const full=make('fullscreen');full.scrollIntoView();await settle();Object.defineProperty(document,'fullscreenElement',{configurable:true,get:()=>full.parentElement});document.dispatchEvent(new Event('fullscreenchange'));await settle();
+  await check('fullscreen container owns its live extension host',()=>host(full).parentElement===full.parentElement&&rec(full).layout.mode==='full');
+  delete document.fullscreenElement;document.dispatchEvent(new Event('fullscreenchange'));await settle();
+  await check('fullscreen exit returns host to document ownership',()=>host(full).parentElement===document.body);
+  let closed=0;let decoded=0;GXT.dub._internal.setRampMs(0);GXT.dub._internal.setContextFactory(()=>({state:'running',currentTime:10,destination:{},close:async()=>{closed++},createGain:()=>({gain:{value:1},connect(){},disconnect(){}}),decodeAudioData:async()=>{decoded++;return {duration:1}},createBufferSource:()=>({playbackRate:{value:1},connect(){},start(){},stop(){}})}));
+  const speaking=make('speaking');track(speaking);speaking.scrollIntoView();await settle();const spoken=[];GXT_SHIM_HANDLER=async m=>{spoken.push(m);return m.type==='TTS_SPEAK'?{ok:true,data:btoa('audio'),mime:'audio/wav'}:{ok:true,list:m.texts?.map(t=>'صدای '+t)}};
+  await rec(speaking).toggleDub();await settle();
+  await check('caption dubbing uses established TTS engine with translated text',()=>spoken.some(m=>m.type==='TTS_SPEAK'&&m.text.startsWith('صدای'))&&decoded>0&&rec(speaking).dubber.stats().running);
+  speaking.parentElement.remove();await settle();
+  await check('removed dubbing player closes private audio context',()=>closed===1&&!rec(speaking));
+  const lateSpeech=make('late-speech');track(lateSpeech);lateSpeech.scrollIntoView();await settle();let finishSpeech;GXT_SHIM_HANDLER=async m=>m.type==='TTS_SPEAK'?new Promise(r=>{finishSpeech=r}):{ok:true,list:m.texts?.map(t=>'صدای '+t)};await rec(lateSpeech).toggleDub();await settle();const decodedBefore=decoded;lateSpeech.parentElement.remove();await settle();finishSpeech?.({ok:true,data:btoa('audio')});await settle();
+  await check('late TTS cannot recreate a disposed player audio context',()=>decoded===decodedBefore&&closed===2);
+  await GXT.setSettings({webVideoEnabled:false});await settle();
+  await check('global disable releases observers and all hosts',()=>!W.snapshot().observing&&W.snapshot().players.length===0);
+  }
+  const good=checks.filter(c=>c[1]).length;document.querySelector('#summary').textContent=good+'/'+checks.length;console.log(`GXT-WEBVIDEO SUMMARY ${good}/${checks.length}`);globalThis.__webVideoResults=checks;
+})().catch(e=>{console.error(e);console.log('GXT-WEBVIDEO FAIL uncaught '+e.message);console.log('GXT-WEBVIDEO SUMMARY 0/1')});
+</script>

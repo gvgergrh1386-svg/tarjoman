@@ -1,0 +1,42 @@
+<!doctype html><meta charset="utf-8"><title>Popup lifecycle regressions</title>
+<iframe src="popup-preview.html?audit=1" width="470" height="800"></iframe>
+<script>
+(async()=>{
+  const frame=document.querySelector('iframe');
+  const wait=ms=>new Promise(r=>setTimeout(r,ms));
+  const until=async fn=>{for(let i=0;i<200;i++){if(fn())return;await wait(20);}throw new Error('condition timeout');};
+  await until(()=>frame.contentWindow.__popupReady);
+  const w=frame.contentWindow, $=id=>w.document.getElementById(id), c=w.chrome;
+  let passed=0,total=0;
+  async function test(name,fn){total++;try{if(!await fn())throw new Error('contract failed');passed++;console.log('GXT-POPUP-AUDIT PASS '+name);}catch(e){console.log('GXT-POPUP-AUDIT FAIL '+name+' '+e.message);}}
+  await test('a delayed model refresh preserves the latest user selection',async()=>{
+    const send=c.runtime.sendMessage;let release;
+    c.runtime.sendMessage=msg=>msg.type==='LIST_MODELS'&&msg.provider==='gemini'?new Promise(r=>release=r):send(msg);
+    try{
+      $('refreshModels').click();await until(()=>release);
+      $('model').value='gemini-3.5-flash-lite';$('model').dispatchEvent(new w.Event('change'));
+      await until(()=>!$('model').disabled);
+      await wait(60);
+      release({ok:true,models:[{id:'gemini-3.6-flash'},{id:'gemini-3.5-flash-lite'}]});
+      await until(()=>!$('refreshModels').disabled);
+      return $('model').value==='gemini-3.5-flash-lite' && (await w.GXT.getSettings()).model==='gemini-3.5-flash-lite';
+    }finally{c.runtime.sendMessage=send;}
+  });
+  await test('an older backup file read cannot overwrite the latest import',async()=>{
+    const send=c.runtime.sendMessage, read=w.File.prototype.text;let release;const imported=[];
+    c.runtime.sendMessage=async msg=>{if(msg.type==='IMPORT_BACKUP'){imported.push(msg.data.name);return{ok:false,error:'CONTROLLED_IMPORT_RESPONSE'};}return send(msg);};
+    w.File.prototype.text=function(){if(this.name==='old.json')return new Promise(r=>release=()=>read.call(this).then(r));return read.call(this);};
+    function pick(name){const dt=new w.DataTransfer();dt.items.add(new w.File([JSON.stringify({name})],name));$('bkFile').files=dt.files;$('bkFile').dispatchEvent(new w.Event('change'));}
+    try{pick('old.json');await until(()=>release);pick('new.json');await until(()=>imported.length===1);release();await wait(100);return imported.join(',')==='new.json';}
+    finally{w.File.prototype.text=read;c.runtime.sendMessage=send;}
+  });
+  await test('changing voice settings suppresses a pending old voice preview',async()=>{
+    const send=c.runtime.sendMessage, Audio=w.Audio;let release,plays=0;
+    c.runtime.sendMessage=msg=>msg.type==='TTS_SPEAK'?new Promise(r=>release=r):send(msg);
+    w.Audio=class{play(){plays++;return Promise.resolve();}pause(){}};
+    try{$('ttsTest').click();await until(()=>release);await w.GXT.setSettings({ttsRate:1.7});release({ok:true,mime:'audio/wav',data:'test'});await wait(120);return plays===0&&!$('ttsTest').disabled;}
+    finally{c.runtime.sendMessage=send;w.Audio=Audio;}
+  });
+  console.log(`GXT-POPUP-AUDIT SUMMARY ${passed}/${total}`);
+})().catch(e=>{console.error(e);});
+</script>

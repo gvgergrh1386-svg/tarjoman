@@ -1,0 +1,283 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>GXT mock YouTube — no captions</title>
+<style>
+  body { margin: 0; padding: 24px; background: #0f0f0f; color: #eee; font: 14px/1.6 Roboto, "Segoe UI", sans-serif; }
+  #movie_player { position: relative; width: 640px; height: 360px; background: #000; border-radius: 12px; overflow: hidden; }
+  video { width: 100%; height: 100%; }
+  #summary { position: fixed; top: 8px; right: 8px; z-index: 99999; background: #16181c; border: 1px solid #333; border-radius: 10px; padding: 8px 12px; font: 12px/1.8 Consolas, monospace; max-width: 420px; }
+  #summary .pass { color: #0f8; }
+  #summary .fail { color: #f66; font-weight: bold; }
+</style>
+</head>
+<body>
+<div id="summary">running…</div>
+<div id="movie_player"><video muted></video>
+<!-- v3.2.2 — YouTube's OWN player chrome, at the z-index values it really
+     uses. Without these the mock player was unrealistically simple: it had no
+     z-indexed children, so DOM order alone put our UI on top and a host that
+     computed to `z-index: auto` looked perfectly fine. On the real player that
+     same host painted UNDERNEATH all of this and the UI "completely vanished".
+     A mock that cannot reproduce the site's stacking cannot catch that. -->
+<div class="ytp-gradient-bottom" style="position:absolute;left:0;right:0;bottom:0;height:170px;z-index:59;background:linear-gradient(transparent,rgba(0,0,0,.7));pointer-events:none"></div>
+<div class="ytp-chrome-bottom" style="position:absolute;left:12px;right:12px;bottom:0;height:48px;z-index:60"></div>
+<div class="ytp-chrome-top" style="position:absolute;left:0;right:0;top:0;height:48px;z-index:60"></div>
+</div>
+
+<script>
+/**
+ * THE CASE THIS PAGE EXISTS FOR — reported against v3.0.0, fixed in v3.1.0.
+ *
+ * A video with no caption track at all. Most of the non-English internet looks
+ * like this, and it is precisely the case the audio-native live engine was
+ * built for: it listens to the SOUND and needs nothing to read.
+ *
+ * What actually happened before v3.1.0:
+ *
+ *   1. `mountPill()` ended with
+ *          if (!info.tracks?.length && !liveArmed) return removeControls();
+ *      so on a caption-less video the ENTIRE control cluster was removed —
+ *      unless live dubbing had ALREADY been enabled and its engine ALREADY
+ *      chosen. But the dub button is the only in-player way to enable it and
+ *      the gear is the only in-player way to choose the engine, and both had
+ *      just been removed. A chicken-and-egg: to reach the control that turns
+ *      on live translation, you had to have already turned it on.
+ *
+ *   2. `dubOn()` was `state === 'active' && settings.ytDub`, where `state` is
+ *      the CAPTION pipeline. So «یوتیوب زیرنویس را نداد» set state='idle' and
+ *      the voice reported itself off and went dead — for a live session that
+ *      had never asked YouTube for a caption.
+ *
+ * Every check below is that bug, held down. The two pipelines may cooperate,
+ * but neither may gate the other.
+ */
+  globalThis.__gxtYtTestMode = true;
+  globalThis.GXT_SHIM_SEED = {
+    // Live dubbing is NOT pre-enabled: the whole point is that it must be
+    // reachable from a cold start on a caption-less video.
+    settings: { ytDub: false, ytDubEngine: 'live', ytAheadSec: 90 },
+    apiKeys: ['dev-key'],
+  };
+</script>
+<script src="chrome-shim.js?v=3300"></script>
+<script>
+  globalThis.GXT_LIVE_PORTS = [];
+  globalThis.GXT_SHIM_HANDLER = async (message) => {
+    if (message.type === 'TTS_SPEAK') return { ok: true, mime: 'audio/wav', data: btoa('x'.repeat(2400)) };
+    if (message.type === 'TRANSLATE_TEXTS') {
+      return { ok: true, list: message.texts.map((t) => 'ف: ' + t), failed: null };
+    }
+    return { ok: false, code: 'DEV' };
+  };
+  // The live engine talks over a Port. Record the connections so a test can
+  // prove the session really started without a single caption existing.
+  globalThis.GXT_SHIM_CONNECT = (name) => {
+    const port = {
+      name,
+      sent: [],
+      postMessage(m) { this.sent.push(m); },
+      disconnect() { this.disconnected = true; },
+      onMessage: { addListener() {} },
+      onDisconnect: { addListener() {} },
+    };
+    globalThis.GXT_LIVE_PORTS.push(port);
+    return port;
+  };
+</script>
+<script src="../shared/settings.js?v=3300"></script>
+<script src="../shared/memory.js?v=3300"></script>
+<script src="../shared/theme.js?v=3300"></script>
+<script src="../content/dub.js?v=3300"></script>
+<script src="../content/ui.js?v=3300"></script>
+<script src="../content/player.css.js?v=3300"></script>
+<script src="../content/youtube.js?v=3300"></script>
+<script>
+(async () => {
+  // v3.2.0 — the in-player UI lives in a shadow root now (style isolation from
+  // YouTube's own CSS, which is what the old inline styles were buying). These
+  // two cross that boundary; `document.getElementById` no longer can.
+  const Q = (sel) => GXT.yt?._internal?.q?.(sel) || null;
+  const QA = (sel) => GXT.yt?._internal?.qa?.(sel) || [];
+  const results = [];
+  const check = (name, ok) => {
+    results.push([name, !!ok]);
+    console.log(`GXT-YTNC ${ok ? 'PASS' : 'FAIL'} ${name}`);
+  };
+  const until = async (fn, timeout = 8000, step = 100) => {
+    const t0 = Date.now();
+    for (;;) {
+      let v = null;
+      try { v = fn(); } catch { v = null; }
+      if (v) return v;
+      if (Date.now() - t0 > timeout) return null;
+      await new Promise((r) => setTimeout(r, step));
+    }
+  };
+  const I = () => GXT.yt._internal;
+  const player = document.getElementById('movie_player');
+  const videoEl = player.querySelector('video');
+  let fakeTime = 1;
+  Object.defineProperty(videoEl, 'currentTime', {
+    configurable: true, get: () => fakeTime, set: (v) => { fakeTime = v; },
+  });
+  Object.defineProperty(videoEl, 'paused', { configurable: true, get: () => false });
+  Object.defineProperty(videoEl, 'duration', { configurable: true, get: () => 600 });
+
+  /**
+   * v3.3.0 — «I have not found captions yet» is announced FIRST, and it must
+   * not be mistaken for «this video has none».
+   *
+   * This is the reported bug in miniature. The page script posts as the player
+   * warms up, and an early message legitimately carries no tracks. The receiver
+   * used to read any track-less message as final, disable the subtitle button
+   * and label the video caption-less — on videos that had captions. So the mock
+   * now sends the real sequence: an unsettled empty message, then the settled
+   * answer. Only the second one may produce a negative conclusion.
+   */
+  setTimeout(() => window.postMessage({
+    source: 'gxt-yt', videoId: 'vid-nocaps', title: 'mock no captions',
+    tracks: [], settled: false,
+  }, '*'), 150);
+
+  // ── 0. THE CLICK THAT BEATS THE METADATA ──────────────────────────────
+  //
+  // v3.3.0, and this is the half of the reported bug that RELOADING MAKES
+  // WORSE. Since v3.1.0 the controls mount as soon as the player exists —
+  // deliberately, because the live dubbing engine needs no captions and its only
+  // in-player switch lives there. So the subtitle button is clickable before any
+  // caption metadata has arrived, and `start()` opened with a bare `pickTrack()`
+  // that returns null on an empty list and announced «این ویدیو زیرنویس ندارد».
+  // A video with perfectly good subtitles, told it had none, because the user was
+  // quick. Reloading tightens the race rather than loosening it, which is exactly
+  // why the reported workaround was so fiddly.
+  //
+  // Here nothing at all has been announced yet: the mock's first message is still
+  // 150ms away. The button must WAIT, not lie.
+  {
+    const earlyControls = await until(() => Q('#gxt-yt-controls'), 4000);
+    check('REGRESSION: the controls are up before any caption metadata',
+      !!earlyControls && GXT.yt._internal.trackCount() === 0);
+    Q('#gxt-yt-pill')?.click();
+    // It must enter the pipeline rather than refuse outright…
+    const waited = await until(() => (I().subState() === 'loading' ? true : null), 2000);
+    check('REGRESSION: clicking before the metadata arrives does not refuse',
+      !!waited, `state=${I().subState()}`);
+    // …and it must say what it is doing while it waits.
+    const label = Q('#gxt-yt-pill')?.textContent || '';
+    check('REGRESSION: and the button explains that it is looking',
+      /جست‌وجو|دریافت/.test(label), `label=${label}`);
+    // Let the wait resolve on its own before the rest of the suite runs.
+    await until(() => (I().subState() === 'idle' ? true : null), 12000);
+  }
+
+  // ── 1. The UI exists at all ───────────────────────────────────────────
+  const controls = await until(() => Q('#gxt-yt-controls'));
+  check('REGRESSION: the controls mount on a caption-less video', !!controls);
+
+  // Give the unsettled message time to be (wrongly) acted upon.
+  await new Promise((r) => setTimeout(r, 400));
+  check('REGRESSION: an unsettled empty report does NOT mean «no captions»',
+    I().knownCaptionless() === false);
+  const earlyPill = Q('#gxt-yt-pill');
+  check('REGRESSION: the subtitle button stays usable while the answer is unknown',
+    !!earlyPill && earlyPill.disabled === false);
+
+  // Now the definitive answer.
+  window.postMessage({
+    source: 'gxt-yt', videoId: 'vid-nocaps', title: 'mock no captions',
+    tracks: [], settled: true,
+  }, '*');
+  await until(() => (I().knownCaptionless() ? true : null));
+  check('the module knows there are no captions', I().knownCaptionless());
+
+  const pill = Q('#gxt-yt-pill');
+  const dubBtn = Q('#gxt-yt-dub');
+  const gear = [...controls.querySelectorAll('button')].find((b) => b.textContent === '⚙');
+  check('REGRESSION: the dubbing button is present', !!dubBtn);
+  check('REGRESSION: the settings gear is present', !!gear);
+  // 3.7.5 intentional UX contract: metadata absence must allow a user retry.
+  check('the subtitle button remains available for explicit discovery retry', !!pill && pill.disabled === false);
+  check('the subtitle button explains missing captions and retry',
+    (pill.title || '').includes('پیدا نشد') && (pill.title || '').includes('بررسی دوباره'));
+  check('the dubbing button is NOT disabled (live needs no captions)',
+    dubBtn.disabled === false);
+
+  // ── 2. The gear can reach the engine choice ───────────────────────────
+  gear.click();
+  const panel = await until(() => Q('#gxt-yt-panel'));
+  check('REGRESSION: the settings panel opens with no captions', !!panel);
+  const engineSelect = [...panel.querySelectorAll('select')].find(
+    (s) => [...s.options].some((o) => o.value === 'live')
+  );
+  check('REGRESSION: the dub-engine choice is reachable', !!engineSelect);
+  gear.click();
+
+  // ── 3. Live dubbing actually starts, from a cold start ────────────────
+  check('nothing is running yet', I().subState() === 'idle' && I().dubState() === 'idle');
+  dubBtn.click();
+  const started = await until(() => (I().dubState() === 'active' ? true : null), 6000);
+  check('REGRESSION: live dubbing starts with no captions at all', !!started);
+  check('the caption pipeline was NOT dragged in', I().subState() === 'idle');
+  check('a live session was really opened',
+    globalThis.GXT_LIVE_PORTS.some((p) => p.name === 'gxt-live'));
+  check('REGRESSION: dubbing alone does not create or show a transcript overlay',
+    !Q('#gxt-yt-overlay') && I().visualWanted() === false);
+  // v3.2.0 — state is `aria-pressed`, not a tick in the label: it is what the
+  // stylesheet selects on AND what a screen reader announces.
+  check('the dub button reads as ON', dubBtn.getAttribute('aria-pressed') === 'true');
+
+  // ── 4. A caption failure must not touch the voice ─────────────────────
+  //
+  // The second half of the report: «یوتیوب زیرنویس را نداد» broke dubbing.
+  // Ask the caption pipeline to run and fail while the voice is playing.
+  window.postMessage({
+    source: 'gxt-yt', videoId: 'vid-nocaps', title: 'mock', tracks: [
+      { baseUrl: 'does-not-exist-404.json?fmt=json3', lang: 'en', kind: '', name: 'Broken' },
+    ],
+  }, '*');
+  await until(() => (I().trackCount() === 1 ? true : null));
+  const pill2 = Q('#gxt-yt-pill');
+  check('a track appeared, so the subtitle button became usable', pill2.disabled === false);
+  pill2.click();
+  /**
+   * Wait for the pipeline to SETTLE, not for a fixed 3.5s — v3.3.0.
+   *
+   * This was `setTimeout(r, 3500)`, which encoded the old give-up-immediately
+   * behaviour as a constant. v3.3.0 retries acquisition with backoff before
+   * declaring failure (that is the fix the report asked for), so the failure path
+   * legitimately takes longer — bounded by ACQUIRE_BUDGET_MS, and the pill
+   * narrates it. A magic sleep in a test is a second copy of a timing decision
+   * that lives in the product; polling for the state the assertion is about has
+   * no such copy and cannot drift from it.
+   */
+  // Observe the ATTEMPT before the give-up. Polling straight for 'idle' passes
+  // instantly on the idle state that existed BEFORE the click — `onPillClick`
+  // awaits a settings write before it ever calls `start()`, so there is a real
+  // window in which nothing has happened yet. A test that can pass without the
+  // thing under test having run is worse than no test, and this one did: it was
+  // only the old fixed 3.5s sleep that hid the race.
+  const tried = await until(() => (I().subState() === 'loading' ? true : null), 4000);
+  check('the caption pipeline really attempted the broken track', !!tried);
+  const gaveUp = await until(() => (I().subState() === 'idle' ? true : null), 12000);
+  check('the caption pipeline gave up', !!gaveUp);
+  check('REGRESSION: the caption failure did NOT stop the voice', I().dubState() === 'active');
+  check('REGRESSION: the dub button still reads as ON',
+    Q('#gxt-yt-dub').getAttribute('aria-pressed') === 'true');
+
+  // ── 5. Independence in the other direction ───────────────────────────
+  Q('#gxt-yt-dub').click();
+  await until(() => (I().dubState() === 'idle' ? true : null), 3000);
+  check('turning the voice off stops the voice', I().dubState() === 'idle');
+  check('...and did not resurrect the caption pipeline', I().subState() === 'idle');
+
+  const box = document.getElementById('summary');
+  box.innerHTML = results
+    .map(([n, ok]) => `<div class="${ok ? 'pass' : 'fail'}">${ok ? 'PASS' : 'FAIL'} ${n}</div>`)
+    .join('');
+  console.log(`GXT-YTNC SUMMARY ${results.filter((r) => r[1]).length}/${results.length}`);
+})();
+</script>
+</body>
+</html>

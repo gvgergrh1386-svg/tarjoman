@@ -1,0 +1,187 @@
+<!doctype html>
+<html lang="fa" dir="rtl">
+<head>
+<meta charset="utf-8">
+<title>GXT player-UI preview</title>
+<style>
+  html, body { margin: 0; height: 100%; background: #202124; }
+  body { display: grid; place-items: center; font: 14px system-ui, sans-serif; color: #eee; }
+  /* A stand-in for YouTube's player: the same positioning context the real one
+     provides (position:relative, a <video> child, a dark surface). */
+  #movie_player {
+    position: relative;
+    width: 900px; height: 506px;
+    background: #000 center/cover no-repeat;
+    border-radius: 14px; overflow: hidden;
+  }
+  /* A bright, busy "frame" so the translucent surfaces are judged over the
+     hardest realistic background rather than over flat black — which is what
+     made the in-page contrast defect invisible for three releases. */
+  #frame {
+    position: absolute; inset: 0;
+    background:
+      radial-gradient(circle at 25% 30%, #fff 0 18%, transparent 19%),
+      radial-gradient(circle at 70% 65%, #ffd27f 0 22%, transparent 23%),
+      linear-gradient(120deg, #3b4a6b 0%, #8d6e63 55%, #eceff1 100%);
+  }
+  video { position: absolute; inset: 0; width: 100%; height: 100%; opacity: 0; }
+</style>
+</head>
+<body>
+<div id="movie_player"><div id="frame"></div><video muted></video>
+<!-- v3.2.2 — YouTube's OWN player chrome, at the z-index values it really
+     uses. Without these the mock player was unrealistically simple: it had no
+     z-indexed children, so DOM order alone put our UI on top and a host that
+     computed to `z-index: auto` looked perfectly fine. On the real player that
+     same host painted UNDERNEATH all of this and the UI "completely vanished".
+     A mock that cannot reproduce the site's stacking cannot catch that. -->
+<div class="ytp-gradient-bottom" style="position:absolute;left:0;right:0;bottom:0;height:170px;z-index:59;background:linear-gradient(transparent,rgba(0,0,0,.7));pointer-events:none"></div>
+<div class="ytp-chrome-bottom" style="position:absolute;left:12px;right:12px;bottom:0;height:48px;z-index:60"></div>
+<div class="ytp-chrome-top" style="position:absolute;left:0;right:0;top:0;height:48px;z-index:60"></div>
+</div>
+
+<script>
+/**
+ * A preview of the IN-PLAYER UI, with no test suite running — v3.2.0.
+ *
+ * dev/popup-preview.html exists because visual decisions made from DOM
+ * assertions alone are guesses, and it is how the v2.9.0 redesign was actually
+ * looked at. The player UI never got the same treatment, which is a large part
+ * of why it was the one surface that never adopted the design system: nobody
+ * could see it without driving a 51-check suite and catching it mid-run.
+ *
+ * This mounts the controls, opens the settings sheet and paints a caption, then
+ * stops — so `python dev/shoot.py --page dev/player-preview.html` produces a
+ * stable picture of the real thing.
+ */
+  globalThis.__gxtYtTestMode = true;
+  globalThis.GXT_SHIM_SEED = {
+    settings: {
+      ytScale: 1, ytPosX: 50, ytPosY: 11, ytSubtitles: true,
+      ytDub: true, ytDubEngine: 'live', ytBilingual: true,
+    },
+    apiKeys: ['preview-key'],
+  };
+</script>
+<script src="chrome-shim.js?v=3300"></script>
+<script>
+  globalThis.GXT_SHIM_HANDLER = async (m) => {
+    if (m.type === 'TRANSLATE_TEXTS') {
+      return { ok: true, list: m.texts.map(() => 'این یک نمونهٔ زیرنویس فارسی است.'), failed: null };
+    }
+    return { ok: false, code: 'PREVIEW' };
+  };
+  globalThis.GXT_SHIM_CONNECT = (name) => ({
+    name, postMessage() {}, disconnect() {},
+    onMessage: { addListener() {} }, onDisconnect: { addListener() {} },
+  });
+</script>
+<script src="../shared/settings.js?v=3300"></script>
+<script src="../shared/memory.js?v=3300"></script>
+<script src="../shared/theme.js?v=3300"></script>
+<script src="../content/ui.js?v=3300"></script>
+<script src="../content/dub.js?v=3300"></script>
+<script src="../content/player.css.js?v=3300"></script>
+<script src="../content/youtube.js?v=3300"></script>
+<script>
+(async () => {
+  const until = async (fn, ms = 6000) => {
+    const t0 = Date.now();
+    for (;;) {
+      let v = null;
+      try { v = fn(); } catch { v = null; }
+      if (v) return v;
+      if (Date.now() - t0 > ms) return null;
+      await new Promise((r) => setTimeout(r, 80));
+    }
+  };
+  const I = () => GXT.yt._internal;
+
+  const announce = () => window.postMessage({
+    source: 'gxt-yt', videoId: 'preview', title: 'preview',
+    tracks: [
+      { baseUrl: 'mock-track.json?fmt=json3', lang: 'en', kind: '', name: 'English' },
+      { baseUrl: 'mock-track.json?fmt=json3&t=asr', lang: 'en', kind: 'asr', name: 'English auto' },
+    ],
+  }, '*');
+
+  // Announced until it sticks. youtube.js loads its settings asynchronously and
+  // `mountPill` returns early until they arrive, so a single post that happens
+  // to land first is silently dropped — which is what made the first version of
+  // this page render an empty player.
+  const ticker = setInterval(announce, 150);
+  announce();
+  await until(() => I().q('#gxt-yt-controls'));
+  clearInterval(ticker);
+  // Show the caption box with real text, so its legibility over a bright frame
+  // can be judged rather than assumed.
+  I().q('#gxt-yt-pill')?.click();
+  const cap = await until(() => I().q('#gxt-yt-overlay .yt-cap'));
+  if (cap) {
+    cap.style.display = 'inline-block';
+    cap.querySelector('div').textContent = 'این یک نمونهٔ زیرنویس فارسی است — خوانا روی هر تصویری.';
+    const orig = cap.querySelectorAll('div')[1];
+    if (orig) { orig.style.display = 'block'; orig.textContent = 'This is a sample subtitle line.'; }
+    /**
+     * v3.2.5 — the caption's three states, side by side.
+     *
+     * The caption joined the design system this release, and its variants are
+     * where a mistake would hide: `.plain` (the classic bar, still one setting
+     * away) and `.pending` (showing the original because its translation has not
+     * arrived). Both are conditions that a screenshot of the default state does
+     * not show, and the pending state in particular used to be drawn with
+     * `opacity: .75`, which measured 3.82:1 — a defect that existed precisely
+     * because nobody could see it next to the state it was derived from.
+     *
+     * `?cap=plain` / `?cap=pending` render one variant; `?cap=all` stacks all
+     * three so they can be compared in one picture.
+     */
+    const want = new URLSearchParams(location.search).get('cap') || '';
+    if (want === 'plain' || want === 'pending') cap.classList.add(want);
+    if (want === 'all') {
+      const wrap = cap.parentElement;
+      wrap.style.display = 'flex';
+      wrap.style.flexDirection = 'column';
+      wrap.style.alignItems = 'center';
+      wrap.style.gap = '10px';
+      for (const [cls, label] of [['plain', 'کلاسیک'], ['pending', 'در انتظار ترجمه']]) {
+        const copy = cap.cloneNode(true);
+        copy.classList.add(cls);
+        copy.querySelector('div').textContent = `${label} — این یک نمونهٔ زیرنویس فارسی است.`;
+        wrap.appendChild(copy);
+      }
+    }
+  }
+  // Open the settings sheet last, so it is on top.
+  if (location.search.includes('panel=0')) {
+    console.log('GXT-PREVIEW SUMMARY 1/1');
+    return;
+  }
+  I().qa('#gxt-yt-controls button').find((b) => b.textContent === '⚙')?.click();
+  const panel = await until(() => I().q('#gxt-yt-panel'));
+  /**
+   * The warning callout, on demand — v3.2.5 (`?warn=1`).
+   *
+   * It only appears after pressing «ترجمهٔ کامل» on a video long enough to trip
+   * the token safeguard, so in practice it was never looked at: that is how it
+   * kept four hand-picked hex values and a sub-floor type size through three
+   * releases of redesign while sitting inside the sheet being redesigned.
+   */
+  if (panel && location.search.includes('warn=1')) {
+    const body = panel.querySelector('.yt-panel-body');
+    const box = document.createElement('div');
+    box.className = 'yt-callout';
+    box.innerHTML =
+      '<div>این ویدیو خیلی طولانی است (۲۳٬۴۰۰ کلمه). برای جلوگیری از پر شدن سهمیه، '
+      + 'حالت لحظه‌ای پیشنهاد می‌شود.</div>'
+      + '<div class="yt-actions">'
+      + '<button class="yt-btn primary" type="button">به هر حال ادامه بده</button>'
+      + '<button class="yt-btn" type="button">حالت لحظه‌ای بماند</button>'
+      + '</div>';
+    body?.prepend(box);
+  }
+  console.log('GXT-PREVIEW SUMMARY 1/1');
+})();
+</script>
+</body>
+</html>

@@ -1,0 +1,73 @@
+<!doctype html><html><meta charset="utf-8"><title>Real audio capture and ownership regression</title>
+<body><h1>Real audio capture and ownership</h1><pre id="results"></pre>
+<script src="/content/dub.js"></script>
+<script>
+'use strict';
+(async () => {
+  const lines=document.getElementById('results'); let passed=0,total=0;
+  const sleep=ms=>new Promise(resolve=>setTimeout(resolve,ms));
+  const assert=(value,message)=>{if(!value)throw Error(message)};
+  const until=async(fn,message,timeout=6000)=>{const end=Date.now()+timeout;while(Date.now()<end){if(fn())return;await sleep(20)}throw Error(message)};
+  async function check(name,fn){total++;try{await fn();passed++;console.log('GXT-AUDIO PASS '+name);lines.textContent+='PASS '+name+'\n'}catch(error){console.log('GXT-AUDIO FAIL '+name+' — '+error.message);lines.textContent+='FAIL '+name+' '+error.message+'\n'}}
+  const NativeAudioContext=window.AudioContext; let elementCalls=0; const contexts=[],streams=[];
+  GXT.dub._internal.setRampMs(0);
+  GXT.dub._internal.setContextFactory(()=>{
+    const context=new NativeAudioContext(); contexts.push(context);
+    const createStream=context.createMediaStreamSource.bind(context);
+    context.createMediaStreamSource=stream=>{streams.push(stream);return createStream(stream)};
+    context.createMediaElementSource=()=>{elementCalls++;throw Error('arbitrary video must never be rerouted')};
+    return context;
+  });
+  const makePort=()=>{const listeners=[];return{sent:[],onMessage:{addListener:fn=>listeners.push(fn)},onDisconnect:{addListener(){}},postMessage(message){this.sent.push(message)},emit(message){listeners.forEach(fn=>fn(message))},disconnect(){}}};
+  const settings={ytLiveDuck:15,ytLiveSourceLang:'en',ytLiveModel:'fixture-model'};
+  const create=(video)=>{const port=makePort();const engine=GXT.dub.create({video,settings,captureMode:'stream',send:async()=>{throw Error('captions are absent')},connectLive:()=>port});return{engine,port}};
+  const video=document.createElement('video');video.controls=true;video.volume=.8;document.body.append(video);
+  const generator=new NativeAudioContext();const oscillator=generator.createOscillator();oscillator.frequency.value=330;
+  const low=generator.createGain();low.gain.value=.05;const destination=generator.createMediaStreamDestination();oscillator.connect(low);low.connect(destination);oscillator.start();await generator.resume();
+  video.srcObject=destination.stream;await video.play();
+  const {engine,port}=create(video);let owned;
+  const nonzero=message=>{if(message.t!=='audio')return false;const binary=atob(message.data);return Array.from(binary).some(ch=>ch.charCodeAt(0)!==0)};
+  await check('real srcObject audio generates nonzero PCM without caption cues',async()=>{
+    engine.start('live');await until(()=>port.sent.some(nonzero),'no captured PCM; '+JSON.stringify(engine.stats()));
+    assert(engine.stats().total===0,'unexpected subtitle dependency');assert(engine.stats().live.heard>0,'heard counter missing');assert(elementCalls===0,'unsafe element source was called');
+    owned=streams.at(-1).getAudioTracks()[0];assert(owned!==destination.stream.getAudioTracks()[0],'page track was not cloned');
+    const start=port.sent.find(message=>message.t==='start');assert(start.model==='fixture-model'&&start.sourceLang==='en','per-player model/source missing');
+    assert(video.volume===.8,'listening lowered original audio');
+  });
+  await check('real Live playback ducks during speech and pause releases immediately',async()=>{
+    port.emit({t:'audio',data:btoa('\x10\x00'.repeat(24000)),rate:24000});assert(video.volume===.8,'jitter queue ducked early');
+    await until(()=>video.volume<.2,'speech did not acquire volume');const paused=new Promise(resolve=>video.addEventListener('pause',resolve,{once:true}));video.pause();await paused;assert(video.volume===.8,'pause did not release original');
+    port.emit({t:'state',state:'live'});assert(video.volume===.8,'late state reclaimed original while paused');
+  });
+  await check('real capture teardown stops owned clone and keeps page audio track alive',async()=>{
+    engine.stop();assert(owned.readyState==='ended','owned clone leaked');assert(destination.stream.getAudioTracks()[0].readyState==='live','original page track stopped');
+    engine.configure({...settings,ytLiveDuck:0});assert(video.volume===.8,'stopped configure lowered original');assert(engine.dispose(),'safe stream engine could not dispose');
+  });
+  video.srcObject=null;video.remove();oscillator.stop();destination.stream.getTracks().forEach(track=>track.stop());await generator.close();
+  // A generated local WAV exercises native HTMLMediaElement.captureStream,
+  // independently of srcObject. No synthetic callback supplies its PCM.
+  function wav(){const rate=16000,samples=rate*4;const bytes=new Uint8Array(44+samples*2),view=new DataView(bytes.buffer);const text=(at,value)=>[...value].forEach((ch,i)=>bytes[at+i]=ch.charCodeAt(0));text(0,'RIFF');view.setUint32(4,36+samples*2,true);text(8,'WAVE');text(12,'fmt ');view.setUint32(16,16,true);view.setUint16(20,1,true);view.setUint16(22,1,true);view.setUint32(24,rate,true);view.setUint32(28,rate*2,true);view.setUint16(32,2,true);view.setUint16(34,16,true);text(36,'data');view.setUint32(40,samples*2,true);for(let i=0;i<samples;i++)view.setInt16(44+i*2,Math.sin(2*Math.PI*220*i/rate)*2000,true);return new Blob([bytes],{type:'audio/wav'})}
+  await check('native captureStream produces real PCM from a captionless media URL',async()=>{
+    const player=document.createElement('video');player.volume=.6;player.loop=true;document.body.append(player);const url=URL.createObjectURL(wav());player.src=url;const current=create(player);
+    try{await player.play();current.engine.start('live');await until(()=>current.port.sent.some(nonzero),'captureStream produced no readable PCM: '+JSON.stringify(current.engine.stats()));assert(elementCalls===0,'unsafe rerouting');assert(player.volume===.6,'listening volume changed');current.engine.stop();assert(!player.paused,'capture cleanup stopped player');assert(current.engine.dispose(),'captureStream disposal failed')}
+    finally{current.engine.dispose();player.pause();player.removeAttribute('src');player.load();player.remove();URL.revokeObjectURL(url)}
+  });
+  await check('zero original level keeps real capture PCM audible to the translator',async()=>{
+    const player=document.createElement('video');player.volume=.6;player.loop=true;document.body.append(player);const url=URL.createObjectURL(wav());player.src=url;const current=create(player);
+    try{await player.play();current.engine.configure({...settings,ytLiveDuck:0});current.engine.start('live');await until(()=>current.port.sent.some(nonzero),'zero duck silenced the capture');assert(player.volume===0,'original was not fully silent');current.engine.stop();assert(Math.abs(player.volume-.6)<.001,'original volume was not restored')}
+    finally{current.engine.dispose();player.pause();player.removeAttribute('src');player.load();player.remove();URL.revokeObjectURL(url)}
+  });
+  await check('natural media EOF retains a late response through real audio playback',async()=>{
+    const player=document.createElement('video');document.body.append(player);const url=URL.createObjectURL(wav());player.src=url;const current=create(player);
+    try{await player.play();current.engine.start('live');await until(()=>current.port.sent.some(nonzero),'no input captured');player.currentTime=3.8;await until(()=>player.ended,'media did not reach EOF');assert(current.engine.stats().draining,'EOF did not drain');const activePort=current.port;assert(activePort.sent.some(m=>m.t==='end'),'end marker absent');activePort.emit({t:'audio',data:btoa('\x10\x00'.repeat(12000)),rate:24000});activePort.emit({t:'state',state:'drained'});assert(current.engine.stats().running,'final audio was cut');await until(()=>!current.engine.stats().running,'final audio did not complete');assert(current.engine.stats().live.state==='completed','completion state absent')}
+    finally{current.engine.dispose();player.pause();player.removeAttribute('src');player.load();player.remove();URL.revokeObjectURL(url)}
+  });
+  await check('playing video without audio fails safely without remote start or source routing',async()=>{
+    const canvas=document.createElement('canvas');canvas.width=2;canvas.height=2;const player=document.createElement('video');player.volume=.47;player.srcObject=canvas.captureStream(5);const current=create(player);
+    try{canvas.getContext('2d').fillRect(0,0,2,2);await player.play();current.engine.start('live');assert(!current.engine.stats().running,'failed capture remained active');assert(current.engine.stats().live.state==='error','failure was invisible');assert(!current.port.sent.some(message=>message.t==='start'),'remote session charged without capturable audio');assert(elementCalls===0,'unsafe fallback used');assert(player.volume===.47,'failure changed original')}
+    finally{current.engine.dispose();player.pause();player.srcObject.getTracks().forEach(track=>track.stop());player.srcObject=null}
+  });
+  await check('all disposable capture contexts are closed after teardown',async()=>{await sleep(50);assert(contexts.every(context=>context.state==='closed'),'AudioContext leaked')});
+  console.log(`GXT-AUDIO SUMMARY ${passed}/${total}`);
+})().catch(error=>{console.log('GXT-AUDIO FAIL setup — '+error.stack);console.log('GXT-AUDIO SUMMARY 0/1')});
+</script></body></html>

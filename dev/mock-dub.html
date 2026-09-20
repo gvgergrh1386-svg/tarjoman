@@ -1,0 +1,833 @@
+﻿<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>GXT mock dubbing engine</title>
+<style>
+  body { font: 13px/1.7 Consolas, monospace; background: #0a0d12; color: #e7e9ee; padding: 14px; }
+  .pass { color: #0f8; }
+  .fail { color: #f44; font-weight: bold; }
+  h1 { font-size: 15px; }
+</style>
+</head>
+<body>
+<h1>Dubbing engine — integration</h1>
+<div id="summary">running…</div>
+
+<script src="chrome-shim.js?v=3300"></script>
+<script src="../shared/settings.js?v=3300"></script>
+<script src="../shared/memory.js?v=3300"></script>
+<script src="../content/dub.js?v=3300"></script>
+<script>
+/**
+ * Integration harness for content/dub.js.
+ *
+ * The pure planners are unit-tested in selftest.html. What is tested HERE is
+ * everything they cannot reach: that a plan actually becomes a scheduled
+ * sound at the right moment on the audio clock, that the original audio is
+ * ducked and — the part that really matters — reliably RESTORED, and that a
+ * seek or a pause cannot leave a stale clip queued to fire over the wrong
+ * frame.
+ *
+ * Both the <video> and the AudioContext are fakes, because the Browser pane
+ * has no audio hardware and no real player. They record rather than sound.
+ */
+(async () => {
+  const checks = [];
+  const check = async (name, fn) => {
+    let ok = false; let detail = '';
+    try { ok = !!(await fn()); } catch (e) { detail = String((e && e.message) || e); }
+    checks.push([name, ok, detail]);
+    console.log(`GXT-TEST ${ok ? 'PASS' : 'FAIL'} ${name}${detail ? ' — ' + detail : ''}`);
+  };
+  const wait = (ms) => new Promise((r) => setTimeout(r, ms));
+  /**
+   * Drain pending promise callbacks WITHOUT a timer.
+   *
+   * Everything this harness waits on — the mocked send, decodeAudioData, the
+   * engine's own async work — resolves through microtasks. Using setTimeout to
+   * "let things settle" made the suite hostage to background-tab throttling:
+   * a hidden pane clamps timers to about 1 Hz, so a 30 ms wait became a
+   * second and the run took minutes. Microtasks are never throttled.
+   */
+  const flush = async (turns = 40) => {
+    for (let i = 0; i < turns; i += 1) await Promise.resolve();
+  };
+
+  // -------------------------------------------------------------- fakes
+
+  function fakeVideo() {
+    const listeners = {};
+    return {
+      _tapped: false,
+      // The live graph's original-audio level, mirrored here so a test can
+      // assert the video was handed its sound back.
+      get _gains() {
+        const node = (globalThis.__gxtLastCtx?._gains || [])[1];
+        return { original: node ? node.gain.value : 1 };
+      },
+      currentTime: 0,
+      paused: false,
+      volume: 1,
+      playbackRate: 1,
+      addEventListener(type, fn) { (listeners[type] ||= []).push(fn); },
+      removeEventListener(type, fn) {
+        listeners[type] = (listeners[type] || []).filter((f) => f !== fn);
+      },
+      emit(type) { for (const fn of listeners[type] || []) fn({ type }); },
+      _listeners: listeners,
+    };
+  }
+
+  const started = [];   // every source that was handed to the clock
+  const stopped = [];
+
+  function fakeContext() {
+    const ctx = {
+      _gains: [],
+      state: 'running',
+      currentTime: 100,          // non-zero, so a bad delay calculation shows
+      destination: { id: 'dest' },
+      resume: async () => { ctx.state = 'running'; },
+      createGain() {
+        const node = { gain: { value: 1 }, connect() {}, disconnect() {} };
+        ctx._gains.push(node);
+        return node;
+      },
+      createMediaElementSource(el) {
+        el._tapped = true;
+        ctx._sourceEl = el;
+        return { connect() {}, disconnect() {} };
+      },
+      createScriptProcessor: () => ({ connect() {}, disconnect() {}, onaudioprocess: null }),
+      createBuffer(channels, length, rate) {
+        const data = new Float32Array(length);
+        return { numberOfChannels: channels, length, sampleRate: rate,
+                 duration: length / rate, getChannelData: () => data };
+      },
+      createBufferSource() {
+        const source = {
+          buffer: null,
+          playbackRate: { value: 1 },
+          onended: null,
+          connect() {},
+          start(at) { source._at = at; started.push(source); },
+          stop() { stopped.push(source); },
+        };
+        return source;
+      },
+      // dub.js only ever reads `.duration` off the decoded buffer.
+      decodeAudioData: async (bytes) => ({ duration: bytes.byteLength / 48000 }),
+    };
+    globalThis.__gxtLastCtx = ctx;
+    return ctx;
+  }
+
+  GXT.dub._internal.setContextFactory(fakeContext);
+  // Ducking is verified as a RESULT, not as an animation: a hidden tab
+  // throttles timers to ~1 Hz, so a real 180 ms fade would never be observable
+  // here. The fade itself is a cosmetic wrapper over these same writes.
+  GXT.dub._internal.setRampMs(0);
+
+  /** A TTS stub whose clip length tracks the text and honours `rate`, so the
+   *  calibration loop sees realistic numbers. */
+  const sent = [];
+  const MS_PER_CHAR = 62;
+  const makeSend = (opts = {}) => async (message) => {
+    sent.push(message);
+    if (opts.fail) return { ok: false, code: 'MOCK', error: 'nope' };
+    if (opts.delayMs) await wait(opts.delayMs);
+    const rate = typeof message.rate === 'number' ? message.rate : 1;
+    const ms = (message.text.length * MS_PER_CHAR) / rate;
+    // decodeAudioData above turns byteLength into seconds at 48 kB/s.
+    return { ok: true, mime: 'audio/wav', data: btoa('x'.repeat(Math.round((ms / 1000) * 48000))) };
+  };
+
+  const settings = {
+    ...GXT.DEFAULTS, ytDub: true, ytDubDuck: 12, ytDubMode: 'live',
+    ytDubAheadSec: 45, ytDubMaxRate: 1.3, ytDubComfortRate: 1.12,
+  };
+
+  const seg = (id, start, end, text) => ({ id, start, end, text });
+  // 30 characters ≈ 1.86 s of speech at the default estimate.
+  const LINE = 'یک جملهٔ فارسی برای آزمایش شد';
+
+  const settle = async (engine, rounds = 8) => {
+    for (let i = 0; i < rounds; i += 1) { engine.update(); await flush(); }
+  };
+
+  // ----------------------------------------------------------- the tests
+
+  await check('a ready line is scheduled at its cue time on the audio clock', async () => {
+    started.length = 0; sent.length = 0;
+    const video = fakeVideo();
+    const engine = GXT.dub.create({ video, send: makeSend(), settings });
+    engine.start();
+    engine.setSegments([seg('a', 5000, 8000, LINE), seg('b', 20000, 23000, LINE)]);
+    video.currentTime = 4;               // 1 s before the first line
+    await settle(engine);
+    if (started.length !== 1) throw new Error('started ' + started.length + ' sources');
+    // ctx.currentTime is 100 and the cue is 1 s away → exactly 101.
+    const at = started[0]._at;
+    if (Math.abs(at - 101) > 0.02) throw new Error('scheduled at ' + at + ', expected 101');
+    engine.stop();
+    return true;
+  });
+
+  await check('the original audio ducks while speaking and is restored after', async () => {
+    started.length = 0;
+    const video = fakeVideo();
+    video.volume = 0.8;
+    const engine = GXT.dub.create({ video, send: makeSend(), settings });
+    engine.start();
+    engine.setSegments([seg('a', 1000, 4000, LINE)]);
+    video.currentTime = 0.6;
+    await settle(engine);
+    // Queued audio is not audible yet. Advance BOTH clocks into the clip.
+    if (video.volume !== 0.8) throw new Error('ducked before the cue');
+    globalThis.__gxtLastCtx.currentTime += 0.4;
+    video.currentTime = 1;
+    engine.update();
+    const ducked = video.volume;
+    if (!(ducked < 0.2)) throw new Error('did not duck, volume=' + ducked);
+    // Ending the clip must hand the video its volume back — the single most
+    // important guarantee here, because failing it leaves the user's audio
+    // broken with no visible cause.
+    started[0].onended?.();
+    if (Math.abs(video.volume - 0.8) > 0.01) throw new Error('not restored: ' + video.volume);
+    engine.stop();
+    return true;
+  });
+
+  await check('stopping restores the volume even mid-sentence', async () => {
+    started.length = 0;
+    const video = fakeVideo();
+    video.volume = 0.65;
+    const engine = GXT.dub.create({ video, send: makeSend(), settings });
+    engine.start();
+    engine.setSegments([seg('a', 1000, 4000, LINE)]);
+    video.currentTime = 0.6;
+    await settle(engine);
+    globalThis.__gxtLastCtx.currentTime += 0.4;
+    video.currentTime = 1;
+    engine.update();
+    if (!(video.volume < 0.2)) throw new Error('not actually speaking before stop');
+    engine.stop();                       // while it is still speaking
+    await flush();
+    if (Math.abs(video.volume - 0.65) > 0.01) throw new Error('left ducked at ' + video.volume);
+    return true;
+  });
+
+  await check('a seek cancels queued audio so it cannot fire over the wrong frame', async () => {
+    started.length = 0; stopped.length = 0;
+    const video = fakeVideo();
+    const engine = GXT.dub.create({ video, send: makeSend(), settings });
+    engine.start();
+    engine.setSegments([seg('a', 5000, 8000, LINE)]);
+    video.currentTime = 4;
+    await settle(engine);
+    if (started.length !== 1) throw new Error('nothing queued to cancel');
+    engine.resync();                     // what nudge() calls on seek
+    if (stopped.length !== 1) throw new Error('queued source was not stopped');
+    // …and the line becomes eligible again, so seeking BACK replays it.
+    started.length = 0;
+    video.currentTime = 4;
+    await settle(engine);
+    if (started.length !== 1) throw new Error('line did not become replayable');
+    engine.stop();
+    return true;
+  });
+
+  await check('pausing silences the dub and un-ducks the video', async () => {
+    started.length = 0; stopped.length = 0;
+    const video = fakeVideo();
+    video.volume = 1;
+    const engine = GXT.dub.create({ video, send: makeSend(), settings });
+    engine.start();
+    engine.setSegments([seg('a', 1000, 4000, LINE)]);
+    video.currentTime = 0.6;
+    await settle(engine);
+    globalThis.__gxtLastCtx.currentTime += 0.4;
+    video.currentTime = 1;
+    engine.update();
+    if (!(video.volume < 0.2)) throw new Error('never ducked');
+    video.paused = true;
+    engine.update();
+    if (stopped.length === 0) throw new Error('kept playing while paused');
+    if (Math.abs(video.volume - 1) > 0.01) throw new Error('still ducked while paused: ' + video.volume);
+    engine.stop();
+    return true;
+  });
+
+  await check('watching at 1.5x speeds the voice up to match', async () => {
+    started.length = 0;
+    const video = fakeVideo();
+    video.playbackRate = 1.5;
+    const engine = GXT.dub.create({ video, send: makeSend(), settings });
+    engine.start();
+    engine.setSegments([seg('a', 5000, 8000, LINE)]);
+    video.currentTime = 4;
+    await settle(engine);
+    const source = started[0];
+    if (source.playbackRate.value !== 1.5) throw new Error('rate ' + source.playbackRate.value);
+    // The delay to the cue is in MEDIA seconds, so it must be divided by the
+    // speed: 1 s of video at 1.5x arrives in 0.667 s of real time.
+    if (Math.abs(source._at - (100 + 1 / 1.5)) > 0.02) throw new Error('delay not scaled: ' + source._at);
+    engine.stop();
+    return true;
+  });
+
+  await check('a line whose audio never arrives is abandoned, not played late', async () => {
+    started.length = 0;
+    const video = fakeVideo();
+    const engine = GXT.dub.create({ video, send: makeSend({ fail: true }), settings });
+    engine.start();
+    engine.setSegments([seg('a', 1000, 4000, LINE), seg('b', 9000, 12000, LINE)]);
+    video.currentTime = 0.5;
+    await settle(engine);
+    video.currentTime = 3;               // well past cue A
+    await settle(engine, 3);
+    if (started.length !== 0) throw new Error('played a line it never had');
+    const stats = engine.stats();
+    if (stats.missed < 1) throw new Error('miss not reported: ' + JSON.stringify(stats));
+    engine.stop();
+    return true;
+  });
+
+  await check('a tight line is requested at a faster reading, and the same one twice', async () => {
+    sent.length = 0;
+    const video = fakeVideo();
+    const engine = GXT.dub.create({ video, send: makeSend(), settings });
+    engine.start();
+    // 29 characters ≈ 1.8 s of speech crammed into a 0.6 s slot with the next
+    // line right behind it: nowhere to spill, so it must be read faster.
+    engine.setSegments([seg('a', 1000, 1600, LINE), seg('b', 1700, 4000, LINE)]);
+    video.currentTime = 0.2;
+    await settle(engine);
+    const first = sent.find((m) => m.text === LINE && m.rate);
+    if (!first) throw new Error('no speed-up asked for: ' + JSON.stringify(sent.map((m) => m.rate)));
+    if (first.rate > 1.75) throw new Error('exceeded the cap: ' + first.rate);
+    // Quantized, so a rewatch asks for exactly the same rate and hits cache.
+    if (Math.round(first.rate * 100) % 5 !== 0) throw new Error('not quantized: ' + first.rate);
+    engine.stop();
+    return true;
+  });
+
+  await check('re-feeding segments keeps audio already rendered', async () => {
+    sent.length = 0;
+    const video = fakeVideo();
+    const engine = GXT.dub.create({ video, send: makeSend(), settings });
+    engine.start();
+    engine.setSegments([seg('a', 5000, 8000, LINE)]);
+    video.currentTime = 1;
+    await settle(engine);
+    const firstCount = sent.length;
+    // A translation batch lands: the host re-feeds the whole list, now longer.
+    engine.setSegments([seg('a', 5000, 8000, LINE), seg('b', 9000, 12000, LINE)]);
+    await settle(engine);
+    const requestedA = sent.filter((m) => m.text === LINE).length;
+    if (firstCount < 1) throw new Error('nothing rendered on the first pass');
+    if (requestedA > 2) throw new Error('re-rendered an existing line: ' + requestedA + ' requests');
+    engine.stop();
+    return true;
+  });
+
+  await check('an unstarted context reports itself instead of failing silently', async () => {
+    GXT.dub._internal.setContextFactory(() => {
+      const ctx = fakeContext();
+      ctx.state = 'suspended';
+      ctx.resume = async () => {};      // the autoplay policy refuses
+      return ctx;
+    });
+    const video = fakeVideo();
+    const engine = GXT.dub.create({ video, send: makeSend(), settings });
+    engine.start();
+    engine.setSegments([seg('a', 5000, 8000, LINE)]);
+    video.currentTime = 4;
+    await settle(engine, 3);
+    const suspended = engine.stats().suspended;
+    engine.stop();
+    GXT.dub._internal.setContextFactory(fakeContext);
+  // Ducking is verified as a RESULT, not as an animation: a hidden tab
+  // throttles timers to ~1 Hz, so a real 180 ms fade would never be observable
+  // here. The fade itself is a cosmetic wrapper over these same writes.
+  GXT.dub._internal.setRampMs(0);
+    if (!suspended) throw new Error('suspended context not surfaced');
+    return true;
+  });
+
+  await check('the viewer moving the volume slider is respected, not fought', async () => {
+    started.length = 0;
+    const video = fakeVideo();
+    video.volume = 1;
+    const engine = GXT.dub.create({ video, send: makeSend(), settings });
+    engine.start();
+    engine.setSegments([seg('a', 1000, 4000, LINE)]);
+    video.currentTime = 0.6;
+    await settle(engine);
+    // The viewer turns it down while the dub is speaking.
+    video.volume = 0.05;
+    video.emit('volumechange');
+    started[0].onended?.();
+    // Un-ducking must return to something near what they chose, not to 1.
+    if (video.volume > 0.6) throw new Error('overrode the viewer: ' + video.volume);
+    engine.stop();
+    return true;
+  });
+
+  // ------------------------------------------- v2.4.5: shorten, don't gabble
+
+  /** A send() that also answers DUB_COMPRESS, however the test wants. */
+  const makeSendWithCompressor = (compress) => async (message) => {
+    sent.push(message);
+    if (message.type === 'DUB_COMPRESS') return compress(message);
+    const rate = typeof message.rate === 'number' ? message.rate : 1;
+    const ms = (message.text.length * MS_PER_CHAR) / rate;
+    return { ok: true, mime: 'audio/wav', data: btoa('x'.repeat(Math.round((ms / 1000) * 48000))) };
+  };
+
+  // 116 characters in a 1 s slot with the next line right behind it: far past
+  // any comfortable reading speed. v2.4.0 would have gabbled this.
+  const LONG = 'این یک جملهٔ بسیار طولانی فارسی است که به هیچ عنوان در زمان کوتاهی که برایش در نظر گرفته شده جا نمی‌شود';
+
+  await check('a badly over-long line is REWRITTEN shorter, not read faster', async () => {
+    sent.length = 0;
+    const video = fakeVideo();
+    const engine = GXT.dub.create({
+      video, settings, canCompress: true,
+      send: makeSendWithCompressor((m) => ({ ok: true, t: 'خیلی کوتاه شد' })),
+    });
+    engine.start();
+    engine.setSegments([seg('a', 1000, 2000, LONG), seg('b', 2100, 5000, LINE)]);
+    video.currentTime = 0.2;
+    await settle(engine);
+    const compress = sent.find((m) => m.type === 'DUB_COMPRESS');
+    if (!compress) throw new Error('never asked for a shorter line');
+    if (!(compress.budget > 0 && compress.budget < LONG.length)) {
+      throw new Error('nonsense budget ' + compress.budget);
+    }
+    // The SHORTENED text is what gets spoken — not the original.
+    const spoke = sent.filter((m) => m.type === 'TTS_SPEAK').map((m) => m.text);
+    if (!spoke.includes('خیلی کوتاه شد')) throw new Error('spoke: ' + JSON.stringify(spoke));
+    if (spoke.includes(LONG)) throw new Error('spoke the original anyway');
+    if (engine.stats().compressions !== 1) throw new Error('not counted');
+    engine.stop();
+    return true;
+  });
+
+  await check('a "compressor" that returns something LONGER is ignored', async () => {
+    sent.length = 0;
+    const video = fakeVideo();
+    const engine = GXT.dub.create({
+      video, settings, canCompress: true,
+      // A model that pads instead of trimming would make the very problem worse.
+      send: makeSendWithCompressor(() => ({ ok: true, t: LONG + ' و باز هم طولانی‌تر شد' })),
+    });
+    engine.start();
+    engine.setSegments([seg('a', 1000, 2000, LONG), seg('b', 2100, 5000, LINE)]);
+    video.currentTime = 0.2;
+    await settle(engine);
+    const spoke = sent.filter((m) => m.type === 'TTS_SPEAK').map((m) => m.text);
+    if (spoke.some((t) => t.length > LONG.length)) throw new Error('used the longer rewrite');
+    if (engine.stats().compressions !== 0) throw new Error('counted a rewrite that was rejected');
+    engine.stop();
+    return true;
+  });
+
+  await check('a failed rewrite still produces speech, just faster', async () => {
+    sent.length = 0;
+    const video = fakeVideo();
+    const engine = GXT.dub.create({
+      video, settings, canCompress: true,
+      send: makeSendWithCompressor(() => ({ ok: false, code: 'NO_KEY' })),
+    });
+    engine.start();
+    engine.setSegments([seg('a', 1000, 2000, LONG), seg('b', 2100, 5000, LINE)]);
+    video.currentTime = 0.2;
+    await settle(engine);
+    const spoke = sent.filter((m) => m.type === 'TTS_SPEAK');
+    if (!spoke.length) throw new Error('gave up entirely');
+    // Falls back to the old behaviour — capped at the ceiling.
+    const rushed = spoke.find((m) => m.text === LONG);
+    if (!rushed || !(rushed.rate > 1)) throw new Error('did not fall back to rushing');
+    if (rushed.rate > settings.ytDubMaxRate) throw new Error('exceeded the ceiling: ' + rushed.rate);
+    engine.stop();
+    return true;
+  });
+
+  await check('without a rewriting model, it never asks for one', async () => {
+    sent.length = 0;
+    const video = fakeVideo();
+    // canCompress false = the keyless machine translators, which cannot rewrite.
+    const engine = GXT.dub.create({ video, settings, canCompress: false, send: makeSendWithCompressor(() => ({ ok: true, t: 'x' })) });
+    engine.start();
+    engine.setSegments([seg('a', 1000, 2000, LONG), seg('b', 2100, 5000, LINE)]);
+    video.currentTime = 0.2;
+    await settle(engine);
+    if (sent.some((m) => m.type === 'DUB_COMPRESS')) throw new Error('asked anyway');
+    engine.stop();
+    return true;
+  });
+
+  // ------------------------------------------------ v2.4.5: the live engine
+
+  function fakePort() {
+    const listeners = [];
+    const disconnects = [];
+    const port = {
+      sent: [],
+      postMessage(m) { port.sent.push(m); },
+      disconnect() { for (const fn of disconnects) fn(); },
+      onMessage: { addListener: (fn) => listeners.push(fn) },
+      onDisconnect: { addListener: (fn) => disconnects.push(fn) },
+      emit(m) { for (const fn of listeners) fn(m); },
+    };
+    return port;
+  }
+
+  /** 16-bit PCM, base64 — what the Live API actually returns. */
+  const pcmChunk = (samples) => {
+    const bytes = new Uint8Array(samples * 2);
+    const view = new DataView(bytes.buffer);
+    for (let i = 0; i < samples; i++) view.setInt16(i * 2, 8000, true);
+    let s = '';
+    for (let i = 0; i < bytes.length; i++) s += String.fromCharCode(bytes[i]);
+    return btoa(s);
+  };
+
+  let livePort = null;
+
+  await check('live mode taps the video and opens a session', async () => {
+    const video = fakeVideo();
+    livePort = fakePort();
+    const engine = GXT.dub.create({
+      video, settings: { ...settings, ytDubEngine: 'live' }, send: makeSend(),
+      connectLive: () => livePort,
+    });
+    engine.start('live');
+    if (!livePort.sent.some((m) => m.t === 'start')) throw new Error('never asked to start');
+    const stats = engine.stats();
+    if (stats.mode !== 'live') throw new Error('mode is ' + stats.mode);
+    // The tap must come BEFORE the level control, so the model always hears the
+    // video at full volume however far down the viewer's copy is.
+    if (!video._tapped) throw new Error('never tapped the element');
+    engine.stop();
+    return true;
+  });
+
+  await check('incoming Persian is played back to back, not stacked at "now"', async () => {
+    started.length = 0;
+    const video = fakeVideo();
+    const port = fakePort();
+    const engine = GXT.dub.create({
+      video, settings: { ...settings, ytDubEngine: 'live' }, send: makeSend(),
+      connectLive: () => port,
+    });
+    engine.start('live');
+    port.emit({ t: 'state', state: 'live' });
+    // 24000 samples at 24 kHz = exactly one second each.
+    port.emit({ t: 'audio', data: pcmChunk(24000), rate: 24000 });
+    port.emit({ t: 'audio', data: pcmChunk(24000), rate: 24000 });
+    await flush();
+    if (started.length !== 2) throw new Error('played ' + started.length + ' chunks');
+    const gap = started[1]._at - started[0]._at;
+    // Starting both "now" would give a gap of 0 and play them on top of each
+    // other; the cursor must advance by the first chunk's real duration.
+    if (Math.abs(gap - 1) > 0.02) throw new Error('chunks not sequential, gap=' + gap);
+    engine.stop();
+    return true;
+  });
+
+  await check('an interruption drops buffered speech instead of talking over itself', async () => {
+    started.length = 0; stopped.length = 0;
+    const video = fakeVideo();
+    const port = fakePort();
+    const engine = GXT.dub.create({
+      video, settings: { ...settings, ytDubEngine: 'live' }, send: makeSend(),
+      connectLive: () => port,
+    });
+    engine.start('live');
+    port.emit({ t: 'state', state: 'live' });
+    port.emit({ t: 'audio', data: pcmChunk(48000), rate: 24000 }); // 2 s queued
+    port.emit({ t: 'audio', data: pcmChunk(48000), rate: 24000 });
+    await flush();
+    port.emit({ t: 'audio', data: null, interrupted: true });
+    await flush();
+    if (stopped.length < 2) throw new Error('kept playing a retracted turn');
+    engine.stop();
+    return true;
+  });
+
+  await check('a seek throws away live audio that describes the old position', async () => {
+    started.length = 0; stopped.length = 0;
+    const video = fakeVideo();
+    const port = fakePort();
+    const engine = GXT.dub.create({
+      video, settings: { ...settings, ytDubEngine: 'live' }, send: makeSend(),
+      connectLive: () => port,
+    });
+    engine.start('live');
+    port.emit({ t: 'state', state: 'live' });
+    port.emit({ t: 'audio', data: pcmChunk(48000), rate: 24000 });
+    await flush();
+    engine.resync();
+    if (!stopped.length) throw new Error('stale audio survived the seek');
+    engine.stop();
+    return true;
+  });
+
+  await check('transcripts are surfaced — subtitles for a video that has none', async () => {
+    const video = fakeVideo();
+    const port = fakePort();
+    const lines = [];
+    const engine = GXT.dub.create({
+      video, settings: { ...settings, ytDubEngine: 'live' }, send: makeSend(),
+      connectLive: () => port, onLiveText: (m) => lines.push(m),
+    });
+    engine.start('live');
+    port.emit({ t: 'text', kind: 'target', text: 'سلام' });
+    port.emit({ t: 'text', kind: 'source', text: 'hello' });
+    await flush();
+    engine.stop();
+    if (!lines.some((l) => l.kind === 'target' && l.text === 'سلام')) throw new Error('no Persian line');
+    if (!lines.some((l) => l.kind === 'source')) throw new Error('no source line');
+    return true;
+  });
+
+  await check('stopping live mode hands the video its audio back at full gain', async () => {
+    const video = fakeVideo();
+    const port = fakePort();
+    const engine = GXT.dub.create({
+      video, settings: { ...settings, ytDubEngine: 'live' }, send: makeSend(),
+      connectLive: () => port,
+    });
+    engine.start('live');
+    // Connecting alone cannot lower the original. Only actual speech owns it.
+    if (video._gains.original !== 1) throw new Error('ducked while only connecting');
+    port.emit({ t: 'audio', data: pcmChunk(24000), rate: 24000 });
+    globalThis.__gxtLastCtx.currentTime += 0.2;
+    engine.update();
+    if (!(video._gains.original < 0.5)) throw new Error('never lowered: ' + video._gains.original);
+    engine.stop();
+    // …and handed back afterwards. A MediaElementSource cannot be undone, so a
+    // graph left at gain 0 is a permanently silent video.
+    if (video._gains.original !== 1) throw new Error('left at ' + video._gains.original);
+    if (!port.sent.some((m) => m.t === 'stop')) throw new Error('session left open — it bills quota');
+    return true;
+  });
+
+  await check('switching engines mid-video tears the old one down completely', async () => {
+    const video = fakeVideo();
+    const port = fakePort();
+    const engine = GXT.dub.create({
+      video, settings: { ...settings, ytDubEngine: 'live' }, send: makeSend(),
+      connectLive: () => port,
+    });
+    engine.start('live');
+    engine.setMode('caption');
+    if (!port.sent.some((m) => m.t === 'stop')) throw new Error('live session left running');
+    if (video._gains.original !== 1) throw new Error('original left ducked by the dead engine');
+    if (engine.stats().mode !== 'caption') throw new Error('mode did not change');
+    engine.stop();
+    return true;
+  });
+
+  // -------------------------- v2.4.6: dub ONE language, not everything at once
+
+  await check('with a language chosen, the other soundtrack is discarded', async () => {
+    started.length = 0;
+    const video = fakeVideo();
+    const port = fakePort();
+    const engine = GXT.dub.create({
+      video, send: makeSend(), connectLive: () => port,
+      // An anime reaction: Japanese playing under an English commentator. The
+      // viewer asked for the English.
+      settings: { ...settings, ytDubEngine: 'live', ytLiveSourceLang: 'en' },
+    });
+    engine.start('live');
+    port.emit({ t: 'state', state: 'live' });
+
+    // The commentator speaks: five fragments settle the vote on English.
+    for (const text of ['So this scene', 'is incredible', 'look at that', 'wow', 'amazing']) {
+      port.emit({ t: 'text', kind: 'source', text });
+    }
+    port.emit({ t: 'audio', data: pcmChunk(12000), rate: 24000 });
+    await flush();
+    const afterEnglish = started.length;
+    if (afterEnglish !== 1) throw new Error('English was not spoken: ' + afterEnglish);
+
+    // Now the anime underneath takes over.
+    for (const text of ['これは', 'すごいですね', 'そうだ', 'はい', 'わかった']) {
+      port.emit({ t: 'text', kind: 'source', text });
+    }
+    port.emit({ t: 'audio', data: pcmChunk(12000), rate: 24000 });
+    await flush();
+    if (started.length !== afterEnglish) throw new Error('Japanese was spoken too — the whole point');
+    if (!engine.stats().live.filtered) throw new Error('drop not reported to the user');
+    engine.stop();
+    return true;
+  });
+
+  await check('with NO language chosen, nothing is filtered', async () => {
+    started.length = 0;
+    const video = fakeVideo();
+    const port = fakePort();
+    const engine = GXT.dub.create({
+      video, send: makeSend(), connectLive: () => port,
+      settings: { ...settings, ytDubEngine: 'live', ytLiveSourceLang: '' },
+    });
+    engine.start('live');
+    port.emit({ t: 'state', state: 'live' });
+    for (const text of ['これは', 'すごい', 'そうだ', 'はい', 'わかった']) {
+      port.emit({ t: 'text', kind: 'source', text });
+    }
+    port.emit({ t: 'audio', data: pcmChunk(12000), rate: 24000 });
+    await flush();
+    if (started.length !== 1) throw new Error('filtered with no filter set');
+    engine.stop();
+    return true;
+  });
+
+  await check('audio arriving before any transcript is spoken, not swallowed', async () => {
+    started.length = 0;
+    const video = fakeVideo();
+    const port = fakePort();
+    const engine = GXT.dub.create({
+      video, send: makeSend(), connectLive: () => port,
+      settings: { ...settings, ytDubEngine: 'live', ytLiveSourceLang: 'en' },
+    });
+    engine.start('live');
+    port.emit({ t: 'state', state: 'live' });
+    // No transcript yet: the source is genuinely unknown. Failing closed here
+    // would open a session that plays nothing and explains nothing.
+    port.emit({ t: 'audio', data: pcmChunk(12000), rate: 24000 });
+    await flush();
+    if (started.length !== 1) throw new Error('failed closed on an unknown source');
+    engine.stop();
+    return true;
+  });
+
+  await check('REGRESSION: a fully played line is replayable after seeking backwards without another synthesis', async () => {
+    started.length = 0; sent.length = 0;
+    const video = fakeVideo();
+    const engine = GXT.dub.create({ video, send: makeSend(), settings });
+    engine.start();
+    engine.setSegments([seg('a', 1000, 4000, LINE)]);
+    video.currentTime = 1;
+    await settle(engine);
+    started[0].onended?.();
+    const requests = sent.length;
+    video.currentTime = 0.8;
+    video.emit('seeked');
+    await settle(engine);
+    const ok = started.length === 2 && sent.length === requests;
+    engine.stop();
+    return ok;
+  });
+
+  await check('REGRESSION: failed synthesis is not billed again on every paused tick', async () => {
+    sent.length = 0;
+    const video = fakeVideo();
+    video.paused = true;
+    const engine = GXT.dub.create({ video, send: makeSend({ fail: true }), settings });
+    engine.start();
+    engine.setSegments([seg('a', 1000, 4000, LINE)]);
+    await settle(engine, 10);
+    const ok = sent.length === 1;
+    engine.stop();
+    return ok;
+  });
+
+  await check('REGRESSION: captionless live playback stops on the media pause event and drops late chunks', async () => {
+    started.length = 0; stopped.length = 0;
+    const video = fakeVideo();
+    const port = fakePort();
+    const engine = GXT.dub.create({ video, send: makeSend(), settings, connectLive: () => port });
+    engine.start('live');
+    port.emit({ t: 'audio', data: pcmChunk(12000), rate: 24000 });
+    video.paused = true;
+    video.emit('pause');
+    port.emit({ t: 'audio', data: pcmChunk(12000), rate: 24000 });
+    const ok = started.length === 1 && stopped.length === 1;
+    engine.stop();
+    return ok;
+  });
+
+  await check('REGRESSION: old live ports cannot inject audio or disconnect a restarted session', async () => {
+    started.length = 0;
+    const video = fakeVideo();
+    const ports = [];
+    const engine = GXT.dub.create({ video, send: makeSend(), settings,
+      connectLive: () => { const port = fakePort(); ports.push(port); return port; } });
+    engine.start('live');
+    video.currentTime = 30;
+    video.emit('seeked');
+    ports[0].emit({ t: 'audio', data: pcmChunk(12000), rate: 24000 });
+    ports[0].disconnect();
+    ports[1].emit({ t: 'state', state: 'live' });
+    ports[1].emit({ t: 'audio', data: pcmChunk(12000), rate: 24000 });
+    const ok = ports.length === 2 && started.length === 1 && engine.stats().live.state === 'live';
+    engine.stop();
+    return ok;
+  });
+
+  await check('REGRESSION: disconnecting live restores original gain and cancels queued audio', async () => {
+    stopped.length = 0;
+    const video = fakeVideo();
+    const port = fakePort();
+    const engine = GXT.dub.create({ video, send: makeSend(), settings, connectLive: () => port });
+    engine.start('live');
+    port.emit({ t: 'audio', data: pcmChunk(12000), rate: 24000 });
+    port.disconnect();
+    const ok = stopped.length === 1 && video._gains.original === 1;
+    engine.stop();
+    return ok;
+  });
+
+  await check('REGRESSION: old synthesis cannot clear a new session in-flight slot', async () => {
+    const video = fakeVideo();
+    const pending = [];
+    const engine = GXT.dub.create({ video, settings, send: () => new Promise((resolve) => pending.push(resolve)) });
+    engine.start();
+    engine.setSegments([seg('a', 1000, 4000, LINE)]);
+    engine.update();
+    engine.stop();
+    engine.start();
+    engine.setSegments([seg('a', 1000, 4000, LINE)]);
+    engine.update();
+    pending[0]({ ok: false });
+    await flush();
+    const ok = pending.length === 2 && engine.stats().pending === 1;
+    engine.stop();
+    pending[1]({ ok: false });
+    await flush();
+    return ok;
+  });
+
+  await check('REGRESSION: switching audio modes retires unfinished caption synthesis', async () => {
+    const video = fakeVideo();
+    let resolve;
+    const engine = GXT.dub.create({ video, settings, connectLive: () => fakePort(),
+      send: () => new Promise((r) => { resolve = r; }) });
+    engine.start();
+    engine.setSegments([seg('a', 1000, 4000, LINE)]);
+    engine.update();
+    engine.setMode('live');
+    resolve({ ok: true, data: btoa('x'.repeat(2400)) });
+    await flush();
+    const ok = engine.stats().ready === 0 && engine.stats().pending === 0;
+    engine.stop();
+    return ok;
+  });
+
+  const passed = checks.filter((c) => c[1]).length;
+  document.getElementById('summary').innerHTML =
+    `<h3>${passed}/${checks.length} checks passed</h3>` +
+    checks.map(([name, ok, detail]) =>
+      `<div class="${ok ? 'pass' : 'fail'}">${ok ? 'PASS' : 'FAIL'} — ${name}${detail ? ' — ' + detail : ''}</div>`
+    ).join('');
+  console.log(`GXT-TEST SUMMARY ${passed}/${checks.length}`);
+})();
+</script>
+</body>
+</html>

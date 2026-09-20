@@ -1,0 +1,178 @@
+{
+  "ttsDescription": {
+    "fa": "صدای نورونی فارسی از پایتون؛ مسیر مرورگرش را مایکروسافت بسته است",
+    "en": "Persian neural speech through Python"
+  },
+  "ocrDescription": {
+    "fa": "ترجمهٔ متن روی صفحه — بازی، برنامه‌های ویندوز، ویدیوی محافظت‌شده",
+    "en": "Recognize text from screen captures, games and apps"
+  },
+  "asrDescription": {
+    "fa": "ویدیوی بدون زیرنویس را قابل ترجمه می‌کند",
+    "en": "Transcribe videos without captions for translation"
+  },
+  "mangaPath": {
+    "fa": "MangaTranslator در {v0}",
+    "en": "MangaTranslator at {v0}"
+  },
+  "mangaDescription": {
+    "fa": "OCR + پاک‌سازی + حروف‌چینی محلی، به‌مراتب بهتر از ترجمهٔ تصویری ابری",
+    "en": "Local OCR, cleanup and typesetting"
+  },
+  "animePath": {
+    "fa": "Anime Studio در {v0}",
+    "en": "Anime Studio at {v0}"
+  },
+  "animeDescription": {
+    "fa": "صف ارتقای ویدیو با TensorRT",
+    "en": "Video enhancement queue with TensorRT"
+  },
+  "noText": {
+    "fa": "متنی برای خواندن نیست",
+    "en": "No text to read aloud"
+  },
+  "emptySpeech": {
+    "fa": "سرویس صدا چیزی برنگرداند",
+    "en": "The speech service returned no audio"
+  },
+  "missingEdge": {
+    "fa": "edge-tts نصب نیست",
+    "en": "edge-tts is not installed"
+  },
+  "noAudio": {
+    "fa": "صدایی دریافت نشد",
+    "en": "No audio received"
+  },
+  "mangaRejected": {
+    "fa": "MangaTranslator این ورودی را نپذیرفت (هیچ کاری برنامه‌ریزی نشد)",
+    "en": "MangaTranslator rejected this input; no work was scheduled"
+  },
+  "emptyTranslation": {
+    "fa": "ترجمه خروجی نداد",
+    "en": "Translation produced no output"
+  },
+  "pageObject": {
+    "fa": "صفحهٔ {v0} باید یک شیء JSON باشد",
+    "en": "Page {v0} must be a JSON object"
+  },
+  "pageEmpty": {
+    "fa": "صفحهٔ {v0} خالی دریافت شد",
+    "en": "Page {v0} is empty"
+  },
+  "pageNoOutput": {
+    "fa": "MangaTranslator خروجی این صفحه را نساخت",
+    "en": "MangaTranslator produced no output for this page"
+  },
+  "mangaMissing": {
+    "fa": "MangaTranslator پیدا نشد ({v0})",
+    "en": "MangaTranslator was not found ({v0})"
+  },
+  "noPages": {
+    "fa": "هیچ صفحه‌ای برای ترجمه فرستاده نشد",
+    "en": "No pages were sent for translation"
+  },
+  "pageLimit": {
+    "fa": "حداکثر {v0} صفحه در هر بار",
+    "en": "Maximum {v0} pages per job"
+  },
+  "chapterLimit": {
+    "fa": "حجم فصل بیش از حد است (سقف {v0} مگابایت)",
+    "en": "The chapter is too large (maximum {v0} MB)"
+  },
+  "jobMissing": {
+    "fa": "این کار پیدا نشد (شاید پل دوباره اجرا شده)",
+    "en": "Job not found; the bridge may have restarted"
+  },
+  "pagePending": {
+    "fa": "صفحهٔ {v0} هنوز آماده نیست",
+    "en": "Page {v0} is not ready yet"
+  },
+  "speechLabel": {
+    "fa": "صدای فارسی (TTS)",
+    "en": "Persian speech (TTS)"
+  },
+  "asrLabel": {
+    "fa": "رونویسی ویدیوی بدون زیرنویس",
+    "en": "Transcribe videos without captions"
+  },
+  "ocrLabel": {
+    "fa": "خواندن متن از تصویر و صفحهٔ نمایش",
+    "en": "Recognize text in images and screen captures"
+  },
+  "modelLabel": {
+    "fa": "اجرای مدل‌های محلی",
+    "en": "Run local models"
+  },
+  "offlineSpeech": {
+    "fa": "صدای آفلاین جایگزین",
+    "en": "Alternative offline speech"
+  },
+  "noImage": {
+    "fa": "تصویری فرستاده نشد",
+    "en": "No image was sent"
+  },
+  "ocrMissing": {
+    "fa": "موتور OCR نصب نیست",
+    "en": "OCR engine is not installed"
+  },
+  "imageUnreadable": {
+    "fa": "تصویر خوانده نشد",
+    "en": "Could not read the image"
+  },
+  "mangaTimeout": {
+    "fa": "ترجمه بیش از {v0} دقیقه طول کشید و متوقف شد",
+    "en": "Translation exceeded {v0} minutes and was stopped"
+  },
+  "noVideoUrl": {
+    "fa": "نشانی ویدیو خالی است",
+    "en": "The video address is empty"
+  },
+  "originDenied": {
+    "fa": "این سرویس فقط از افزونه قابل استفاده است",
+    "en": "This service accepts extension requests only"
+  },
+  "tokenDenied": {
+    "fa": "توکن اشتباه است — از پنجرهٔ پل کپی کنید",
+    "en": "Incorrect token. Copy it from the bridge window."
+  },
+  "invalidBody": {
+    "fa": "بدنهٔ درخواست خراب است",
+    "en": "Invalid request body"
+  },
+  "bodyLimit": {
+    "fa": "بدنهٔ درخواست بیش از حد بزرگ است (سقف {v0} مگابایت)",
+    "en": "The request body is too large (maximum {v0} MB)"
+  },
+  "bodyObject": {
+    "fa": "بدنهٔ درخواست باید یک شیء JSON باشد",
+    "en": "The request body must be a JSON object"
+  },
+  "packageMissing": {
+    "fa": "بستهٔ لازم نصب نیست: {v0}",
+    "en": "Required package is not installed: {v0}"
+  },
+  "banner": {
+    "fa": "  ترجمان Bridge {v0}",
+    "en": "  Tarjoman Bridge {v0}"
+  },
+  "tokenLabel": {
+    "fa": "  توکن (یک‌بار در تنظیمات افزونه بچسبانید):",
+    "en": "  Token (paste once in extension settings):"
+  },
+  "capabilitiesLabel": {
+    "fa": "  قابلیت‌ها:",
+    "en": "  Capabilities:"
+  },
+  "keepOpen": {
+    "fa": "  این پنجره را باز بگذارید. برای بستن: Ctrl+C",
+    "en": "  Keep this window open. Press Ctrl+C to close."
+  },
+  "goodbye": {
+    "fa": "\n  خداحافظ.",
+    "en": "\n  Goodbye."
+  },
+  "invalidTarget": {
+    "fa": "کد زبان مقصد معتبر نیست.",
+    "en": "Invalid target language code."
+  }
+}

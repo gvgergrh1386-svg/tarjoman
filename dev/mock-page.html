@@ -1,0 +1,395 @@
+﻿<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>GXT mock foreign page</title>
+<style>
+  body { margin: 0; padding: 40px 60px; background: #fafafa; color: #222; font: 16px/1.7 Georgia, serif; max-width: 720px; }
+  #summary { position: fixed; top: 8px; left: 8px; z-index: 99999; background: #16181c; color: #eee; border-radius: 10px; padding: 8px 12px; font: 12px/1.8 Consolas, monospace; max-width: 360px; }
+  #summary .pass { color: #0f8; }
+  #summary .fail { color: #f66; font-weight: bold; }
+  code { background: #eee; padding: 1px 5px; border-radius: 4px; }
+</style>
+</head>
+<body>
+<div id="summary">running…</div>
+
+<h1 id="h1">The Future of Open Source</h1>
+<p id="p1">Open source software has fundamentally changed how the world builds technology.</p>
+<p id="p2">Navigation is simple.</p>
+<nav><a href="#" id="nav1">Navigation is simple.</a></nav>
+<p id="pfa" dir="rtl">این بند از قبل فارسی است و باید دست‌نخورده بماند.</p>
+<pre id="codeblock">const answer = 42; // must never be translated</pre>
+<p id="p3">Selection targets: this exact paragraph will be selected and translated on demand.</p>
+<!-- v2.9.5: ordinary markup that declares its OWN language. After the text is
+     replaced with Persian this attribute is not merely unhelpful, it is a
+     confident lie: a screen reader picks an English voice BECAUSE the page
+     asked it to. It must be overwritten, and put back exactly on restore. -->
+<article id="declared" lang="en">This article declares that it is written in English.</article>
+<!-- v1.9.6 regression: a block that has BOTH its own text and a nested block.
+     Both are units; the child's string is a duplicate of #p2's, so the child is
+     translated FIRST. The old snapshot check (full textContent) then rejected
+     the parent, silently leaving its own sentence untranslated. -->
+<div id="mix">Mixed block with its own text.<p id="mixchild">Navigation is simple.</p></div>
+
+<!-- v2.1.0 fixtures ------------------------------------------------------ -->
+<!-- A flex row: dir="auto" here REVERSES the children, which is how page
+     translation used to visibly break navigation bars and toolbars. -->
+<div id="flexbar" style="display:flex;gap:12px"><span id="flex1">First item</span><span id="flex2">Second item</span></div>
+<!-- A web component: its real text lives in an open shadow root, which neither
+     querySelectorAll nor a TreeWalker enters. -->
+<div id="shadowhost"></div>
+<!-- A bare URL: never prose, must never be sent to the model. -->
+<p id="justurl">https://example.com/assets/app.min.js</p>
+<!-- v2.5.1: a responsive manga page. The <source> and the img's own srcset both
+     outrank `src`, so a swap that only sets `src` would still show the original. -->
+<picture id="mangapic">
+  <source id="mangasource" srcset="mock-page-2x.png 2x">
+  <img id="mangaimg" src="mock-page.png" srcset="mock-page-1x.png 1x" alt="manga page">
+</picture>
+<script>
+  document.getElementById('shadowhost').attachShadow({ mode: 'open' }).innerHTML =
+    '<p id="inshadow">Content rendered inside a shadow root.</p>';
+</script>
+
+<script>
+  globalThis.GXT_SHIM_SEED = { settings: {}, apiKeys: ['dev-key'] };
+</script>
+<script src="chrome-shim.js?v=3300"></script>
+<script>
+  // Fake generic translator: Persian prefix, so replacements are detectable.
+  // Every message the module sends, so a test can assert on what it ASKED for
+  // — the point of the read-aloud fixtures is which pipeline ran, and speech
+  // itself is not observable from here.
+  globalThis.GXT_SENT = [];
+
+  /** A real (silent) 8 kHz mono WAV, so decodeAudioData genuinely succeeds and
+   *  the player advances through its states instead of erroring out. */
+  function silentWav(samples = 400) {
+    const bytes = new Uint8Array(44 + samples * 2);
+    const view = new DataView(bytes.buffer);
+    const ascii = (offset, text) => {
+      for (let i = 0; i < text.length; i += 1) view.setUint8(offset + i, text.charCodeAt(i));
+    };
+    ascii(0, 'RIFF'); view.setUint32(4, 36 + samples * 2, true); ascii(8, 'WAVEfmt ');
+    view.setUint32(16, 16, true); view.setUint16(20, 1, true); view.setUint16(22, 1, true);
+    view.setUint32(24, 8000, true); view.setUint32(28, 16000, true);
+    view.setUint16(32, 2, true); view.setUint16(34, 16, true);
+    ascii(36, 'data'); view.setUint32(40, samples * 2, true);
+    return btoa(String.fromCharCode(...bytes));
+  }
+
+  globalThis.GXT_SHIM_HANDLER = async (message) => {
+    globalThis.GXT_SENT.push(message);
+    if (message.type === 'TRANSLATE_TEXTS') {
+      await new Promise((r) => setTimeout(r, 150));
+      return { ok: true, list: message.texts.map((t) => 'ترجمه: ' + t), failed: null };
+    }
+    // v2.5.1 — speech, now reachable from any page.
+    if (message.type === 'TTS_SPLIT') return { ok: true, parts: [message.text] };
+    if (message.type === 'TTS_SPEAK') return { ok: true, mime: 'audio/wav', data: silentWav() };
+    return { ok: false, code: 'DEV' };
+  };
+</script>
+<script src="../shared/settings.js?v=3300"></script>
+<script src="../shared/memory.js?v=3300"></script>
+<script src="../shared/theme.js?v=3300"></script>
+<script src="../content/ui.js?v=3300"></script>
+<script src="../content/page-translate.js?v=3300"></script>
+<script src="../content/screen.js?v=3300"></script>
+<script>
+  const q = (sel) => document.querySelector(sel);
+  const ORIGINAL_TITLE = document.title;
+  const results = [];
+  const check = (name, fn) => {
+    let ok = false;
+    try { ok = !!fn(); } catch { ok = false; }
+    results.push([name, ok]);
+    console.log(`GXT-PAGE-TEST ${ok ? 'PASS' : 'FAIL'} ${name}`);
+  };
+  // The extension's own shadow host, by its marker attribute. Scanning for
+  // "the first child with a shadowRoot" broke as soon as the page itself grew
+  // a web component — which is exactly what the v2.1.0 fixture above is.
+  const shadow = () => document.querySelector('[data-gxt-ui]')?.shadowRoot || null;
+
+  // Phase 1: full-page translation.
+  setTimeout(() => globalThis.GXT_SHIM_DISPATCH({ type: 'GXT_PAGE' }), 300);
+
+  setTimeout(() => {
+    check('heading translated', () => q('#h1').textContent.includes('ترجمه:'));
+    check('paragraph translated', () => q('#p1').textContent.includes('ترجمه:'));
+    check('duplicate string translated in both places', () =>
+      q('#p2').textContent.includes('ترجمه:') && q('#nav1').textContent.includes('ترجمه:'));
+    check('Arabic-script paragraph reaches automatic source detection', () => q('#pfa').textContent.includes('ترجمه:'));
+    check('code block untouched', () => q('#codeblock').textContent.includes('const answer'));
+    check('dir=auto applied to translated parent', () => q('#p1').getAttribute('dir') === 'auto');
+    check('status pill rendered in shadow UI', () => !!shadow()?.querySelector('.pill'));
+    // v2.9.5 — the pill is the only progress channel page translation has, and
+    // it announced nothing at all (WCAG 4.1.3). The region is the label, not
+    // the pill, so its buttons are not re-announced on every repaint.
+    check('v2.9.5: page-translation progress is announced (WCAG 4.1.3)', () => {
+      const label = shadow()?.querySelector('.pill .pill-label');
+      return !!label && label.getAttribute('aria-live') === 'polite' &&
+        label.getAttribute('aria-atomic') === 'true' && label.getAttribute('role') === 'status';
+    });
+    check('v2.9.5: the pill itself is NOT a live region', () =>
+      !shadow()?.querySelector('.pill')?.hasAttribute('aria-live'));
+
+    /**
+     * WCAG 3.1.2 (Language of Parts, AA) — the rule this product exists to
+     * satisfy. Persian left undeclared inside an English document is handed to
+     * an English speech engine, which applies English phonetics to Arabic
+     * script; the blind user of a translation extension got nothing from it.
+     */
+    check('v2.9.5: translated page text declares Persian (WCAG 3.1.2)', () =>
+      q('#p1').lang === 'fa' && q('#h1').lang === 'fa');
+    check('v2.9.5: lang is set even where dir must be withheld', () =>
+      // A flex row never gets dir=auto (it reverses the children) — but lang
+      // changes no layout, so withholding it too would have left exactly the
+      // navigation bars the dir guard protects silently unreadable.
+      q('#flexbar').lang === 'fa' && !q('#flexbar').getAttribute('dir'));
+    check('translated Arabic-script paragraph has the requested target language', () =>
+      q('#pfa').getAttribute('lang') === 'fa');
+    check('v2.9.5: a wrong lang="en" is OVERWRITTEN, not deferred to', () =>
+      q('#declared').textContent.includes('ترجمه:') && q('#declared').lang === 'fa');
+    check('v2.9.5: the shared card layer declares Persian once, on its host', () =>
+      document.querySelector('[data-gxt-ui]').getAttribute('lang') === 'fa');
+
+    /**
+     * v3.0.0 — screen-region OCR crops through a LETTERBOX.
+     *
+     * The frozen frame is displayed with `object-fit: contain`, so the image
+     * does not fill its element: there are bars on two sides. Mapping the
+     * user's rectangle using the ELEMENT's box instead of the displayed
+     * image's box crops the wrong part of the screen — and it does so
+     * subtly, shifting by the bar width, which is far worse than failing.
+     */
+    check('v3.0.0: screen crop maps through the letterbox, not the element box', () => {
+      const S = GXT.screen._internal;
+      // A 1000x500 frame shown inside a 400x400 box: contain gives scale 0.4,
+      // a 400x200 image, and 100px bars top and bottom.
+      const frame = document.createElement('canvas');
+      frame.width = 1000; frame.height = 500;
+      const img = { getBoundingClientRect: () => ({ left: 0, top: 0, width: 400, height: 400 }) };
+      // scale 0.4, image shown 400x200, so 100px letterbox bars top and bottom.
+      // Select CSS (100,200)-(300,300): that is source x 250..750, y 250..500.
+      const out = S.cropTo(frame, img, { x: 100, y: 200, w: 200, h: 100 });
+      // The bug this guards: using the ELEMENT box would give sy = 200/0.4 =
+      // 500 — the very bottom edge — instead of 250. A 250px-high crop is not
+      // upscaled (the 2x boost is for selections under 220px).
+      return !!out && out.width === 500 && out.height === 250;
+    });
+
+    check('v3.0.0: a stray click is not a selection', () => {
+      const frame = document.createElement('canvas');
+      frame.width = 800; frame.height = 600;
+      const img = { getBoundingClientRect: () => ({ left: 0, top: 0, width: 800, height: 600 }) };
+      // Below the 4px floor after scaling: OCR on this would return confident
+      // nonsense about three grey pixels.
+      return GXT.screen._internal.cropTo(frame, img, { x: 10, y: 10, w: 2, h: 2 }) === null;
+    });
+    check('screen selection entirely inside a letterbox bar captures nothing', () => {
+      const frame = document.createElement('canvas'); frame.width = 1000; frame.height = 500;
+      const img = { getBoundingClientRect: () => ({ left: 0, top: 0, width: 400, height: 400 }) };
+      return GXT.screen._internal.cropTo(frame, img, { x: 20, y: 10, w: 100, h: 60 }) === null;
+    });
+    check('screen selection crossing a letterbox bar clips both rectangle edges', () => {
+      const frame = document.createElement('canvas'); frame.width = 1000; frame.height = 500;
+      const img = { getBoundingClientRect: () => ({ left: 0, top: 0, width: 400, height: 400 }) };
+      const out = GXT.screen._internal.cropTo(frame, img, { x: 0, y: 80, w: 100, h: 60 });
+      return out?.width === 500 && out?.height === 200;
+    });
+    check('nested child block translated', () => q('#mixchild').textContent.includes('ترجمه:'));
+    check('REGRESSION (v1.9.6): parent block with a nested child keeps its own text translated', () =>
+      q('#mix').textContent.includes('ترجمه: Mixed block with its own text.'));
+
+    // ---- v2.1.0 -----------------------------------------------------------
+    check('v2.1.0: open shadow-root content is translated', () =>
+      q('#shadowhost').shadowRoot.querySelector('#inshadow').textContent.includes('ترجمه:'));
+    check('v2.1.0: the tab title is translated', () =>
+      document.title === 'ترجمه: ' + ORIGINAL_TITLE);
+    check('v2.1.0: a flex row is translated but NEVER gets dir=auto', () =>
+      q('#flexbar').textContent.includes('ترجمه:') && !q('#flexbar').getAttribute('dir'));
+    check('v2.1.0: a bare URL is never sent for translation', () =>
+      q('#justurl').textContent === 'https://example.com/assets/app.min.js');
+    check('v2.1.0: the pill carries the background-opacity toggle', () => {
+      const buttons = [...(shadow()?.querySelectorAll('.pill button') || [])];
+      return buttons.some((b) => b.textContent === '◐');
+    });
+    check('v2.1.0: the pill offers an in-context continuous-translation toggle', () =>
+      [...(shadow()?.querySelectorAll('.pill button') || [])].some((b) => b.textContent === 'پیوسته'));
+
+    // ---- v2.9.5 -----------------------------------------------------------
+    /**
+     * The href poll is a FALLBACK, and must not run when it has nothing to
+     * fall back from.
+     *
+     * It used to run unconditionally, next to the Navigation API, on every page
+     * this engine touches — a wakeup per second for the life of the tab, to
+     * observe a route change the event had already delivered (measured in
+     * dev/e2e: 6-7 ms for `navigatesuccess` against ~1009 ms for the poll). The
+     * manifest requires Chrome 116 and the API shipped in 102, so on every
+     * supported browser this was pure cost.
+     */
+    check('v2.9.5: no 1 Hz poll while the Navigation API is available', () => {
+      const I = GXT.page._internal;
+      if (!I.hasNavigationApi()) return true; // the fallback is legitimate here
+      return !I.navPollActive();
+    });
+    check('v2.9.5: this browser really does have the API being relied on', () =>
+      GXT.page._internal.hasNavigationApi());
+
+    /**
+     * A card takes focus when it opens — that is what makes Escape work and the
+     * result reach a screen reader. It never gave focus BACK, so dismissing a
+     * translation dropped a keyboard user onto <body>, i.e. back to the top of
+     * the page, away from the paragraph they were reading (WCAG 2.4.3).
+     */
+    check('v2.9.5: closing a card returns focus to whatever opened it', () => {
+      const opener = q('#p3');
+      opener.tabIndex = 0;
+      opener.focus();
+      const card = GXT.ui.card({ title: 'آزمایش بازگشت فوکوس', anchorPoint: { x: 50, y: 50 } });
+      const took = shadow().activeElement === card.el;
+      card.close();
+      const gaveBack = document.activeElement === opener;
+      opener.removeAttribute('tabindex');
+      return took && gaveBack;
+    });
+
+    check('v2.9.5: a card opened with nothing focused does not force focus anywhere', () => {
+      document.body.focus?.();
+      if (document.activeElement !== document.body) document.activeElement.blur();
+      const card = GXT.ui.card({ title: 'بدون بازگشت', anchorPoint: { x: 60, y: 60 } });
+      card.close();
+      return document.activeElement === document.body;
+    });
+
+    // Phase 2: restore (second GXT_PAGE toggles back).
+    globalThis.GXT_SHIM_DISPATCH({ type: 'GXT_PAGE' });
+    setTimeout(() => {
+      check('restore returns original text', () =>
+        q('#p1').textContent.includes('fundamentally changed') && !q('#p1').textContent.includes('ترجمه:'));
+      check('restore removes dir attribute', () => !q('#p1').getAttribute('dir'));
+      check('v2.9.5: restore removes the lang this run added', () =>
+        !q('#p1').getAttribute('lang') && !q('#flexbar').getAttribute('lang'));
+      check('v2.9.5: restore puts back a lang the PAGE had declared', () =>
+        q('#declared').getAttribute('lang') === 'en');
+      check('v2.1.0: restore puts the tab title back', () => document.title === ORIGINAL_TITLE);
+      check('v2.1.0: restore reaches inside the shadow root', () =>
+        !q('#shadowhost').shadowRoot.querySelector('#inshadow').textContent.includes('ترجمه:'));
+
+      // Phase 3: selection translation.
+      const range = document.createRange();
+      range.selectNodeContents(q('#p3'));
+      const sel = getSelection();
+      sel.removeAllRanges();
+      sel.addRange(range);
+      globalThis.GXT_SHIM_DISPATCH({ type: 'GXT_SELECTION', fallbackText: '' });
+      setTimeout(() => {
+        check('selection card shows translation', () => {
+          const body = shadow()?.querySelector('.card-body');
+          return !!body && body.textContent.includes('ترجمه:') && body.textContent.includes('Selection targets');
+        });
+        check('v2.1.0: the result card carries the opacity toggle', () =>
+          [...(shadow()?.querySelectorAll('.card-head button') || [])].some((b) => b.textContent === '◐'));
+        check('v2.1.0: the result card is draggable by its header', () => {
+          const card = shadow()?.querySelector('.card');
+          const head = shadow()?.querySelector('.card-head');
+          if (!card || !head) return false;
+          // Park it at a known spot first: a card that is already clamped
+          // against a viewport edge cannot move further that way, which made
+          // this assertion depend on where the selection/click happened to be.
+          card.style.left = '40px';
+          card.style.top = '40px';
+          const start = card.getBoundingClientRect();
+          head.dispatchEvent(new PointerEvent('pointerdown', {
+            bubbles: true, button: 0, pointerId: 7,
+            clientX: start.left + 30, clientY: start.top + 10,
+          }));
+          window.dispatchEvent(new PointerEvent('pointermove', {
+            bubbles: true, pointerId: 7,
+            clientX: start.left + 90, clientY: start.top + 45,
+          }));
+          window.dispatchEvent(new PointerEvent('pointerup', { bubbles: true, pointerId: 7 }));
+          const end = card.getBoundingClientRect();
+          return Math.round(end.left - start.left) === 60 && Math.round(end.top - start.top) === 35;
+        });
+        // Phase 4 (v2.5.1): read aloud, on this ordinary page.
+        const select = (el) => {
+          const r = document.createRange();
+          r.selectNodeContents(el);
+          const s = getSelection();
+          s.removeAllRanges();
+          s.addRange(r);
+        };
+        const sentTypes = () => globalThis.GXT_SENT.map((m) => m.type);
+        globalThis.GXT_SENT.length = 0;
+        select(q('#p3'));
+        globalThis.GXT_SHIM_DISPATCH({ type: 'GXT_READ', fallbackText: '' });
+        setTimeout(() => {
+          check('v2.5.1: foreign selection is translated BEFORE it is spoken', () => {
+            const types = sentTypes();
+            return types.indexOf('TRANSLATE_TEXTS') === 0 && types.includes('TTS_SPLIT');
+          });
+          check('v2.5.1: it is the PERSIAN that gets spoken, not the original', () =>
+            globalThis.GXT_SENT.some((m) => m.type === 'TTS_SPLIT' && m.text.includes('ترجمه:')));
+          // ONE speech control in the product: the card's own 🔊, started for
+          // the user. A second button in the body would be the same feature
+          // twice on the same card.
+          check('v2.5.1: the reading card drives the card‌s own 🔊, not a second control', () => {
+            const head = [...(shadow()?.querySelectorAll('.card-head button') || [])];
+            const body = [...(shadow()?.querySelectorAll('.card-body button') || [])];
+            return head.some((b) => b.title?.includes('خواندن') || b.textContent === '🔊' || b.textContent === '■')
+              && !body.length;
+          });
+          check('v2.5.1: the card read itself aloud without being clicked', () =>
+            globalThis.GXT_SENT.some((m) => m.type === 'TTS_SPEAK'));
+
+          // Persian text must NOT make a pointless trip to the translator.
+          globalThis.GXT_SENT.length = 0;
+          select(q('#pfa'));
+          globalThis.GXT_SHIM_DISPATCH({ type: 'GXT_READ', fallbackText: '' });
+          setTimeout(() => {
+            check('v2.5.1: Persian selection is spoken as it stands', () => {
+              const types = sentTypes();
+              return types.includes('TTS_SPLIT') && !types.includes('TRANSLATE_TEXTS');
+            });
+
+            // Phase 5 (v2.5.1): the manga hand-off replaces the page in place.
+            const img = q('#mangaimg');
+            const src = img.currentSrc || img.src;
+            globalThis.GXT_SHIM_DISPATCH({ type: 'GXT_MANGA_BEGIN', src });
+            check('v2.5.1: the manga card opens while the local pipeline runs', () =>
+              [...(shadow()?.querySelectorAll('.card-head') || [])]
+                .some((h) => h.textContent.includes('MangaTranslator')));
+            const translated = 'data:image/png;base64,iVBORw0KGgo=';
+            globalThis.GXT_SHIM_DISPATCH({
+              type: 'GXT_MANGA_RESULT', src,
+              res: { ok: true, dataUrl: translated, file: 'C:\\out\\page_fa\\page.png', failedPages: 0 },
+            });
+            check('v2.5.1: the translated page replaces the one being read', () =>
+              img.getAttribute('src') === translated && !img.hasAttribute('srcset') &&
+              !q('#mangasource').hasAttribute('srcset'));
+            check('v2.5.1: the original is one click away', () => {
+              const restore = [...(shadow()?.querySelectorAll('.card-body button') || [])]
+                .find((b) => b.textContent === 'تصویر اصلی');
+              if (!restore) return false;
+              restore.click();
+              return img.getAttribute('src') === 'mock-page.png' &&
+                q('#mangasource').getAttribute('srcset') === 'mock-page-2x.png 2x';
+            });
+
+            const summary = document.getElementById('summary');
+            const passed = results.filter((r) => r[1]).length;
+            summary.innerHTML = `<b>${passed}/${results.length} checks passed</b>` +
+              results.map(([n, ok]) => `<div class="${ok ? 'pass' : 'fail'}">${ok ? 'PASS' : 'FAIL'} — ${n}</div>`).join('');
+            console.log(`GXT-PAGE-TEST SUMMARY ${passed}/${results.length}`);
+          }, 700);
+        }, 800);
+      }, 900);
+    }, 400);
+  }, 2200);
+</script>
+</body>
+</html>

@@ -1,0 +1,67 @@
+<!doctype html><meta charset="utf-8"><title>Stability 3.7.6 browser regressions</title>
+<style>body{font:14px system-ui;margin:12px}.player{position:relative;width:640px;height:360px;background:#243850}video{width:100%;height:100%}.plyr__captions{position:absolute;bottom:55px;color:white}</style>
+<div id="result">در حال آزمایش…</div><section class="player"><video controls></video></section>
+<script>
+globalThis.GXT_SHIM_SEED={settings:{webVideoEnabled:true,webVideoSubtitles:true,webVideoDub:true,ytLiveModel:'old-live-model'}};
+let requests=[],hold=false,modelFailure=false,translationError='';
+globalThis.GXT_SHIM_HANDLER=async m=>{
+ if(m.type==='LIST_MODELS')return modelFailure?{ok:false,error:'catalog offline'}:{ok:true,models:[{id:'new-live-model',methods:['bidiGenerateContent']},{id:'text-only-live-name',methods:['generateContent']}]};
+ if(m.type==='TRANSLATE_TEXTS'){const request={m};requests.push(request);if(hold)return new Promise(resolve=>request.resolve=resolve);if(translationError)return {ok:false,code:translationError};return {ok:true,list:m.texts.map(t=>'ترجمه '+t)};}
+ return {ok:true};
+};
+</script>
+<script src="chrome-shim.js"></script><script src="../shared/settings.js"></script><script src="../shared/theme.js"></script><script src="../shared/video-sources.js"></script><script src="../content/dub.js"></script><script src="../content/web-video.js"></script>
+<script>
+(async()=>{
+ const checks=[];const sleep=ms=>new Promise(r=>setTimeout(r,ms));const until=async fn=>{for(let i=0;i<160;i++){if(fn())return;await sleep(25)}throw Error('condition timeout')};
+ const check=async(name,fn)=>{try{await fn();checks.push(true);console.log('GXT-STABILITY PASS '+name)}catch(e){checks.push(false);console.log('GXT-STABILITY FAIL '+name+' '+e.message)}};
+ const assert=(v,message='assertion failed')=>{if(!v)throw Error(message)};
+ const video=document.querySelector('video');let time=0;Object.defineProperty(video,'currentTime',{configurable:true,get:()=>time});
+ const track=video.addTextTrack('subtitles','English','en');track.mode='hidden';for(let i=0;i<24;i++)track.addCue(new VTTCue(i*2,i*2+1.9,'line '+i));
+ await until(()=>GXT.webVideo?._test.get(video));const r=GXT.webVideo._test.get(video);video.dispatchEvent(new Event('loadedmetadata'));r.sourcesChanged();
+ await check('two bounded batches cover short cues without duplicate claims',async()=>{hold=true;await r.toggleSubtitles();await until(()=>requests.length===2);assert(requests[0].m.texts.length<=6);assert(new Set(requests.flatMap(x=>x.m.texts)).size===requests.flatMap(x=>x.m.texts).length);});
+ await check('out of order old translation never paints over current cue',async()=>{time=14;r.tick();requests[1].resolve({ok:true,list:requests[1].m.texts.map(t=>'ترجمه '+t)});await sleep(50);assert(r.caption.textContent.includes('line 7'));requests[0].resolve({ok:true,list:requests[0].m.texts.map(t=>'ترجمه '+t)});await sleep(50);assert(!r.caption.textContent.includes('line 0'));});
+ await check('seek back reuses already completed cue without another request',async()=>{const n=requests.length;time=0;r.tick();assert(r.caption.textContent.includes('line 0'));assert(requests.length===n);});
+ await check('direct pointer drag has a threshold, preserves grab offset and saves relative position',async()=>{
+   r.layoutNow();const box=r.caption.getBoundingClientRect();r.caption.setPointerCapture=()=>{};
+   const event=(type,x,y)=>r.caption.dispatchEvent(new PointerEvent(type,{pointerId:1,button:0,isPrimary:true,clientX:x,clientY:y,bubbles:true}));
+   event('pointerdown',box.left+12,box.top+12);event('pointermove',box.left+14,box.top+12);assert(!r.visual.manual);
+   event('pointermove',box.left+45,box.top-20);event('pointerup',box.left+45,box.top-20);await sleep(80);
+   assert(r.visual.manual);const saved=(await GXT.getSettings()).webVideoCaptionPosition;assert(saved.manual&&Math.abs(saved.x-r.visual.x)<.01);
+ });
+ await check('fullscreen and resize keep dragged subtitles inside video bounds',async()=>{
+   document.querySelector('.player').style.width='420px';r.layoutNow();const b=r.caption.getBoundingClientRect(),v=video.getBoundingClientRect();assert(b.left>=v.left&&b.right<=v.right&&b.top>=v.top&&b.bottom<=v.bottom);
+   Object.defineProperty(document,'fullscreenElement',{configurable:true,get:()=>video.parentElement});document.dispatchEvent(new Event('fullscreenchange'));await sleep(80);assert(r.host.parentElement===video.parentElement);delete document.fullscreenElement;document.dispatchEvent(new Event('fullscreenchange'));
+ });
+ await check('model refresh preserves a retired selection and filters incompatible metadata',async()=>{await r.refreshModels(true);assert(r.liveModelInput.value==='old-live-model');assert([...r.liveModelInput.options].some(o=>o.value==='new-live-model'));assert(![...r.liveModelInput.options].some(o=>o.value==='text-only-live-name'));});
+ await check('failed model refresh preserves list and choice visibly',async()=>{const html=r.liveModelInput.innerHTML;modelFailure=true;await r.refreshModels(true);assert(r.liveModelInput.innerHTML===html&&r.status.textContent.includes('offline'));});
+ await check('DOM caption replacement and multiline text are captured immediately',async()=>{
+   await r.toggleSubtitles();hold=false;track.mode='disabled';const dom=document.createElement('div');dom.className='plyr__captions';dom.textContent='first quick caption';video.parentElement.append(dom);r.sourcesChanged();await until(()=>r.sources.some(s=>s.type==='dom'));await r.selectSource('dom-captions');await r.toggleSubtitles();await until(()=>r.caption.textContent.includes('first quick'));
+   time=1;dom.replaceChildren(Object.assign(document.createElement('span'),{textContent:'second\nmultiline caption'}));await until(()=>r.caption.textContent.includes('multiline'));assert(!r.caption.textContent.includes('first quick'));
+   time=2;dom.textContent='';await until(()=>r.caption.hidden);assert(r.cues.some(c=>c.text.includes('first quick'))&&r.cues.some(c=>c.text.includes('multiline')));
+ });
+ await check('source dirty during active read is reread instead of losing the cue change',async()=>{
+   let done;const old=r.sourceReader.read;r.sourceReader.read=()=>new Promise(resolve=>done=resolve);const reading=r.loadSource();await sleep(10);r.sourcesChanged();r.sourceReader.read=old;done([{id:'temporary',start:0,end:1,text:'obsolete'}]);await reading;await sleep(100);assert(!r.cues.some(c=>c.id==='temporary'));
+ });
+ await check('EOF retains an accepted rate-limited translation until its bounded retry completes',async()=>{
+   r.retire();requests=[];hold=true;time=0;r.subtitles=true;r.dubbing=true;r.activeDubEngine='caption';
+   let upstream=false,segments=[];r.dubber={start(){},stop(){},update(){},configure(){},setUpstreamPending(v){upstream=v},setSegments(v){segments=v}};
+   let ended=false;Object.defineProperty(video,'ended',{configurable:true,get:()=>ended});
+   r.cues=[{id:'eof',start:0,end:1000,text:'final accepted cue'}];r.tick();assert(requests.length===1&&upstream);
+   ended=true;time=1;hold=false;requests[0].resolve({ok:false,code:'RATE_LIMIT'});await sleep(50);assert(upstream&&r.retryState.size===1);
+   await until(()=>segments.some(s=>s.text.includes('final accepted cue')));assert(requests.length===2&&!upstream&&r.caption.hidden);delete video.ended;r.dubbing=false;
+ });
+ await check('transient failures stop after two retries and manual retry resets that budget',async()=>{
+   r.retire();requests=[];translationError='NETWORK';time=0;r.cues=[{id:'retry',start:0,end:10000,text:'retry budget cue'}];r.tick();
+   await until(()=>r.failed.size===1);assert(requests.length===3&&r.retryState.size===0);
+   translationError='';const read=r.sourceReader.read;r.sourceReader.read=async()=>[{id:'retry',start:0,end:10000,text:'retry budget cue'}];
+   [...r.panel.querySelectorAll('button')].find(b=>b.textContent==='تلاش مجدد').click();await until(()=>r.caption.textContent.includes('retry budget cue'));r.sourceReader.read=read;assert(requests.length===4&&r.failed.size===0);
+ });
+ await check('permanent credential errors stay visible without automatic retry',async()=>{
+   r.retire();requests=[];translationError='BAD_KEY';r.cues=[{id:'bad-key',start:0,end:10000,text:'invalid credentials'}];r.tick();
+   await until(()=>r.failed.size===1);await sleep(700);assert(requests.length===1&&!r.retryTimer&&r.status.textContent.includes('تلاش مجدد'));translationError='';
+ });
+ await check('dispose cancels retry work and removes the overlay',async()=>{r.dispose();await sleep(20);assert(!r.host.isConnected&&r.translationJobs.size===0&&!r.retryTimer)});
+ const passed=checks.filter(Boolean).length;document.querySelector('#result').textContent=passed+'/'+checks.length;console.log(`GXT-STABILITY SUMMARY ${passed}/${checks.length}`);
+})().catch(e=>{console.error(e);console.log('GXT-STABILITY FAIL uncaught '+e.message);console.log('GXT-STABILITY SUMMARY 0/1')});
+</script>

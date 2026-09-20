@@ -1,0 +1,398 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>GXT forced-colors conformance</title>
+<style>
+  body { font: 13px/1.7 Consolas, monospace; background: #111; color: #eee; padding: 16px; }
+  .pass { color: #0f8; }
+  .fail { color: #f44; font-weight: bold; }
+  h1 { font-size: 15px; }
+  #stage { position: fixed; inset-inline-end: -9999px; top: 0; }
+</style>
+</head>
+<body>
+<h1>Forced-colors conformance (Windows High Contrast) — v3.2.5</h1>
+<div id="out">running…</div>
+<div id="stage"></div>
+
+<script src="chrome-shim.js?v=3300"></script>
+<script src="../shared/settings.js?v=3300"></script>
+<script src="../shared/memory.js?v=3300"></script>
+<script src="../shared/theme.js?v=3300"></script>
+<script src="../content/ui.js?v=3300"></script>
+<script>
+/**
+ * WHY THIS SUITE EXISTS, AND WHY IT IS A SEPARATE PAGE
+ * ───────────────────────────────────────────────────
+ * Windows High Contrast Mode (`forced-colors: active`) replaces every author
+ * colour with a system palette. Anything this product distinguished by FILL
+ * alone therefore stopped distinguishing anything, and v2.9.0 shipped that way.
+ * Rendered under forced colours it was not degraded, it was unusable:
+ *
+ *   · all ~40 switches disappeared — track, knob and card all became the same
+ *     forced Canvas, so there was no control on screen at all, let alone a state
+ *   · the primary action «ترجمهٔ این صفحه» lost its fill and has no border, so
+ *     it read as a line of text while the SECONDARY buttons beside it kept
+ *     their borders and read as the real controls
+ *   · the five theme previews became five identical black rectangles and the
+ *     six accent swatches six identical black circles — two pickers whose
+ *     entire content is colour
+ *   · every selected segment looked exactly like the unselected ones
+ *   · and focus vanished everywhere, because the global rule is
+ *     `outline: none; box-shadow: var(--gxt-focus-ring)` and forced colours
+ *     never paint box-shadow (WCAG 2.4.7, Level A)
+ *
+ * None of that is reachable from inside a normal page: `forced-colors` cannot
+ * be turned on by CSS or script. It has to be emulated by the browser, so this
+ * page is opened by dev/run_harness.py with `Emulation.setEmulatedMedia`, which
+ * is why it is a page of its own rather than a section of dev/uicheck.html.
+ *
+ * EVERY ASSERTION READS COMPUTED STYLE, NEVER PIXELS — deliberately.
+ * Measured while writing this: under Chrome's headless forced-colors
+ * emulation, any text painted in `HighlightText` screenshots as a solid filled
+ * rectangle. Proven to be an emulation artifact and not a product defect by a
+ * minimal page — literal `cyan`/`black` renders the same string correctly, and
+ * Tahoma fails identically to the bundled webfont, so it is neither the colour
+ * pair nor the font. A screenshot is therefore not evidence here; the computed
+ * values are (they reported the correct black-on-cyan throughout).
+ */
+(async () => {
+  const out = document.getElementById('out');
+  const results = [];
+  const t = async (name, fn) => {
+    try { await fn(); results.push([name, true, '']); }
+    catch (e) { results.push([name, false, String((e && e.message) || e)]); }
+  };
+  const assert = (cond, msg) => { if (!cond) throw new Error(msg || 'assertion failed'); };
+
+  // ─────────────────────────────────────────────────────────── preconditions
+
+  await t('the browser really is in forced-colors mode', () => {
+    assert(
+      matchMedia('(forced-colors: active)').matches,
+      'forced colours are not emulated — this suite would pass vacuously'
+    );
+  });
+
+  /** A colour is "painted" when it is neither absent nor fully transparent. */
+  const painted = (value) => {
+    if (!value || value === 'none' || value === 'transparent') return false;
+    const m = /rgba?\(([^)]+)\)/.exec(value);
+    if (!m) return true;
+    const parts = m[1].split(/[,/]/).map((x) => parseFloat(x));
+    return parts.length < 4 || parts[3] > 0.05;
+  };
+
+  const hasBorder = (cs) =>
+    cs.borderTopStyle !== 'none' && parseFloat(cs.borderTopWidth) > 0 && painted(cs.borderTopColor);
+
+  const hasOutline = (cs) =>
+    cs.outlineStyle !== 'none' && parseFloat(cs.outlineWidth) > 0 && painted(cs.outlineColor);
+
+  // ══════════════════════════════════════════════════════════════════════
+  //          PART A — the in-page layer (content/ui.js), mounted live
+  // ══════════════════════════════════════════════════════════════════════
+  //
+  // This is what people actually read a translation in, on every site, so it
+  // is measured first. It draws into a shadow root, which forced colours reach
+  // exactly like any other tree.
+
+  const UI = GXT.ui;
+  UI.configure({ ...GXT.DEFAULTS, uiTheme: 'graphite', uiAccent: 'sky' });
+  const card = UI.card({ title: 'آزمایش', anchorPoint: { x: 120, y: 120 } });
+  const shadow = document.querySelector('[data-gxt-ui]').shadowRoot;
+
+  await t('in-page: an ordinary button is a visible control, not bare text', () => {
+    const b = UI.button('ترجمه', () => {});
+    card.el.querySelector('.card-head').appendChild(b);
+    assert(hasBorder(getComputedStyle(b)), 'the .btn border is still transparent');
+  });
+
+  await t('in-page: an ON toggle is distinguishable from an OFF one', () => {
+    const off = UI.button('خاموش', () => {});
+    const on = UI.button('روشن', () => {}, 'on');
+    card.el.querySelector('.card-head').append(off, on);
+    const a = getComputedStyle(off);
+    const b = getComputedStyle(on);
+    assert(
+      a.backgroundColor !== b.backgroundColor,
+      `«دوزبانه ✓» looks identical to «دوزبانه» (both ${b.backgroundColor})`
+    );
+    assert(b.color !== b.backgroundColor, 'the ON label is painted in its own background colour');
+  });
+
+  await t('in-page: the surfaces themselves have an edge against the page', () => {
+    for (const sel of ['.card']) {
+      const el = shadow.querySelector(sel);
+      assert(el, `${sel} missing`);
+      assert(hasBorder(getComputedStyle(el)), `${sel} has no visible border`);
+    }
+  });
+
+  await t('in-page: focus is visible without box-shadow (WCAG 2.4.7)', () => {
+    const b = card.el.querySelector('.btn');
+    b.focus();
+    const cs = getComputedStyle(b);
+    // box-shadow is never painted in this mode, so it cannot be the indicator.
+    assert(
+      hasOutline(cs),
+      `focus falls back to box-shadow only (outline: ${cs.outlineStyle} ${cs.outlineWidth})`
+    );
+  });
+
+  // ── v3.2.5: the components added this release ──────────────────────────
+  //
+  // Each of them replaced a hand-written style string, and each is distinguished
+  // by FILL — a tint for the callout, an accent bar for the meter, a coloured
+  // track for the switch. Forced colours replaces every author fill with the
+  // system palette, so «it looks right in dark mode» says nothing about whether
+  // these survive. This is the same audit v2.9.5 ran on the older components,
+  // applied to the new ones before they ship rather than a release later.
+
+  await t('in-page: a callout still reads as a callout', () => {
+    const box = UI.callout('این ویدیو خیلی طولانی است', {
+      tone: 'warn',
+      buttons: [UI.button('ادامه'), UI.button('انصراف')],
+    });
+    card.body.appendChild(box);
+    const cs = getComputedStyle(box);
+    // Its tint is gone in this mode, so the border is the only thing left that
+    // can say "this block is set apart from the text above it".
+    assert(hasBorder(cs), 'the callout has no visible border, so it is just a paragraph');
+    for (const b of box.querySelectorAll('.btn')) {
+      assert(hasBorder(getComputedStyle(b)), 'a callout action is not a visible control');
+    }
+  });
+
+  await t('in-page: a progress meter can still show a quantity', () => {
+    const bar = UI.meter('پیشرفت');
+    card.body.appendChild(bar);
+    bar.set(0.4);
+    const track = getComputedStyle(bar);
+    const fill = getComputedStyle(bar.firstElementChild);
+    assert(hasBorder(track), 'the meter track has no frame, so a full bar looks like an empty one');
+    // `forced-color-adjust: none` on the fill is what keeps the accent; without
+    // it the fill and the track both become Canvas and progress is unreadable.
+    assert(
+      fill.forcedColorAdjust === 'none',
+      'the meter fill lets forced colours flatten it into its own track'
+    );
+    assert(bar.getAttribute('aria-valuenow') === '40', 'the meter does not report its value');
+  });
+
+  await t('in-page: an ON switch is distinguishable from an OFF one', () => {
+    const off = UI.toggle('خاموش', false);
+    const on = UI.toggle('روشن', true);
+    card.body.append(off, on);
+    const a = getComputedStyle(off.querySelector('.track'));
+    const b = getComputedStyle(on.querySelector('.track'));
+    assert(a.backgroundColor !== b.backgroundColor,
+      `both switch tracks are ${b.backgroundColor} — the control conveys nothing`);
+    const knobOff = getComputedStyle(off.querySelector('.track'), '::before');
+    assert(knobOff.backgroundColor !== a.backgroundColor,
+      'the knob is painted in its own track colour, so the switch has no knob');
+  });
+
+  card.close();
+
+  // ══════════════════════════════════════════════════════════════════════
+  //             PART B — the settings window, as actually rendered
+  // ══════════════════════════════════════════════════════════════════════
+
+  const frame = document.createElement('iframe');
+  frame.src = `popup-preview.html?fc=${Date.now()}`;
+  frame.width = 520;
+  frame.height = 760;
+  frame.style.cssText = 'border:0;';
+  document.getElementById('stage').appendChild(frame);
+
+  const ready = await new Promise((resolve) => {
+    const started = Date.now();
+    const poll = setInterval(() => {
+      const done = frame.contentDocument?.getElementById('sumEngine')?.textContent?.trim();
+      if (done && done !== '—') { clearInterval(poll); resolve(true); }
+      else if (Date.now() - started > 15000) { clearInterval(poll); resolve(false); }
+    }, 120);
+  });
+
+  const win = frame.contentWindow;
+  const doc = frame.contentDocument;
+  const byId = (id) => doc.getElementById(id);
+  const $$ = (sel) => [...doc.querySelectorAll(sel)];
+  const cs = (el) => win.getComputedStyle(el);
+
+  await t('the settings window mounts under forced colours', () => {
+    assert(ready, 'init() never populated the home summaries');
+    assert(
+      win.matchMedia('(forced-colors: active)').matches,
+      'the emulation did not reach the iframe, so nothing below means anything'
+    );
+  });
+
+  await t('REGRESSION: every switch is still a visible control', () => {
+    const tracks = $$('.switch .track');
+    assert(tracks.length > 20, `only ${tracks.length} switches found — wrong page?`);
+    const naked = tracks.filter((el) => !hasBorder(cs(el)));
+    assert(naked.length === 0, `${naked.length} of ${tracks.length} switches have no border`);
+  });
+
+  await t('REGRESSION: a switch that is ON does not look like one that is OFF', () => {
+    const on = $$('.switch input:checked + .track');
+    const off = $$('.switch input:not(:checked) + .track');
+    assert(on.length && off.length, `need both states on screen (on=${on.length} off=${off.length})`);
+    const onBg = cs(on[0]).backgroundColor;
+    const offBg = cs(off[0]).backgroundColor;
+    // Headless Chrome can collapse every system colour (Canvas, Highlight,
+    // ButtonText) to rgb(0,0,0). Position is the second, colour-independent
+    // state channel required by the design and remains measurable there.
+    const onPos = win.getComputedStyle(on[0], '::before').transform;
+    const offPos = win.getComputedStyle(off[0], '::before').transform;
+    assert(onBg !== offBg || onPos !== offPos,
+      `both states paint ${onBg} and keep the knob at ${onPos}`);
+  });
+
+  await t('the knob stays visible against its own track in both states', () => {
+    for (const [label, list] of [
+      ['on', $$('.switch input:checked + .track')],
+      ['off', $$('.switch input:not(:checked) + .track')],
+    ]) {
+      const track = list[0];
+      const knob = win.getComputedStyle(track, '::before').backgroundColor;
+      const knobStyle = win.getComputedStyle(track, '::before');
+      assert(
+        knob !== cs(track).backgroundColor || hasBorder(knobStyle),
+        `the ${label} knob has neither contrasting ink nor an outline`
+      );
+    }
+  });
+
+  await t('REGRESSION: the primary action outranks the secondary ones', () => {
+    const primary = byId('actTranslate');
+    const secondary = byId('actSummary');
+    assert(primary && secondary, 'the «در این صفحه» actions are missing');
+    const p = cs(primary);
+    assert(
+      hasBorder(p) || painted(p.backgroundColor),
+      'the primary button has neither a border nor a fill — it reads as plain text'
+    );
+    assert(
+      p.backgroundColor !== cs(secondary).backgroundColor || hasBorder(p),
+      'the primary and secondary actions are indistinguishable'
+    );
+    assert(p.color !== p.backgroundColor, 'the primary label is painted in its own background');
+  });
+
+  await t('a disabled action says so with more than opacity', () => {
+    const primary = byId('actTranslate');
+    const was = primary.disabled;
+    primary.disabled = true;
+    const d = cs(primary);
+    // getComputedStyle is live in Chromium: snapshot before restoring state.
+    const disabledColor = d.color;
+    const disabledOpacity = parseFloat(d.opacity);
+    primary.disabled = was;
+    assert(
+      disabledColor !== cs(byId('actSummary')).color || disabledOpacity < 1,
+      'a disabled action is indistinguishable from an enabled one'
+    );
+  });
+
+  await t('focus is visible on every kind of control (WCAG 2.4.7)', () => {
+    // The indicator does not have to be on the control itself: the search box
+    // deliberately rings its whole `.searchbar` wrapper through `:focus-within`,
+    // which is what a sighted user perceives. So the question this asks is the
+    // user's question — "can I see where I am?" — not "does this exact node
+    // carry an outline property".
+    // A switch is a 0×0 transparent <input> with a painted sibling, so the
+    // indicator legitimately lands next to the focused node rather than on it.
+    const indicated = (el) => {
+      if (el.nextElementSibling && hasOutline(cs(el.nextElementSibling))) return true;
+      for (let node = el, hops = 0; node && hops < 3; node = node.parentElement, hops += 1) {
+        if (hasOutline(cs(node))) return true;
+      }
+      return false;
+    };
+    for (const id of ['actTranslate', 'search', 'appearanceBtn', 'enabled']) {
+      const el = byId(id);
+      el.focus();
+      assert(indicated(el), `#${id} shows no focus indicator anywhere around it`);
+    }
+  });
+
+  // ─────────────────────────────────────────── the appearance sheet
+
+  await t('the appearance sheet opens', () => {
+    byId('appearanceBtn').click();
+    assert(!byId('sheet').classList.contains('hidden'), 'the sheet stayed closed');
+  });
+
+  await t('REGRESSION: theme previews keep their colours (colour IS the content)', () => {
+    const minis = $$('.theme-mini');
+    assert(minis.length >= 4, `only ${minis.length} theme previews`);
+    for (const mini of minis) {
+      assert(
+        cs(mini).forcedColorAdjust === 'none',
+        'a theme preview is subject to forced colours, so every theme looks the same'
+      );
+    }
+    const shades = new Set(minis.map((m) => cs(m).backgroundColor));
+    assert(shades.size >= 3, `the previews resolve to only ${shades.size} distinct colours`);
+  });
+
+  await t('REGRESSION: accent swatches stay distinguishable from one another', () => {
+    const dots = $$('.accent-dot');
+    assert(dots.length === 6, `expected 6 accents, found ${dots.length}`);
+    for (const dot of dots) {
+      assert(cs(dot).forcedColorAdjust === 'none', 'an accent swatch is forced to the system palette');
+    }
+    const shades = new Set(dots.map((d) => win.getComputedStyle(d, '::after').backgroundColor));
+    assert(shades.size === 6, `six accents resolve to ${shades.size} distinct colours`);
+  });
+
+  await t('REGRESSION: the chosen theme and accent are marked by shape, not colour', () => {
+    for (const sel of ['.theme-card[aria-checked="true"]', '.accent-dot[aria-checked="true"]']) {
+      const el = doc.querySelector(sel);
+      assert(el, `${sel} — nothing is selected`);
+      assert(hasOutline(cs(el)), `${sel} shows its selection with colour alone`);
+    }
+  });
+
+  await t('REGRESSION: the selected segment is distinguishable', () => {
+    for (const group of ['surfaceSeg', 'densitySeg']) {
+      const on = doc.querySelector(`#${group} [aria-checked="true"]`);
+      const off = doc.querySelector(`#${group} [aria-checked="false"]`);
+      assert(on && off, `#${group} has no two-state pair`);
+      assert(
+        cs(on).backgroundColor !== cs(off).backgroundColor,
+        `#${group}: the chosen option paints like the others`
+      );
+      assert(cs(on).color !== cs(on).backgroundColor, `#${group}: the chosen label is invisible`);
+    }
+  });
+
+  await t('the usage bar can still show a quantity', () => {
+    const fill = byId('quotaFill');
+    assert(fill, 'the quota bar is missing');
+    assert(
+      cs(fill).forcedColorAdjust === 'none',
+      'the quota fill is forced flat, so the bar cannot show a level'
+    );
+    assert(hasBorder(cs(doc.querySelector('.quota-bar'))), 'the bar has no visible frame');
+  });
+
+  byId('sheetClose').click();
+
+  // ────────────────────────────────────────────────────────────── report
+  out.innerHTML = results
+    .map(([name, ok, why]) =>
+      `<div class="${ok ? 'pass' : 'fail'}">${ok ? 'PASS' : 'FAIL'} — ${name}${why ? ` :: ${why}` : ''}</div>`)
+    .join('');
+  for (const [name, ok, why] of results) {
+    console.log(`GXT-FC ${ok ? 'PASS' : 'FAIL'} ${name}${why ? ` :: ${why}` : ''}`);
+  }
+  console.log(`GXT-FC SUMMARY ${results.filter((r) => r[1]).length}/${results.length}`);
+})();
+</script>
+</body>
+</html>

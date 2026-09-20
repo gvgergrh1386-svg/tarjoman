@@ -1,0 +1,25 @@
+name: Validate source and release
+on: [push, pull_request, workflow_dispatch]
+permissions:
+  contents: read
+jobs:
+  validate:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '24'
+          cache: npm
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+      - run: npm ci --ignore-scripts
+      - run: python tools/build_i18n.py --check
+      - run: node tools/check_i18n.cjs
+      - run: python tools/test_all.py
+      - run: python tools/test_all.py --browser
+        env:
+          CHROME: /usr/bin/google-chrome
+      - run: python tools/build_release.py
+      - run: python tools/verify_release.py

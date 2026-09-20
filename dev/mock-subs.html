@@ -1,0 +1,467 @@
+﻿<!doctype html>
+<html lang="fa" dir="rtl">
+<head>
+<meta charset="utf-8">
+<title>GXT mock subtitle workbench</title>
+<style>
+  #gxtResults {
+    position: fixed; inset-block-start: 0; inset-inline-end: 0; z-index: 99999;
+    max-width: 460px; max-height: 100vh; overflow: auto;
+    font: 12px/1.6 Consolas, monospace; background: #06080c; color: #eee;
+    padding: 10px; border-inline-start: 2px solid #38b0ff;
+  }
+  #gxtResults .pass { color: #0f8; }
+  #gxtResults .fail { color: #f44; font-weight: bold; }
+  #gxtResults h3 { margin: 0 0 6px; font-size: 13px; }
+</style>
+</head>
+<body>
+<div id="gxtResults"><h3>running…</h3></div>
+
+<script>
+/**
+ * End-to-end harness for pages/subtitles.html.
+ *
+ * The real page markup is FETCHED and injected rather than copied, so this
+ * harness can never drift from the page it is testing.
+ *
+ * The chrome mock is installed with a non-overridable property (the
+ * dev/popup-preview.html technique) because the Browser pane injects its own
+ * `chrome` after load and would otherwise clobber it.
+ *
+ * TRANSLATE_WORKSHOP answers with stable cue IDs (the intentional 3.7.5
+ * file-only contract). The 27 existing lifecycle/audio assertions remain.
+ * TTS_SPEAK answers with a REAL, decodable WAV whose length is proportional to
+ * the text — and which honours the `rate` parameter — so the dub builder's
+ * time-fitting logic is exercised for real, not stubbed out.
+ */
+(() => {
+  const SAMPLE_RATE = 24000;
+  const MS_PER_CHAR = 62;   // ~16 characters/second of Persian speech
+  const sent = [];
+
+  function toneWav(ms) {
+    const samples = Math.max(1, Math.round((ms / 1000) * SAMPLE_RATE));
+    const buffer = new ArrayBuffer(44 + samples * 2);
+    const view = new DataView(buffer);
+    const ascii = (o, s) => { for (let i = 0; i < s.length; i++) view.setUint8(o + i, s.charCodeAt(i)); };
+    ascii(0, 'RIFF'); view.setUint32(4, 36 + samples * 2, true); ascii(8, 'WAVE');
+    ascii(12, 'fmt '); view.setUint32(16, 16, true); view.setUint16(20, 1, true);
+    view.setUint16(22, 1, true); view.setUint32(24, SAMPLE_RATE, true);
+    view.setUint32(28, SAMPLE_RATE * 2, true); view.setUint16(32, 2, true); view.setUint16(34, 16, true);
+    ascii(36, 'data'); view.setUint32(40, samples * 2, true);
+    for (let i = 0; i < samples; i++) {
+      view.setInt16(44 + i * 2, Math.round(Math.sin((i / SAMPLE_RATE) * 2 * Math.PI * 220) * 12000), true);
+    }
+    let binary = '';
+    const bytes = new Uint8Array(buffer);
+    for (let i = 0; i < bytes.length; i += 0x8000) {
+      binary += String.fromCharCode.apply(null, bytes.subarray(i, i + 0x8000));
+    }
+    return btoa(binary);
+  }
+
+  const store = { settings: { provider: 'gemini', uiTheme: 'graphite', ttsEngine: 'bing', ttsRate: 1 } };
+  const storageListeners = [];
+  const mock = {
+    runtime: {
+      id: 'mock-subs',
+      getURL: (path) => `../${path}`,
+      async sendMessage(message) {
+        sent.push(message);
+        if (message.type === 'CANCEL_WORKSHOP') return { ok: true, cancelled: true };
+        if (message.type === 'TRANSLATE_WORKSHOP') {
+          if (globalThis.__gxtHoldTranslations) {
+            return new Promise((resolve) => (globalThis.__gxtPendingTranslations ||= []).push({ message, resolve }));
+          }
+          // Echo a marker plus the placeholders, so token restoration is
+          // verifiable and the text is unmistakably "translated".
+          return {
+            ok: true,
+            entries: message.cues.map((cue) => {
+              const t = cue.text;
+              const tokens = (t.match(/⟦\d+⟧/g) || []).join('');
+              return { id: cue.id, text: `ترجمه ${t.replace(/⟦\d+⟧/g, '').trim()}${tokens}` };
+            }),
+          };
+        }
+        if (message.type === 'TTS_SPEAK') {
+          if (globalThis.__gxtHoldSpeech) return new Promise(resolve => (globalThis.__gxtPendingSpeech ||= []).push({message, resolve}));
+          const rate = typeof message.rate === 'number' ? message.rate : 1;
+          return { ok: true, mime: 'audio/wav', engine: 'bing', voice: 'mock',
+                   data: toneWav((message.text.length * MS_PER_CHAR) / rate) };
+        }
+        return { ok: false, code: 'MOCK', error: 'unhandled ' + message.type };
+      },
+    },
+    storage: {
+      local: {
+        async get(query) {
+          if (query == null) return { ...store };
+          if (typeof query === 'string') return { [query]: store[query] };
+          if (Array.isArray(query)) { const o = {}; for (const k of query) o[k] = store[k]; return o; }
+          const o = {}; for (const [k, v] of Object.entries(query)) o[k] = store[k] ?? v; return o;
+        },
+        async set(patch) { Object.assign(store, patch); const changes=Object.fromEntries(Object.entries(patch).map(([k,v])=>[k,{newValue:v}])); storageListeners.forEach(fn=>fn(changes,'local')); },
+        async remove(keys) { for (const k of [].concat(keys)) delete store[k]; },
+      },
+      onChanged: { addListener(fn) { storageListeners.push(fn); } },
+    },
+    permissions: { async request() { return true; } },
+  };
+  Object.defineProperty(globalThis, 'chrome', { value: mock, writable: false, configurable: false });
+  globalThis.__gxtSent = sent;
+  globalThis.__gxtMsPerChar = MS_PER_CHAR;
+})();
+</script>
+
+<script>
+(async () => {
+  // Inject the REAL page markup so the harness cannot drift from the page.
+  const html = await (await fetch('../pages/subtitles.html?v=3300')).text();
+  const parsed = new DOMParser().parseFromString(html, 'text/html');
+  const results = document.getElementById('gxtResults');
+  for (const node of [...parsed.body.children]) {
+    if (node.tagName === 'SCRIPT') continue;
+    document.body.insertBefore(node, results);
+  }
+  const link = document.createElement('link');
+  link.rel = 'stylesheet';
+  link.href = '../pages/subtitles.css?v=3300';
+  document.head.appendChild(link);
+
+  const load = (src) => new Promise((resolve, reject) => {
+    const s = document.createElement('script');
+    s.src = src;
+    s.onload = resolve;
+    s.onerror = () => reject(new Error('failed to load ' + src));
+    document.body.appendChild(s);
+  });
+  for (const src of ['../shared/settings.js', '../shared/theme.js', '../shared/subtitles.js', '../shared/workshop.js', '../pages/subtitles.js']) {
+    await load(`${src}?v=3300`);
+  }
+
+  const $ = (id) => document.getElementById(id);
+  const sent = globalThis.__gxtSent;
+  const checks = [];
+  const check = async (name, fn) => {
+    let ok = false; let detail = '';
+    try { ok = !!(await fn()); } catch (e) { detail = String(e && e.message || e); }
+    checks.push([name, ok, detail]);
+    console.log(`GXT-TEST ${ok ? 'PASS' : 'FAIL'} ${name}${detail ? ' — ' + detail : ''}`);
+  };
+  const wait = (ms) => new Promise((r) => setTimeout(r, ms));
+  const until = async (fn, timeout = 8000) => {
+    const end = Date.now() + timeout;
+    for (;;) {
+      if (fn()) return true;
+      if (Date.now() > end) return false;
+      await wait(60);
+    }
+  };
+
+  function dropFile(name, text) {
+    const dt = new DataTransfer();
+    dt.items.add(new File([text], name, { type: 'text/plain' }));
+    const picker = $('picker');
+    picker.files = dt.files;
+    picker.dispatchEvent(new Event('change'));
+  }
+
+  // Cue 2 is the case the fitting logic exists for: a long sentence in a 1 s
+  // window with the NEXT cue right behind it, so there is nowhere to spill and
+  // the builder must ask for a faster reading. (When a long silence follows,
+  // reading at a natural pace and spilling into it is the better answer — and
+  // the «سرعت طبیعی» check below relies on exactly that.)
+  const SRT = [
+    '1', '00:00:01,000 --> 00:00:04,000', 'Hello there, general.', '',
+    '2', '00:00:05,000 --> 00:00:06,000', 'A very short window for a long sentence indeed.', '',
+    '3', '00:00:06,100 --> 00:00:07,000', 'Quickly.', '',
+    '4', '00:00:20,000 --> 00:00:24,000', 'Far later.', '',
+  ].join('\n');
+
+  await check('file drop parses and shows the facts', async () => {
+    dropFile('episode.srt', SRT);
+    if (!(await until(() => !$('fileCard').classList.contains('hidden')))) return false;
+    const facts = $('facts').innerText;
+    return facts.includes('SubRip') && facts.includes('۴') && $('fileName').textContent === 'episode.srt';
+  });
+
+  await check('options card appears; ASS-only rows stay hidden for SRT', () =>
+    !$('optionsCard').classList.contains('hidden') &&
+    $('optFontRow').classList.contains('hidden') &&
+    !$('optRewrapRow').classList.contains('hidden'));
+
+  await check('translate produces Persian output with the RTL fix applied', async () => {
+    $('translateBtn').click();
+    if (!(await until(() => !$('resultCard').classList.contains('hidden')))) return false;
+    const text = $('resultPreview').textContent;
+    return text.includes('ترجمه') && text.includes('‫');
+  });
+
+  await check('the request actually used the subtitle pipeline, with context', () => {
+    const calls = sent.filter((m) => m.type === 'TRANSLATE_WORKSHOP');
+    return calls.length && calls.every(call => call.source === 'file' && Array.isArray(call.contextBefore)) && calls.flatMap(call => call.cues).length === 4;
+  });
+
+  await check('download name is derived from the source file', () => {
+    let name = '';
+    const realClick = HTMLAnchorElement.prototype.click;
+    HTMLAnchorElement.prototype.click = function () { name = this.download; };
+    $('downloadBtn').click();
+    HTMLAnchorElement.prototype.click = realClick;
+    return name === 'episode.fa.srt';
+  });
+
+  await check('dub card is offered once a translation exists', () =>
+    !$('dubCard').classList.contains('hidden'));
+
+  // ---------------------------------------------------------------- dubbing
+
+  let wavBlob = null;
+  const captureWav = async () => {
+    const response = await fetch($('dubPreview').src);
+    return response.blob();
+  };
+
+  await check('dub builds a WAV aligned to the original timeline', async () => {
+    $('dubFit').value = 'rate';
+    $('dubBtn').click();
+    if (!(await until(() => !$('dubDownloadRow').classList.contains('hidden'), 20000))) return false;
+    wavBlob = await captureWav();
+    const buffer = await wavBlob.arrayBuffer();
+    const view = new DataView(buffer);
+    const magic = String.fromCharCode(view.getUint8(0), view.getUint8(1), view.getUint8(2), view.getUint8(3));
+    const rate = view.getUint32(24, true);
+    const samples = view.getUint32(40, true) / 2;
+    const seconds = samples / rate;
+    // Last cue ends at 24 s, plus the builder's 8 s tail.
+    return magic === 'RIFF' && rate === 24000 && seconds > 30 && seconds < 34;
+  });
+
+  await check('speech starts at the cue time, not at zero', async () => {
+    const buffer = await wavBlob.arrayBuffer();
+    const pcm = new Int16Array(buffer, 44);
+    const loud = (from, to) => {
+      let peak = 0;
+      for (let i = from; i < to && i < pcm.length; i++) peak = Math.max(peak, Math.abs(pcm[i]));
+      return peak;
+    };
+    const r = 24000;
+    // Silence before cue 1 (starts at 1.0 s), sound just after it.
+    const before = loud(0, r * 0.8);
+    const after = loud(r * 1.1, r * 1.5);
+    if (before >= 200 || after <= 2000) throw new Error(`before=${before} after=${after} len=${pcm.length}`);
+    return true;
+  });
+
+  await check('the far-apart third cue lands at 20 s with silence before it', async () => {
+    const buffer = await wavBlob.arrayBuffer();
+    const pcm = new Int16Array(buffer, 44);
+    const r = 24000;
+    const loud = (from, to) => {
+      let peak = 0;
+      for (let i = from; i < to && i < pcm.length; i++) peak = Math.max(peak, Math.abs(pcm[i]));
+      return peak;
+    };
+    const gap = loud(r * 12, r * 19);
+    const late = loud(r * 20.1, r * 21);
+    if (gap >= 200 || late <= 2000) throw new Error(`gap=${gap} late=${late} len=${pcm.length}`);
+    return true;
+  });
+
+  await check('an over-long line is re-rendered FASTER rather than left to drift', () => {
+    // Cue 2 has a 1 s window for a sentence that needs far longer, so the
+    // builder must have asked the engine for a faster reading of that text.
+    const retries = sent.filter((m) => m.type === 'TTS_SPEAK' && typeof m.rate === 'number' && m.rate > 1);
+    if (!retries.length) {
+      throw new Error('no speed-up requested; calls=' + JSON.stringify(
+        sent.filter((m) => m.type === 'TTS_SPEAK').map((m) => [m.text.length, m.rate])));
+    }
+    // …and never beyond 2x, past which Persian stops being intelligible.
+    return retries.every((m) => m.rate <= 2);
+  });
+
+  await check('«سرعت طبیعی» mode asks for no rate change at all', async () => {
+    sent.length = 0;
+    $('dubFit').value = 'strict';
+    $('dubBtn').click();
+    if (!(await until(() => !$('dubBtn').disabled, 20000))) return false;
+    const spoke = sent.filter((m) => m.type === 'TTS_SPEAK');
+    return spoke.length > 0 && spoke.every((m) => m.rate === undefined);
+  });
+
+  await check('sentence merging joins the unterminated cue with the next', async () => {
+    // Cue 1 ends with «.» so it does not merge; a fixture that does is covered
+    // in selftest. Here: merging OFF must produce at least as many segments.
+    sent.length = 0;
+    $('dubMerge').checked = false;
+    $('dubBtn').click();
+    if (!(await until(() => !$('dubBtn').disabled, 20000))) return false;
+    const unmerged = sent.filter((m) => m.type === 'TTS_SPEAK').length;
+    sent.length = 0;
+    $('dubMerge').checked = true;
+    $('dubBtn').click();
+    if (!(await until(() => !$('dubBtn').disabled, 20000))) return false;
+    const merged = sent.filter((m) => m.type === 'TTS_SPEAK').length;
+    return unmerged >= merged;
+  });
+
+  // ------------------------------------------------------------------- ASS
+
+  await check('an ASS file switches the UI to its own options', async () => {
+    const ass = [
+      '[Script Info]', 'Title: X', '', '[V4+ Styles]',
+      'Format: Name, Fontname, Fontsize, Encoding',
+      'Style: Default,Arial,48,1', '', '[Events]',
+      'Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text',
+      'Dialogue: 0,0:00:01.00,0:00:03.00,Default,,0,0,0,,{\\i1}Hi, you{\\i0}\\Nthere',
+    ].join('\n');
+    dropFile('show.ass', ass);
+    if (!(await until(() => $('fileName').textContent === 'show.ass'))) return false;
+    return !$('optFontRow').classList.contains('hidden') && $('optRewrapRow').classList.contains('hidden');
+  });
+
+  await check('ASS output keeps the header and patches the font', async () => {
+    $('translateBtn').click();
+    // Wait for the result card to be re-shown, NOT for the text to contain a
+    // marker: loading a new file hides the card but the previous run's marker
+    // would otherwise satisfy the wait instantly.
+    if (!(await until(() => !$('resultCard').classList.contains('hidden'), 8000))) return false;
+    const text = $('resultPreview').textContent;
+    if (!text.includes('[Script Info]')) throw new Error('header missing: ' + text.slice(0, 120));
+    if (!text.includes('Vazirmatn')) throw new Error('font not patched: ' + text.slice(0, 200));
+    if (text.includes('Arial')) throw new Error('old font still present');
+    return true;
+  });
+
+  await check('a Persian file is offered the dub without translating first', async () => {
+    const fa = ['1', '00:00:01,000 --> 00:00:03,000', 'سلام، حال شما چطور است؟', ''].join('\n');
+    dropFile('already.srt', fa);
+    if (!(await until(() => $('fileName').textContent === 'already.srt'))) return false;
+    await wait(200);
+    return !$('dubCard').classList.contains('hidden') && $('resultCard').classList.contains('hidden');
+  });
+
+  await check('a slower earlier file read cannot overwrite the latest selection', async () => {
+    const read = File.prototype.arrayBuffer;
+    let release;
+    File.prototype.arrayBuffer = function () {
+      if (this.name === 'slow.srt') return new Promise((resolve) => { release = () => read.call(this).then(resolve); });
+      return read.call(this);
+    };
+    try {
+      dropFile('slow.srt', SRT);
+      dropFile('latest.srt', SRT);
+      if (!(await until(() => $('fileName').textContent === 'latest.srt'))) return false;
+      release(); await wait(150);
+      return $('fileName').textContent === 'latest.srt';
+    } finally { File.prototype.arrayBuffer = read; }
+  });
+
+  await check('replacing a file mid-translation resets controls and ignores its late result', async () => {
+    globalThis.__gxtHoldTranslations = true;
+    $('translateBtn').click();
+    if (!(await until(() => globalThis.__gxtPendingTranslations?.length))) return false;
+    const pending = globalThis.__gxtPendingTranslations.splice(0);
+    dropFile('replacement.srt', SRT);
+    if (!(await until(() => $('fileName').textContent === 'replacement.srt'))) return false;
+    pending.forEach(({message, resolve}) => resolve({ok:true,entries:message.cues.map(cue=>({id:cue.id,text:'نتیجهٔ فایل قدیمی'}))}));
+    globalThis.__gxtHoldTranslations = false;
+    await wait(100);
+    return !$('translateBtn').disabled && $('progress').classList.contains('hidden') &&
+      $('resultCard').classList.contains('hidden') && !$('resultPreview').textContent.includes('نتیجهٔ فایل قدیمی');
+  });
+
+  await check('clearing a pending file read cannot reopen the cleared document', async () => {
+    const read = File.prototype.arrayBuffer;
+    let release;
+    File.prototype.arrayBuffer = function () { return new Promise(resolve => { release = () => read.call(this).then(resolve); }); };
+    try {
+      dropFile('cleared.srt', SRT); $('clearFile').click(); release(); await wait(180);
+      return $('fileCard').classList.contains('hidden') && $('optionsCard').classList.contains('hidden');
+    } finally { File.prototype.arrayBuffer = read; }
+  });
+
+  await check('an unreadable file reports its error without an unhandled rejection', async () => {
+    const read = File.prototype.arrayBuffer;
+    File.prototype.arrayBuffer = () => Promise.reject(new Error('FILE_READ_FAILED'));
+    try {
+      dropFile('unreadable.srt', SRT);
+      return await until(() => !$('errorNote').classList.contains('hidden') && $('errorNote').textContent.includes('FILE_READ_FAILED'));
+    } finally { File.prototype.arrayBuffer = read; }
+  });
+
+  await check('a 25-hour file reports elapsed duration without wrapping at midnight', async () => {
+    dropFile('long.srt','1\n00:00:00,000 --> 25:00:00,000\nHello.\n');
+    if (!(await until(()=>$('fileName').textContent==='long.srt'))) return false;
+    return $('facts').textContent.includes('25:00:00');
+  });
+
+  await check('a reversed cue is preserved with a visible timing warning and no translation request', async () => {
+    dropFile('reverse.srt','1\n00:00:03,000 --> 00:00:01,000\nHello.\n');
+    return await until(() => $('fileName').textContent==='reverse.srt' && !$('skipNote').classList.contains('hidden') && $('skipNote').textContent.includes('بازه') && document.querySelectorAll('#editorRows .editor-row').length===0,1200);
+  });
+
+  await check('changing the provider rejects an old file translation', async () => {
+    dropFile('provider.srt',SRT); await until(()=>$('fileName').textContent==='provider.srt');
+    globalThis.__gxtHoldTranslations=true; $('translateBtn').click();
+    await until(()=>globalThis.__gxtPendingTranslations?.length);
+    const pending=globalThis.__gxtPendingTranslations.splice(0);
+    const settings=(await chrome.storage.local.get('settings')).settings;
+    await chrome.storage.local.set({settings:{...settings,provider:'bing'}});
+    pending.forEach(({message,resolve})=>resolve({ok:true,entries:message.cues.map(cue=>({id:cue.id,text:'پاسخ قدیمی'}))}));
+    globalThis.__gxtHoldTranslations=false; await wait(80);
+    return !$('translateBtn').disabled && $('resultCard').classList.contains('hidden');
+  });
+
+  await check('changing the voice rejects old speech and permits restarting', async () => {
+    dropFile('voice.srt','1\n00:00:01,000 --> 00:00:03,000\nسلام چطوری.\n');
+    await until(()=>$('fileName').textContent==='voice.srt');
+    globalThis.__gxtHoldSpeech=true; $('dubBtn').click();
+    await until(()=>globalThis.__gxtPendingSpeech?.length);
+    const pending=globalThis.__gxtPendingSpeech.splice(0);
+    const settings=(await chrome.storage.local.get('settings')).settings;
+    await chrome.storage.local.set({settings:{...settings,ttsRate:1.3}});
+    const stopped=!$('dubBtn').disabled && $('dubProgress').classList.contains('hidden');
+    pending.forEach(({resolve})=>resolve({ok:false,error:'LATE_SPEECH_ERROR'}));
+    globalThis.__gxtHoldSpeech=false; await wait(80);
+    return stopped && !$('dubNote').textContent.includes('LATE_SPEECH_ERROR');
+  });
+
+  await check('dub duration includes the latest ending overlapping cue', async () => {
+    dropFile('overlap.srt','1\n00:00:00,000 --> 00:00:30,000\nسلام چطوری.\n\n2\n00:00:01,000 --> 00:00:02,000\nپاسخ.\n');
+    await until(()=>$('fileName').textContent==='overlap.srt');
+    $('dubMerge').checked=false; $('dubBtn').click();
+    if (!(await until(() => !$('dubDownloadRow').classList.contains('hidden')))) return false;
+    const wav=await (await fetch($('dubPreview').src)).arrayBuffer();
+    return (wav.byteLength-44)/2/24000 >= 38;
+  });
+
+  await check('oversized audio duration is rejected before a huge allocation', async () => {
+    dropFile('huge.srt','1\n00:00:00,000 --> 300:00:00,000\nسلام چطوری.\n');
+    await until(()=>$('fileName').textContent==='huge.srt');
+    const Native=globalThis.Float32Array; let attempted=false;
+    globalThis.Float32Array=new Proxy(Native,{construct(target,args){if(args[0]>24000*60*200){attempted=true;throw new RangeError('ALLOCATION_BLOCKED');}return Reflect.construct(target,args);}});
+    try { $('dubBtn').click();await wait(60);return !attempted && !$('dubBtn').disabled && !$('dubNote').classList.contains('hidden'); }
+    finally { globalThis.Float32Array=Native; }
+  });
+
+  await check('100 load-clear cycles leave no audio or active progress', async () => {
+    for(let i=0;i<100;i++) {dropFile('cycle-'+i+'.srt',SRT); if(!(await until(()=>$('fileName').textContent==='cycle-'+i+'.srt')))return false;$('clearFile').click();}
+    return !$('dubPreview').getAttribute('src') && $('progress').classList.contains('hidden') && $('dubProgress').classList.contains('hidden') && $('fileCard').classList.contains('hidden');
+  });
+
+  await check('file translation explicitly selects the global file provider scope', () => sent.some(message => message.type === 'TRANSLATE_WORKSHOP' && message.source === 'file'));
+
+  const passed = checks.filter((c) => c[1]).length;
+  results.innerHTML =
+    `<h3>${passed}/${checks.length} checks passed</h3>` +
+    checks.map(([name, ok, detail]) =>
+      `<div class="${ok ? 'pass' : 'fail'}">${ok ? 'PASS' : 'FAIL'} — ${name}${detail ? ' — ' + detail : ''}</div>`
+    ).join('');
+  console.log(`GXT-TEST SUMMARY ${passed}/${checks.length}`);
+})();
+</script>
+</body>
+</html>

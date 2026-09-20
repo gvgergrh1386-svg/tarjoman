@@ -1,0 +1,26 @@
+{
+  "extensionName": {
+    "message": "ترجمان — ترجمهٔ وب و زیرنویس"
+  },
+  "extensionShort": {
+    "message": "ترجمان"
+  },
+  "extensionDescription": {
+    "message": "ترجمهٔ وب و ایکس، زیرنویس و دوبلهٔ ویدیو، کارگاه زیرنویس و رابط فارسی و انگلیسی."
+  },
+  "commandtranslate_page": {
+    "message": "ترجمهٔ صفحهٔ فعلی"
+  },
+  "commandtranslate_selection": {
+    "message": "ترجمهٔ متن انتخاب‌شده"
+  },
+  "commandtoggle_enabled": {
+    "message": "روشن/خاموش کردن افزونه"
+  },
+  "commandtranslate_screen": {
+    "message": "ترجمهٔ متن روی صفحه"
+  },
+  "commandread_selection": {
+    "message": "خواندن متن انتخاب‌شده؛ دوباره برای توقف"
+  }
+}

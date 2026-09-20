@@ -1,0 +1,250 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>GXT mock manga reader</title>
+<style>
+  body { margin: 0; background: #14161a; color: #ddd; font: 14px/1.6 Consolas, monospace; }
+  #summary { position: fixed; top: 8px; left: 8px; z-index: 99999; background: #16181c;
+             border-radius: 10px; padding: 8px 12px; font: 12px/1.8 Consolas, monospace;
+             max-width: 420px; max-height: 92vh; overflow: auto; }
+  #summary .pass { color: #0f8; }
+  #summary .fail { color: #f66; font-weight: bold; }
+  header, footer { padding: 10px 20px; background: #1d2026; }
+  .reader { max-width: 760px; margin: 0 auto; padding: 20px 0; }
+  .reader img { display: block; width: 100%; margin: 0 0 8px; }
+  .thumbs img { width: 90px; display: inline-block; }
+</style>
+</head>
+<body>
+<div id="summary">running…</div>
+
+<!-- Site furniture that must never be mistaken for a page. -->
+<header>
+  <img id="logo" src="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='900' height='900'%3E%3C/svg%3E" alt="logo">
+  <img id="promo" alt="promo">
+</header>
+
+<!-- The chapter itself. -->
+<div class="reader" id="reader"></div>
+
+<!-- A thumbnail strip that repeats page 1: it must not be translated twice. -->
+<footer class="thumbs"><img id="thumb" alt="thumb"></footer>
+
+<script>
+  globalThis.GXT_SHIM_SEED = { settings: {}, apiKeys: ['dev-key'] };
+</script>
+<script src="chrome-shim.js?v=3300"></script>
+<script>
+  // ---------------------------------------------------------------- fixtures
+  /** A solid-colour PNG, so "which image is on screen" is checkable. */
+  function pngDataUrl(r, g, b, w = 800, h = 1200) {
+    const canvas = document.createElement('canvas');
+    canvas.width = w; canvas.height = h;
+    const ctx = canvas.getContext('2d');
+    ctx.fillStyle = `rgb(${r},${g},${b})`;
+    ctx.fillRect(0, 0, w, h);
+    return canvas.toDataURL('image/png');
+  }
+
+  const PAGE_COUNT = 5;
+  const ORIGINALS = [];
+  const TRANSLATED = [];
+  for (let i = 0; i < PAGE_COUNT; i += 1) {
+    ORIGINALS.push(pngDataUrl(40 + i * 10, 40, 40));
+    TRANSLATED.push(pngDataUrl(20, 120 + i * 10, 90));
+  }
+  // Furniture: a wide banner and a small thumbnail — both are big enough to be
+  // tempting and must still be rejected.
+  document.getElementById('promo').src = pngDataUrl(90, 30, 30, 1600, 200);
+  document.getElementById('thumb').src = ORIGINALS[0];
+
+  const reader = document.getElementById('reader');
+  ORIGINALS.forEach((src, i) => {
+    const img = document.createElement('img');
+    img.id = `page${i}`;
+    img.src = src;
+    img.setAttribute('srcset', `${src} 2x`);   // responsive: srcset outranks src
+    reader.appendChild(img);
+  });
+
+  // ------------------------------------------------------------- fake worker
+  // Stands in for the service worker: it does NOT translate anything, it just
+  // replays the job protocol with realistic timing, so the module under test
+  // is exercised exactly as it is in the product.
+  const JOB = { started: 0, ready: [], cancelled: false, archived: false, pageCalls: [] };
+  globalThis.GXT_SENT = [];
+
+  globalThis.GXT_SHIM_HANDLER = async (message) => {
+    globalThis.GXT_SENT.push(message);
+    if (message.type === 'MANGA_START') {
+      JOB.started = message.urls.length;
+      JOB.urls = message.urls;
+      // Pages become ready in two groups, the way the bridge reports them.
+      setTimeout(() => { if (!JOB.cancelled) JOB.ready = [0, 1, 2]; }, 250);
+      setTimeout(() => { if (!JOB.cancelled) JOB.ready = [0, 1, 2, 3, 4]; }, 900);
+      return { ok: true, job: 'JOB1', total: message.urls.length, indexMap: message.urls.map((_, i) => i) };
+    }
+    if (message.type === 'MANGA_STATUS') {
+      return { ok: true, job: 'JOB1', total: PAGE_COUNT, ready: JOB.ready.slice(),
+               failed: {}, failedPages: 0, done: JOB.ready.length === PAGE_COUNT || JOB.cancelled,
+               cancelled: JOB.cancelled, elapsed: 3.2, notes: [] };
+    }
+    if (message.type === 'MANGA_PAGE') {
+      JOB.pageCalls.push(message.index);
+      return { ok: true, index: message.index, dataUrl: TRANSLATED[message.index], mime: 'image/png' };
+    }
+    if (message.type === 'MANGA_CANCEL') { JOB.cancelled = true; return { ok: true }; }
+    if (message.type === 'MANGA_ARCHIVE') {
+      JOB.archived = true;
+      return { ok: true, dataUrl: 'data:application/vnd.comicbook+zip;base64,UEsD', bytes: 4 };
+    }
+    return { ok: false, code: 'DEV' };
+  };
+</script>
+<script src="../shared/settings.js?v=3300"></script>
+<script src="../shared/memory.js?v=3300"></script>
+<script src="../shared/theme.js?v=3300"></script>
+<script src="../content/ui.js?v=3300"></script>
+<script src="../content/manga.js?v=3300"></script>
+<script>
+  const results = [];
+  const check = (name, fn) => {
+    let ok = false;
+    try { ok = !!fn(); } catch (e) { ok = false; }
+    results.push([name, ok]);
+    console.log(`GXT-MANGA-TEST ${ok ? 'PASS' : 'FAIL'} ${name}`);
+  };
+  const shadow = () => document.querySelector('[data-gxt-ui]')?.shadowRoot || null;
+  const q = (sel) => document.querySelector(sel);
+  const cardText = () => shadow()?.querySelector('.card-body')?.textContent || '';
+  const buttons = () => [...(shadow()?.querySelectorAll('.card-body button') || [])];
+  const wait = (ms) => new Promise((r) => setTimeout(r, ms));
+
+  (async () => {
+    const { collectPages } = GXT.manga._internal;
+
+    // ---- detection, before anything runs ---------------------------------
+    const found = collectPages();
+    check('finds exactly the chapter pages', () => found.length === PAGE_COUNT);
+    check('rejects the SVG logo, the wide banner and the repeated thumbnail', () =>
+      !found.some((p) => p.src === q('#promo').src) &&
+      !found.some((p) => p.src.startsWith('data:image/svg')) &&
+      found.filter((p) => p.src === ORIGINALS[0]).length === 1);
+    check('reading order is document order', () =>
+      found.map((p) => p.el.id).join() === 'page0,page1,page2,page3,page4');
+
+    // ---- the run ----------------------------------------------------------
+    globalThis.GXT_SHIM_DISPATCH({ type: 'GXT_MANGA_CHAPTER', auto: false });
+    await wait(120);
+    check('a panel opens naming the page count', () => /۵ صفحه/.test(cardText()));
+    check('the whole chapter is sent in ONE call', () =>
+      GXT_SENT.filter((m) => m.type === 'MANGA_START').length === 1 && JOB.started === PAGE_COUNT);
+    check('a stop control exists while it runs', () =>
+      buttons().some((b) => b.textContent === 'توقف'));
+
+    // First group lands.
+    await wait(1400);
+    check('early pages appear before the run has finished', () =>
+      q('#page0').src === TRANSLATED[0] && q('#page1').src === TRANSLATED[1]);
+    check('srcset is neutralised, or the original would win', () =>
+      !q('#page0').hasAttribute('srcset'));
+
+    // Everything lands.
+    await wait(1800);
+    check('every page ends up translated', () =>
+      ORIGINALS.every((_, i) => q(`#page${i}`).src === TRANSLATED[i]));
+    check('each page was fetched exactly once', () =>
+      JOB.pageCalls.length === PAGE_COUNT && new Set(JOB.pageCalls).size === PAGE_COUNT);
+    check('the panel reports completion', () => /تمام شد/.test(cardText()));
+
+    // ---- toggle -----------------------------------------------------------
+    const toggle = buttons().find((b) => b.textContent === 'تصویر اصلی');
+    check('a toggle back to the artwork is offered', () => !!toggle);
+    toggle?.click();
+    await wait(60);
+    check('the originals come back, srcset and all', () =>
+      q('#page0').src === ORIGINALS[0] && q('#page0').getAttribute('srcset') === `${ORIGINALS[0]} 2x`);
+    buttons().find((b) => b.textContent === 'ترجمه‌شده')?.click();
+    await wait(60);
+    check('and the translations come back', () => q('#page0').src === TRANSLATED[0]);
+
+    // ---- archive ----------------------------------------------------------
+    const dl = buttons().find((b) => b.textContent === 'دانلود CBZ');
+    check('the finished chapter can be saved', () => !!dl);
+
+    // ---- a page the site refuses to serve ---------------------------------
+    // REGRESSION: when a page cannot be fetched it is dropped before upload,
+    // so the bridge's numbering and the reader's part company from that point
+    // on. Getting the mapping backwards paints every later page with the
+    // WRONG picture — which looks like the pipeline scrambling the chapter.
+    shadow()?.querySelector('.card-head button:last-child')?.click();   // close
+    for (let i = 0; i < PAGE_COUNT; i += 1) {
+      const img = q(`#page${i}`);
+      img.src = ORIGINALS[i];
+      img.setAttribute('srcset', `${ORIGINALS[i]} 2x`);
+      delete img.dataset.gxtManga;
+    }
+    GXT.manga._internal.translated.clear();
+    GXT.manga._internal.originals.clear();
+
+    JOB.ready = []; JOB.cancelled = false; JOB.pageCalls = [];
+    const realHandler = globalThis.GXT_SHIM_HANDLER;
+    globalThis.GXT_SHIM_HANDLER = async (message) => {
+      if (message.type === 'MANGA_START') {
+        // Page 1 (the second) could not be downloaded: 4 pages uploaded, and
+        // the map says which reader page each uploaded page really is.
+        JOB.started = 4;
+        setTimeout(() => { JOB.ready = [0, 1, 2, 3]; }, 250);
+        return { ok: true, job: 'JOB2', total: 4, indexMap: [0, 2, 3, 4], skipped: [ORIGINALS[1]] };
+      }
+      if (message.type === 'MANGA_STATUS') {
+        return { ok: true, job: 'JOB2', total: 4, ready: JOB.ready.slice(), failed: {},
+                 failedPages: 0, done: JOB.ready.length === 4, cancelled: false, elapsed: 2, notes: [] };
+      }
+      if (message.type === 'MANGA_PAGE') {
+        JOB.pageCalls.push(message.index);
+        // The bridge returns ITS page N — which is reader page indexMap[N].
+        return { ok: true, index: message.index, dataUrl: TRANSLATED[[0, 2, 3, 4][message.index]] };
+      }
+      return realHandler(message);
+    };
+    globalThis.GXT_SHIM_DISPATCH({ type: 'GXT_MANGA_CHAPTER', auto: false });
+    await wait(2200);
+    check('an unreachable page is skipped, not fatal', () => /۴ از ۵|تمام شد/.test(cardText()));
+    check('REGRESSION: the surviving pages land on the RIGHT images', () =>
+      q('#page0').src === TRANSLATED[0] &&
+      q('#page2').src === TRANSLATED[2] &&
+      q('#page3').src === TRANSLATED[3] &&
+      q('#page4').src === TRANSLATED[4]);
+    check('the page that could not be fetched keeps its original', () =>
+      q('#page1').src === ORIGINALS[1]);
+    globalThis.GXT_SHIM_HANDLER = realHandler;
+
+    // Stop can happen during CDN downloads, before the bridge returns a job id.
+    GXT.manga.setAllTranslated(false);
+    let releaseStart; const cancelledJobs = [];
+    globalThis.GXT_SHIM_HANDLER = async (message) => {
+      if (message.type === 'MANGA_START') return new Promise(resolve => { releaseStart = resolve; });
+      if (message.type === 'MANGA_CANCEL') { cancelledJobs.push(message.job); return { ok: true }; }
+      return realHandler(message);
+    };
+    const cancelledRun = GXT.manga.startHere();
+    await wait(80);
+    await GXT.manga.cancel();
+    releaseStart({ ok: true, job: 'LATE_JOB', total: PAGE_COUNT });
+    await cancelledRun;
+    check('cancelling during startup cancels the job when its id finally arrives', () =>
+      cancelledJobs.join() === 'LATE_JOB');
+    check('a cancelled startup keeps the stopped state after its reply', () => /متوقف شد/.test(cardText()));
+    globalThis.GXT_SHIM_HANDLER = realHandler;
+
+    const summary = document.getElementById('summary');
+    const passed = results.filter((r) => r[1]).length;
+    summary.innerHTML = `<b>${passed}/${results.length} checks passed</b>` +
+      results.map(([n, ok]) => `<div class="${ok ? 'pass' : 'fail'}">${ok ? 'PASS' : 'FAIL'} — ${n}</div>`).join('');
+    console.log(`GXT-MANGA-TEST SUMMARY ${passed}/${results.length}`);
+  })();
+</script>
+</body>
+</html>

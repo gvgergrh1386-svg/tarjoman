@@ -1,0 +1,199 @@
+﻿<!doctype html>
+<html dir="rtl" lang="fa">
+<head>
+<meta charset="utf-8">
+<title>GXT popup preview</title>
+<link rel="stylesheet" href="../popup/popup.css?v=3300">
+<style>
+  /* The harness itself stays invisible: the popup renders exactly as Chrome
+     shows it (400px column), centered on a neutral backdrop. */
+  html { background: #1b1d22; }
+  body { margin: 0 auto !important; box-shadow: 0 0 0 1px #333, 0 30px 80px rgba(0,0,0,.6); }
+  #probe { position: fixed; inset-inline-end: 8px; bottom: 8px; z-index: 999;
+           font: 11px/1.6 Consolas, monospace; color: #9aa4b2; direction: ltr; }
+</style>
+</head>
+<body>
+<div id="probe"></div>
+<script>
+// ---------------------------------------------------------------- chrome mock
+// Defined NON-OVERRIDABLE and BEFORE the popup scripts: the embedded browser
+// pane injects its own `chrome` object after load, which would otherwise
+// replace the mock and break init() (a harness quirk, not a code bug).
+(() => {
+  const mem = {
+    settings: {
+      enabled: true,
+      provider: 'gemini',
+      model: 'gemini-3.6-flash',
+      glossary: '',
+      customPrompt: '',
+      autoSites: ['https://news.ycombinator.com'],
+    },
+    // v2.5.5 — the reported scenario, reproduced: a dozen keys, ~1800 requests
+    // today, everything working. The old card painted that 1800/1500 in red.
+    apiKeys: Array.from({ length: 12 }, (_, i) => `AIzaPreviewKey${i + 1}`),
+  };
+  const listeners = [];
+  const chromeMock = {
+    runtime: {
+      id: 'preview',
+      getURL: (p) => `../${p}`,
+      getManifest: () => ({ version: '3.2.3' }),
+      async sendMessage(message) {
+        if (message.type === 'GET_STATS') {
+          // Built through the REAL summariser, so the preview shows exactly
+          // what the extension computes rather than a hand-written imitation
+          // that could stay green while the shipped maths went wrong.
+          const usage = {};
+          mem.apiKeys.forEach((key, i) => {
+            usage[key] = i === 0
+              ? { calls: 1500, exhausted: true, limit: 1500 }   // one really is spent
+              : i === 1
+                ? { calls: 1320, exhausted: false, limit: 1500 }  // one is close
+                : { calls: 90 + i * 7, exhausted: false, limit: 0 };
+          });
+          const quota = GXT.quotaSummary({
+            keys: mem.apiKeys, usage, model: 'gemini-3.6-flash', override: 0,
+          });
+          return {
+            ok: true,
+            provider: 'gemini',
+            model: 'gemini-3.6-flash',
+            quota,
+            dailyLimit: quota.limit,
+            limitSource: quota.limitSource,
+            resetTs: Date.now() + 3600000 * 5,
+            keys: {
+              total: mem.apiKeys.length,
+              usable: mem.apiKeys.length - 1,
+              list: mem.apiKeys.map((key, i) => ({
+                key, status: i === 0 ? 'cooling' : 'ok',
+                coolUntil: i === 0 ? Date.now() + 3600000 * 5 : 0,
+              })),
+            },
+            stats: {
+              translated: 1284, dayTranslated: 342, cacheHits: 820, apiCalls: 210,
+              dayApiCalls: 1800, items_tweet: 900, items_subtitle: 240, items_page: 110,
+              items_selection: 20, items_image: 9, items_summary: 5,
+            },
+          };
+        }
+        // v2.5.1 — a realistic /models reply: translation, speech and live
+        // models arrive together, exactly as Google returns them, so the
+        // preview exercises the classification that feeds all three pickers.
+        if (message.type === 'LIST_MODELS') {
+          const models = [
+            { id: 'gemini-3.6-flash', methods: ['generateContent'] },
+            { id: 'gemini-3.5-flash-lite', methods: ['generateContent'] },
+            { id: 'gemini-4.1-flash', methods: ['generateContent'] },
+            { id: 'gemini-3.1-flash-tts-preview', methods: ['generateContent'] },
+            { id: 'gemini-4.0-flash-tts-preview', methods: ['generateContent'] },
+            { id: 'gemini-3.5-live-translate-preview', methods: ['bidiGenerateContent'] },
+            { id: 'gemini-embedding-001', methods: ['embedContent'] },
+          ];
+          return { ok: true, models, groups: GXT.classifyModels(models) };
+        }
+        if (message.type === 'LIST_LOCAL_MODELS') {
+          return {
+            ok: true,
+            voices: [
+              { id: 'fa-IR-DilaraNeural', locale: 'fa-IR', gender: 'Female', label: 'Dilara - Persian (Iran)' },
+              { id: 'fa-IR-FaridNeural', locale: 'fa-IR', gender: 'Male', label: 'Farid - Persian (Iran)' },
+              { id: 'en-US-BrianMultilingualNeural', locale: 'en-US', gender: 'Male', label: 'BrianMultilingual', multilingual: true },
+            ],
+            asrModels: ['tiny', 'base', 'small', 'medium', 'large-v3', 'large-v3-turbo'],
+            asrCached: ['openai/whisper-tiny'],
+          };
+        }
+        if (message.type === 'BRIDGE_HEALTH') {
+          return {
+            ok: true, name: 'tarjoman-bridge', version: '2.5.1', ffmpeg: true,
+            capabilities: {
+              tts: { available: true, engines: ['edge'] },
+              asr: { available: false, hint: 'pip install faster-whisper' },
+              manga: { available: true }, upscale: { available: true },
+            },
+          };
+        }
+        if (message.type === 'TEST_KEY') return { ok: true, valid: 2, total: 2, count: 34 };
+        return { ok: true };
+      },
+    },
+    permissions: { async request() { return true; }, async remove() { return true; } },
+    // v2.9.0 — the «در این صفحه» card asks which tab is in front.
+    tabs: {
+      async query() {
+        return [{ id: 7, url: 'https://news.ycombinator.com/item?id=1', title: 'Hacker News' }];
+      },
+      async create() { return { id: 8 }; },
+      async sendMessage() { return null; },
+    },
+    storage: {
+      local: {
+        async get(query) {
+          if (query == null) return { ...mem };
+          if (typeof query === 'string') return query in mem ? { [query]: mem[query] } : {};
+          if (Array.isArray(query)) {
+            const out = {};
+            for (const k of query) if (k in mem) out[k] = mem[k];
+            return out;
+          }
+          const out = {};
+          for (const [k, v] of Object.entries(query)) out[k] = k in mem ? mem[k] : v;
+          return out;
+        },
+        async set(patch) {
+          Object.assign(mem, patch);
+          const changes = {};
+          for (const k of Object.keys(patch)) changes[k] = { newValue: patch[k] };
+          for (const fn of listeners) fn(changes, 'local');
+        },
+        async remove(keys) { for (const k of [].concat(keys)) delete mem[k]; },
+      },
+      onChanged: { addListener: (fn) => listeners.push(fn) },
+    },
+  };
+  Object.defineProperty(globalThis, 'chrome', {
+    value: chromeMock,
+    writable: false,
+    configurable: false,
+  });
+})();
+
+// ------------------------------------------------------------- mount the popup
+(async () => {
+  const probe = document.getElementById('probe');
+  const errors = [];
+  window.addEventListener('error', (e) => errors.push(String(e.message)));
+  const html = await (await fetch(`../popup/popup.html?v=${Date.now()}`)).text();
+  const doc = new DOMParser().parseFromString(html, 'text/html');
+  for (const node of doc.body.querySelectorAll('script')) node.remove();
+  document.body.insertAdjacentHTML('afterbegin', doc.body.innerHTML);
+  const load = (src) =>
+    new Promise((resolve, reject) => {
+      const s = document.createElement('script');
+      s.src = `${src}?v=${Date.now()}`;
+      s.onload = resolve;
+      s.onerror = reject;
+      document.body.appendChild(s);
+    });
+  for (const src of [
+    '../shared/settings.js',
+    '../shared/theme.js',
+    '../popup/popup.js',
+  ]) {
+    await load(src);
+  }
+  setTimeout(() => {
+    probe.textContent = errors.length ? `ERRORS: ${errors.join(' | ')}` : 'popup mounted, no errors';
+    globalThis.__popupReady = !errors.length;
+    if (!new URLSearchParams(location.search).has('audit')) {
+      console.log(`GXT-POPUP ${errors.length ? 'FAIL ' + errors.join(' | ') : 'PASS mounted'}`);
+      console.log(`GXT-POPUP SUMMARY ${errors.length ? 0 : 1}/1`);
+    }
+  }, 600);
+})();
+</script>
+</body>
+</html>

@@ -1,0 +1,114 @@
+﻿<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>GXT mock video page (RTX VSR helper)</title>
+<style>
+  body { margin: 0; padding: 30px; background: #101216; color: #ddd;
+         font: 14px/1.7 Consolas, monospace; }
+  #summary { position: fixed; top: 8px; right: 8px; z-index: 99999; background: #16181c;
+             border: 1px solid #2f3336; border-radius: 10px; padding: 8px 12px;
+             font: 12px/1.7 Consolas, monospace; max-width: 460px; direction: ltr; }
+  #summary .pass { color: #0f8; }
+  #summary .fail { color: #f66; font-weight: bold; }
+
+  /* A player styled exactly the way real sites break hardware overlay. */
+  #wrap { width: 640px; border-radius: 22px; overflow: hidden; filter: saturate(1.05);
+          position: relative; }
+  #player { width: 640px; height: 360px; background: #234; border-radius: 18px;
+            filter: contrast(1.05); opacity: 0.92; mix-blend-mode: luminosity; }
+  #bar { position: absolute; left: 0; right: 0; bottom: 0; height: 46px;
+         background: rgba(0,0,0,.35); backdrop-filter: blur(12px); }
+  /* A decorative thumbnail the helper must ignore (too small). */
+  #tiny { width: 80px; height: 45px; border-radius: 10px; filter: blur(1px); }
+</style>
+</head>
+<body>
+<div id="summary">running…</div>
+
+<div id="wrap">
+  <video id="player" muted playsinline></video>
+  <div id="bar"></div>
+</div>
+<video id="tiny" muted playsinline></video>
+
+<script>
+  globalThis.GXT_SHIM_SEED = { settings: { vsrHelper: false } };
+</script>
+<script src="chrome-shim.js?v=3300"></script>
+<script src="../shared/settings.js?v=3300"></script>
+<script src="../shared/memory.js?v=3300"></script>
+<script src="../content/vsr.js?v=3300"></script>
+<script>
+(async () => {
+  const results = [];
+  const check = (name, fn) => {
+    let ok = false;
+    try { ok = !!fn(); } catch { ok = false; }
+    results.push([name, ok]);
+    console.log(`GXT-VSR-TEST ${ok ? 'PASS' : 'FAIL'} ${name}`);
+  };
+  const wait = (ms) => new Promise((r) => setTimeout(r, ms));
+  const q = (id) => document.getElementById(id);
+  const cs = (id, prop) => getComputedStyle(q(id)).getPropertyValue(prop).trim();
+  const report = () => new Promise((resolve) => {
+    let answered = false;
+    GXT_SHIM_DISPATCH({ type: 'GXT_VSR_REPORT' }, (res) => { answered = true; resolve(res); });
+    setTimeout(() => { if (!answered) resolve(null); }, 300);
+  });
+
+  // ---- phase 1: helper OFF — nothing may be touched, but it must SEE the mess
+  await wait(300);
+  check('OFF: page CSS untouched (rounded video)', () => cs('player', 'border-radius') === '18px');
+  check('OFF: page CSS untouched (video filter)', () => cs('player', 'filter') !== 'none');
+  const before = await report();
+  check('report answers while OFF', () => !!before && before.ok === true && before.running === false);
+  check('OFF: report lists the blockers it found', () => {
+    const r = (before.videos[0] || {}).remaining || [];
+    return r.some((x) => x.includes('border-radius')) && r.some((x) => x.includes('filter'));
+  });
+  check('OFF: nothing applied yet', () => (before.videos[0].applied || []).length === 0);
+  check('small decorative video ignored', () => before.videos.length === 1);
+
+  // ---- phase 2: switch it ON — blockers must be neutralized live
+  await GXT.setSettings({ vsrHelper: true });
+  await wait(400);
+  check('ON: video corners squared', () => cs('player', 'border-radius') === '0px');
+  check('ON: video filter cleared', () => cs('player', 'filter') === 'none');
+  check('ON: blend mode reset', () => cs('player', 'mix-blend-mode') === 'normal');
+  check('ON: partial opacity restored to 1', () => cs('player', 'opacity') === '1');
+  check('ON: clipping wrapper un-rounded', () => cs('wrap', 'border-radius') === '0px');
+  check('ON: wrapper filter cleared', () => cs('wrap', 'filter') === 'none');
+  check('ON: control bar backdrop blur killed', () => cs('bar', 'backdrop-filter') === 'none');
+  check('ON: small decorative video still untouched', () => cs('tiny', 'filter') !== 'none');
+
+  const after = await report();
+  check('report says what it fixed', () => {
+    const applied = (after.videos[0] || {}).applied || [];
+    return applied.some((x) => x.startsWith('video:border-radius')) &&
+           applied.some((x) => x.startsWith('div:border-radius'));
+  });
+  check('report: no blockers left', () => ((after.videos[0] || {}).remaining || []).length === 0);
+  check('report flags the paused video', () =>
+    (after.videos[0].notes || []).some((n) => n.includes('متوقف')));
+
+  // ---- phase 3: switch OFF — the page must be exactly as it started
+  await GXT.setSettings({ vsrHelper: false });
+  await wait(400);
+  check('OFF again: rounded corners restored', () => cs('player', 'border-radius') === '18px');
+  check('OFF again: video filter restored', () => cs('player', 'filter') !== 'none');
+  check('OFF again: wrapper restored', () => cs('wrap', 'border-radius') === '22px');
+  check('OFF again: backdrop blur restored', () => cs('bar', 'backdrop-filter') !== 'none');
+  check('OFF again: no leftover inline styles', () =>
+    !q('player').getAttribute('style') && !q('wrap').getAttribute('style'));
+  check('OFF again: helper stylesheet removed', () => !document.getElementById('gxt-vsr-style'));
+
+  const passed = results.filter((r) => r[1]).length;
+  document.getElementById('summary').innerHTML =
+    `<b>${passed}/${results.length} checks passed</b>` +
+    results.map(([n, ok]) => `<div class="${ok ? 'pass' : 'fail'}">${ok ? 'PASS' : 'FAIL'} — ${n}</div>`).join('');
+  console.log(`GXT-VSR-TEST SUMMARY ${passed}/${results.length}`);
+})();
+</script>
+</body>
+</html>

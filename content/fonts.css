@@ -1,0 +1,70 @@
+/*
+ * Bundled Persian webfonts. The __MSG_@@extension_id__ placeholder is
+ * substituted by Chrome in content-script CSS, which is required here:
+ * relative url() in injected CSS would resolve against the page, not the
+ * extension. The .woff2 files are listed in web_accessible_resources.
+ */
+
+@font-face {
+  font-family: "Vazirmatn";
+  src: url("chrome-extension://__MSG_@@extension_id__/fonts/Vazirmatn-Regular.woff2") format("woff2");
+  font-weight: 400;
+  font-style: normal;
+  font-display: swap;
+}
+
+@font-face {
+  font-family: "Vazirmatn";
+  src: url("chrome-extension://__MSG_@@extension_id__/fonts/Vazirmatn-Bold.woff2") format("woff2");
+  font-weight: 700;
+  font-style: normal;
+  font-display: swap;
+}
+
+@font-face {
+  font-family: "Shabnam";
+  src: url("chrome-extension://__MSG_@@extension_id__/fonts/Shabnam-Regular.woff2") format("woff2");
+  font-weight: 400;
+  font-style: normal;
+  font-display: swap;
+}
+
+@font-face {
+  font-family: "Shabnam";
+  src: url("chrome-extension://__MSG_@@extension_id__/fonts/Shabnam-Bold.woff2") format("woff2");
+  font-weight: 700;
+  font-style: normal;
+  font-display: swap;
+}
+
+@font-face {
+  font-family: "Sahel";
+  src: url("chrome-extension://__MSG_@@extension_id__/fonts/Sahel-Regular.woff2") format("woff2");
+  font-weight: 400;
+  font-style: normal;
+  font-display: swap;
+}
+
+@font-face {
+  font-family: "Sahel";
+  src: url("chrome-extension://__MSG_@@extension_id__/fonts/Sahel-Bold.woff2") format("woff2");
+  font-weight: 700;
+  font-style: normal;
+  font-display: swap;
+}
+
+@font-face {
+  font-family: "Samim";
+  src: url("chrome-extension://__MSG_@@extension_id__/fonts/Samim-Regular.woff2") format("woff2");
+  font-weight: 400;
+  font-style: normal;
+  font-display: swap;
+}
+
+@font-face {
+  font-family: "Samim";
+  src: url("chrome-extension://__MSG_@@extension_id__/fonts/Samim-Bold.woff2") format("woff2");
+  font-weight: 700;
+  font-style: normal;
+  font-display: swap;
+}

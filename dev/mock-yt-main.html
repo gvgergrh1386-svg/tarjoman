@@ -1,0 +1,310 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>GXT mock — yt-main.js track discovery</title>
+<style>
+  body { margin: 0; padding: 24px; background: #0f0f0f; color: #eee; font: 14px/1.6 Roboto, "Segoe UI", sans-serif; }
+  #summary { font: 12px/1.8 Consolas, monospace; max-width: 900px; }
+  #summary .pass { color: #0f8; }
+  #summary .fail { color: #f66; font-weight: bold; }
+  #movie_player { position: relative; width: 480px; height: 270px; background: #000; border-radius: 10px; }
+</style>
+</head>
+<body>
+<div id="movie_player"><video muted></video><button class="ytp-subtitles-button" aria-pressed="false">CC</button></div>
+<div id="summary">running…</div>
+
+<script>
+/**
+ * THE FILE THIS PAGE EXISTS FOR — content/yt-main.js, until now untested.
+ *
+ * Every other YouTube mock in this directory posts `gxt-yt` messages directly
+ * into `content/youtube.js`, which means the MAIN-world helper that produces
+ * those messages in the real product had NO coverage at all — and it is where
+ * the «یوتیوب زیرنویس را نداد» bug actually lived. Three defects, all about
+ * time, and every one of them invisible to a suite that hand-feeds the receiver:
+ *
+ *   1. THE POLL HAD A TEN-SECOND LIFETIME AND THEN DIED FOREVER. Ten sends at
+ *      1s intervals after document_start, `clearInterval`, and nothing again for
+ *      the life of the tab. Every later SPA navigation was served by a single
+ *      `setTimeout(send, 500)` — one guess, 500ms after the event.
+ *
+ *   2. A STALE PLAYER RESPONSE WAS PUBLISHED AS AUTHORITATIVE. At +500ms
+ *      `getPlayerResponse()` frequently still describes the PREVIOUS video. It
+ *      was posted anyway; the receiver saw an id equal to the one it already had
+ *      so it did not reset; and the extension sat on video B holding video A's
+ *      caption tracks with no poll alive to correct it.
+ *
+ *   3. AN EMPTY TRACKLIST WAS PUBLISHED AS «THIS VIDEO HAS NO CAPTIONS»,
+ *      which disabled the subtitle button on videos that have them.
+ *
+ * The page fakes exactly what yt-main.js reads — `#movie_player`'s
+ * `getPlayerResponse` / `getOption`, `window.ytInitialPlayerResponse`, and the
+ * URL — so the real module runs against a controllable clock.
+ *
+ * `history.replaceState` is what makes the staleness tests possible: yt-main.js
+ * arbitrates staleness against the ADDRESS BAR (the player's answer can lag, the
+ * URL cannot), so the mock has to be able to move the URL like YouTube does.
+ */
+  // ── the fake player ────────────────────────────────────────────────────
+  const PR = {
+    // Video A: two caption tracks, a complete response.
+    a: {
+      videoDetails: { videoId: 'vid-a', title: 'Video A' },
+      playabilityStatus: { status: 'OK' },
+      captions: {
+        playerCaptionsTracklistRenderer: {
+          captionTracks: [
+            { baseUrl: 'mock-track.json?fmt=json3&v=vid-a', languageCode: 'en', kind: '', name: { simpleText: 'English' } },
+            { baseUrl: 'mock-track.json?fmt=json3&v=vid-a&asr', languageCode: 'en', kind: 'asr', name: { simpleText: 'English auto' } },
+          ],
+        },
+      },
+    },
+    // Video B, INCOMPLETE: no playabilityStatus, no captions key. This is the
+    // shape that must NOT be read as «no captions».
+    bPartial: { videoDetails: { videoId: 'vid-b', title: 'Video B' } },
+    // Video B, complete, and genuinely caption-less. YouTube omits the
+    // `captions` key entirely for such a video rather than sending an empty
+    // list — which is why «settled» cannot be defined as «captions key exists».
+    bFinal: {
+      videoDetails: { videoId: 'vid-b', title: 'Video B' },
+      playabilityStatus: { status: 'OK' },
+    },
+    // Video C: complete, no captions key, but the player's own caption module
+    // knows about a track. STRATEGY B exists for exactly this.
+    c: {
+      videoDetails: { videoId: 'vid-c', title: 'Video C' },
+      playabilityStatus: { status: 'OK' },
+    },
+    // Video D: a track that only appears LATE — after the old code's single
+    // 500ms post-navigation guess had already come and gone.
+    dEarly: {
+      videoDetails: { videoId: 'vid-d', title: 'Video D' },
+      playabilityStatus: { status: 'OK' },
+    },
+    dLate: {
+      videoDetails: { videoId: 'vid-d', title: 'Video D' },
+      playabilityStatus: { status: 'OK' },
+      captions: {
+        playerCaptionsTracklistRenderer: {
+          captionTracks: [
+            { baseUrl: 'mock-track.json?fmt=json3&v=vid-d', languageCode: 'ja', kind: '', name: { simpleText: '日本語' } },
+          ],
+        },
+      },
+    },
+  };
+
+  let current = PR.a;
+  let tracklist = null; // what getOption('captions','tracklist') returns
+  let ccClicks = 0;
+
+  const player = document.getElementById('movie_player');
+  player.getPlayerResponse = () => current;
+  player.getOption = (module, name) => {
+    if (module === 'captions' && name === 'tracklist') {
+      if (!tracklist) throw new Error('captions module not loaded');
+      return tracklist;
+    }
+    return null;
+  };
+  player.loadModule = () => {};
+  player.unloadModule = () => {};
+  player.setOption = () => {};
+  const nativeCc = document.querySelector('.ytp-subtitles-button');
+  nativeCc.addEventListener('click', () => {
+    ccClicks += 1;
+    nativeCc.setAttribute('aria-pressed', nativeCc.getAttribute('aria-pressed') === 'true' ? 'false' : 'true');
+  });
+
+  // First page load: the initial payload describes video A, like a real
+  // document served for /watch?v=vid-a.
+  window.ytInitialPlayerResponse = PR.a;
+  history.replaceState(null, '', '/watch?v=vid-a');
+
+  // ── collect everything the module publishes ───────────────────────────
+  const posted = [];
+  window.addEventListener('message', (event) => {
+    if (event.source === window && event.data?.source === 'gxt-yt') posted.push(event.data);
+  });
+
+  const navigate = (videoId) => {
+    history.replaceState(null, '', `/watch?v=${videoId}`);
+    document.dispatchEvent(new CustomEvent('yt-navigate-finish'));
+  };
+</script>
+<script src="../content/yt-main.js?v=3300"></script>
+<script>
+(async () => {
+  const results = [];
+  const check = (name, ok, why) => {
+    results.push([name, !!ok, why || '']);
+    console.log(`GXT-YTMAIN ${ok ? 'PASS' : 'FAIL'} ${name}${!ok && why ? ' — ' + why : ''}`);
+  };
+  const until = async (fn, timeout = 5000, step = 60) => {
+    const t0 = Date.now();
+    for (;;) {
+      let v = null;
+      try { v = fn(); } catch { v = null; }
+      if (v) return v;
+      if (Date.now() - t0 > timeout) return null;
+      await new Promise((r) => setTimeout(r, step));
+    }
+  };
+  const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
+  const forVideo = (id) => posted.filter((m) => m.videoId === id);
+  const last = (id) => forVideo(id)[forVideo(id).length - 1] || null;
+  const resend = () => window.postMessage({ source: 'gxt-yt-cmd', cmd: 'resend' }, '*');
+
+  // ── 1. First load ─────────────────────────────────────────────────────
+  const first = await until(() => last('vid-a'));
+  check('the module publishes the video it loaded with', !!first);
+  check('and it finds both caption tracks',
+    first?.tracks?.length === 2, `tracks=${first?.tracks?.length}`);
+  check('a response carrying tracks is settled', first?.settled === true);
+  check('tracks are normalised (lang, kind, name)',
+    first?.tracks?.[0]?.lang === 'en' && first?.tracks?.[1]?.kind === 'asr'
+      && first?.tracks?.[0]?.name === 'English');
+
+  // ── 2. THE STALENESS GUARD (defect 2) ─────────────────────────────────
+  //
+  // Navigate to video B while the player still answers with video A — the real
+  // 500ms window. Nothing about video A may be published from here on, and
+  // video B must not be invented either.
+  const beforeNav = posted.length;
+  navigate('vid-b');
+  await sleep(900); // several rungs of the schedule fire in here
+  const afterNav = posted.slice(beforeNav);
+  check('REGRESSION: a stale player response is not published after navigation',
+    afterNav.every((m) => m.videoId !== 'vid-a'),
+    `published: ${afterNav.map((m) => m.videoId).join(',') || '(none)'}`);
+  check('REGRESSION: the stale ytInitialPlayerResponse is not published either',
+    !afterNav.some((m) => m.via === 'ytInitialPlayerResponse' && m.videoId === 'vid-a'));
+  check('and nothing is claimed about the new video before the player answers',
+    forVideo('vid-b').length === 0);
+
+  // ── 3. «Not yet» is not «none» (defect 3) ─────────────────────────────
+  current = PR.bPartial;
+  resend();
+  const partial = await until(() => last('vid-b'));
+  check('an incomplete response IS published (so the id is known)', !!partial);
+  check('REGRESSION: but it is marked unsettled, not «no captions»',
+    partial?.settled === false, `settled=${partial?.settled}`);
+
+  current = PR.bFinal;
+  resend();
+  const settledB = await until(() => {
+    const m = last('vid-b');
+    return m && m.settled === true ? m : null;
+  });
+  check('a COMPLETE response with no captions key settles as caption-less',
+    !!settledB && settledB.tracks.length === 0);
+
+  // ── 4. STRATEGY B — the player's own tracklist ────────────────────────
+  //
+  // Video C's player response never grows a `captions` key, but the caption
+  // module knows about a track. Strategy A alone would call this caption-less.
+  current = PR.c;
+  navigate('vid-c');
+  await until(() => last('vid-c'));
+  const beforeTracklist = last('vid-c');
+  check('strategy A alone finds nothing for this video',
+    beforeTracklist?.tracks?.length === 0);
+  tracklist = [
+    { languageCode: 'fr', kind: '', displayName: 'Français' },
+  ];
+  resend();
+  const viaB = await until(() => {
+    const m = last('vid-c');
+    return m && m.tracks.length ? m : null;
+  });
+  check('strategy B finds the track the player response never mentioned',
+    !!viaB && viaB.tracks[0].lang === 'fr', `tracks=${JSON.stringify(viaB?.tracks)}`);
+  check('and it says which source answered', /tracklist/.test(viaB?.via || ''),
+    `via=${viaB?.via}`);
+  check('a track found that way settles the question', viaB?.settled === true);
+  tracklist = null;
+
+  // ── 5. THE DEAD POLL (defect 1) ───────────────────────────────────────
+  //
+  // The decisive one. A caption track that appears 1.4s after the navigation is
+  // published — with no prompting, no resend, nobody clicking anything. The old
+  // code posted once at +500ms and had nothing left after that, so this track
+  // was unreachable for the rest of the session.
+  current = PR.dEarly;
+  navigate('vid-d');
+  await until(() => last('vid-d'));
+  check('the new video is known immediately', last('vid-d')?.videoId === 'vid-d');
+  check('with no tracks yet', last('vid-d')?.tracks?.length === 0);
+  setTimeout(() => { current = PR.dLate; }, 1400);
+  const late = await until(() => {
+    const m = last('vid-d');
+    return m && m.tracks.length ? m : null;
+  }, 8000);
+  check('REGRESSION: a track appearing after the first second is still found',
+    !!late, 'the discovery poll stopped listening');
+  check('and it is the right track', late?.tracks?.[0]?.lang === 'ja');
+
+  // ── 6. The pull channel ───────────────────────────────────────────────
+  //
+  // Before v3.3.0 this channel was push-only: a content script that missed the
+  // window had no way to ask, and simply waited for a poll that had died.
+  const beforePull = posted.length;
+  current = PR.a;
+  history.replaceState(null, '', '/watch?v=vid-a');
+  resend();
+  const pulled = await until(() => (posted.length > beforePull ? posted[posted.length - 1] : null));
+  check('the receiver can ASK for a fresh answer', !!pulled && pulled.videoId === 'vid-a');
+
+  // Explicit pulls must replay even if the content script missed the first
+  // broadcast. Only background polling should suppress duplicate payloads.
+  const beforeDupes = posted.length;
+  resend(); resend(); resend();
+  await sleep(400);
+  check('REGRESSION: explicit resends replay an unchanged settled answer',
+    posted.length === beforeDupes + 3,
+    `${posted.length - beforeDupes} response(s)`);
+  const afterPulls = posted.length;
+  await sleep(400);
+  check('unchanged background polls remain quiet', posted.length === afterPulls);
+
+  // ── v3.3.8. The exact manual workaround is now automatic ─────────────
+  const clicksBeforeProbe = ccClicks;
+  window.postMessage({ source: 'gxt-yt-cmd', cmd: 'captionsProbe', lang: 'en' }, '*');
+  const autoCc = await until(() => ccClicks > clicksBeforeProbe && nativeCc.getAttribute('aria-pressed') === 'true');
+  check('v3.3.8 probe automatically performs YouTube own CC action', !!autoCc);
+  window.postMessage({ source: 'gxt-yt-cmd', cmd: 'captionsProbeDone' }, '*');
+  const restoredOff = await until(() => nativeCc.getAttribute('aria-pressed') === 'false');
+  check('v3.3.8 probe restores captions to OFF when they started OFF', !!restoredOff);
+  nativeCc.click(); // the viewer deliberately had captions on
+  const clicksWithCcOn = ccClicks;
+  window.postMessage({ source: 'gxt-yt-cmd', cmd: 'captionsProbe', lang: 'en' }, '*');
+  await sleep(80);
+  window.postMessage({ source: 'gxt-yt-cmd', cmd: 'captionsProbeDone' }, '*');
+  await sleep(80);
+  check('v3.3.8 an already-ON native caption preference stays ON',
+    nativeCc.getAttribute('aria-pressed') === 'true' && ccClicks === clicksWithCcOn);
+
+  // ── 8. Shorts and /live use the same arbiter ───────────────────────────
+  history.replaceState(null, '', '/shorts/vid-a');
+  resend();
+  await sleep(300);
+  check('a /shorts/ URL is understood as the same video',
+    last('vid-a')?.videoId === 'vid-a');
+  history.replaceState(null, '', '/watch?v=vid-b');
+  current = PR.bFinal;
+  resend();
+  await sleep(300);
+  check('and moving on again is tracked', last('vid-b')?.videoId === 'vid-b');
+
+  const passed = results.filter((r) => r[1]).length;
+  document.getElementById('summary').innerHTML = results
+    .map(([n, ok, why]) => `<div class="${ok ? 'pass' : 'fail'}">${ok ? 'PASS' : 'FAIL'} ${n}${!ok && why ? ' — ' + why : ''}</div>`)
+    .join('');
+  console.log(`GXT-YTMAIN SUMMARY ${passed}/${results.length}`);
+})();
+</script>
+</body>
+</html>

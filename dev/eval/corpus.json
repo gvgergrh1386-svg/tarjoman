@@ -1,0 +1,216 @@
+{
+  "note": [
+    "Golden set for translation QUALITY — the thing this product is, and the",
+    "one thing nothing measured until v3.0.0.",
+    "",
+    "Every item states MACHINE-CHECKABLE expectations, because those are the",
+    "ones that can regress silently and be scored without a human or a judge",
+    "model. They are not a taste test: they are the CONTRACT the prompts",
+    "promise — entity preservation, the date engine, the fixed credit labels,",
+    "the retired interjection, register, and Persian output at all.",
+    "",
+    "Fluency is judged separately (run_eval.py --judge), because fluency is a",
+    "matter of degree and needs a reader; the contract is binary and needs a",
+    "test. Keeping them apart means a prompt change can be shown to have",
+    "improved style WITHOUT quietly breaking a ⟦n⟧ token.",
+    "",
+    "CHECK KINDS",
+    "  persian      output is actually Persian (ratio of Persian letters)",
+    "  contains     substring must appear (use for fixed labels, Jalali dates)",
+    "  absent       substring must NOT appear (retired words, leaked English)",
+    "  regexp       pattern must match",
+    "  keepLatin    every listed string survives character-for-character",
+    "  tokens       every ⟦n⟧ placeholder appears exactly once",
+    "  emojiCount   the same number of emoji as the source",
+    "  linesEqual   the same number of line breaks as the source",
+    "  unchanged    output equals input (already-Persian text)"
+  ],
+  "items": [
+    {
+      "id": "token-url",
+      "kind": "tweet",
+      "text": "Just shipped the new build ⟦0⟧ — feedback welcome!",
+      "why": "A URL becomes a ⟦n⟧ token. Losing or duplicating one breaks the link.",
+      "checks": [{ "k": "tokens" }, { "k": "persian" }]
+    },
+    {
+      "id": "entities",
+      "kind": "tweet",
+      "text": "@sundarpichai talking about $GOOG and #Gemini at the keynote",
+      "why": "Mentions, cashtags and hashtags are addresses, not words.",
+      "checks": [
+        { "k": "keepLatin", "v": ["@sundarpichai", "$GOOG", "#Gemini"] },
+        { "k": "persian" }
+      ]
+    },
+    {
+      "id": "emoji",
+      "kind": "tweet",
+      "text": "this update is actually insane 🔥🔥 shipping today 🚀",
+      "why": "Emoji carry the tone; dropping them flattens it.",
+      "checks": [{ "k": "emojiCount" }, { "k": "persian" }]
+    },
+    {
+      "id": "laughter",
+      "kind": "tweet",
+      "text": "lmaooo he really said that with his whole chest 💀",
+      "why": "v1.8.8 retired «خخخ» as dated. This is the regression guard.",
+      "checks": [
+        { "k": "absent", "v": ["خخخ"] },
+        { "k": "persian" }
+      ]
+    },
+    {
+      "id": "credits-ed",
+      "kind": "tweet",
+      "text": "Episode 7 staff — SB: Takushi Koide, ED: Yuuki Koike, AD: Hana Sato",
+      "why": "In a staff list ED is «کارگردان قسمت», never «انیمیشن پایانی». Human names stay Latin.",
+      "checks": [
+        { "k": "contains", "v": ["کارگردان قسمت"] },
+        { "k": "absent", "v": ["انیمیشن پایانی"] },
+        { "k": "keepLatin", "v": ["Takushi Koide", "Yuuki Koike", "Hana Sato"] },
+        { "k": "contains", "v": ["استوری‌بورد"] }
+      ]
+    },
+    {
+      "id": "slang-cooked",
+      "kind": "tweet",
+      "text": "nah he's cooked, that take is mid at best",
+      "why": "Slang must land as Persian internet register, not literal food.",
+      "checks": [
+        { "k": "persian" },
+        { "k": "absent", "v": ["پخته شده", "پخته‌شده"] }
+      ]
+    },
+    {
+      "id": "keep-titles",
+      "kind": "tweet",
+      "text": "Attack on Titan still holds up. Rewatching on a RTX 4060 at 4K.",
+      "why": "Titles and technical identifiers are never transliterated.",
+      "checks": [
+        { "k": "keepLatin", "v": ["Attack on Titan", "RTX 4060"] },
+        { "k": "persian" }
+      ]
+    },
+    {
+      "id": "date-day",
+      "kind": "tweet",
+      "text": "The event is on October 3.",
+      "why": "detectDates supplies an EXACT Jalali value; the model must copy it, never compute.",
+      "checks": [
+        { "k": "regexp", "v": "(مهر|شهریور)" },
+        { "k": "persian" }
+      ]
+    },
+    {
+      "id": "date-month-only",
+      "kind": "tweet",
+      "text": "Season 2 is coming in January 2027.",
+      "why": "v1.8.1 — month-only dates convert to the Jalali span they cover.",
+      "checks": [
+        { "k": "regexp", "v": "(دی|بهمن)" },
+        { "k": "persian" }
+      ]
+    },
+    {
+      "id": "date-french",
+      "kind": "tweet",
+      "text": "La sortie est prévue en janvier.",
+      "why": "v1.8.2 — a month named in ANY language converts by lookup.",
+      "checks": [
+        { "k": "regexp", "v": "(دی|بهمن)" },
+        { "k": "persian" }
+      ]
+    },
+    {
+      "id": "time-zone",
+      "kind": "tweet",
+      "text": "Stream starts at 3pm EST, don't be late.",
+      "why": "detectTimes pre-computes Tehran time; the model copies it.",
+      "checks": [
+        { "k": "regexp", "v": "(به وقت ایران|ایران)" },
+        { "k": "persian" }
+      ]
+    },
+    {
+      "id": "lines",
+      "kind": "tweet",
+      "text": "Three things:\n1. it works\n2. it is fast\n3. it is free",
+      "why": "Line structure is meaning in a list.",
+      "checks": [{ "k": "linesEqual" }, { "k": "persian" }]
+    },
+    {
+      "id": "already-persian",
+      "kind": "tweet",
+      "text": "این متن از قبل فارسی است و نباید دست بخورد.",
+      "why": "Persian in must not be re-translated into worse Persian.",
+      "checks": [{ "k": "persian" }]
+    },
+    {
+      "id": "formal-news",
+      "kind": "generic",
+      "text": "The central bank announced that interest rates will remain unchanged until the end of the fiscal year.",
+      "why": "Formal source must not come back in spoken register.",
+      "checks": [
+        { "k": "persian" },
+        { "k": "absent", "v": ["می‌کنه", "میشه", "نمی‌کنه"] }
+      ]
+    },
+    {
+      "id": "page-inline-tags",
+      "kind": "generic",
+      "text": "Read the <g1>documentation</g1> before you <g2>install</g2> anything.",
+      "why": "The block engine's inline tags must survive so links stay attached to the right words.",
+      "checks": [
+        { "k": "regexp", "v": "<g1>.*</g1>" },
+        { "k": "regexp", "v": "<g2>.*</g2>" },
+        { "k": "persian" }
+      ]
+    },
+    {
+      "id": "no-calque-passive",
+      "kind": "generic",
+      "text": "The bug was fixed by the team after it was reported by a user.",
+      "why": "Double passive is the classic calque; Persian prefers active.",
+      "checks": [
+        { "k": "persian" },
+        { "k": "maxCount", "v": "توسط", "n": 1 }
+      ]
+    },
+    {
+      "id": "subtitle-fragment",
+      "kind": "subtitle",
+      "text": "and that's basically how the whole thing",
+      "why": "A caption fragment is not a sentence; it must not be padded into one.",
+      "checks": [{ "k": "persian" }, { "k": "maxLenRatio", "n": 2.2 }]
+    },
+    {
+      "id": "units-numbers",
+      "kind": "generic",
+      "text": "It weighs 2.5 kg and costs $1,299.",
+      "why": "Numbers are data. They may be Persian digits but must not change value.",
+      "checks": [
+        { "k": "persian" },
+        { "k": "regexp", "v": "(2[.,]5|۲[٫.,]۵)" },
+        { "k": "regexp", "v": "(1,299|1299|۱٬۲۹۹|۱۲۹۹)" }
+      ]
+    },
+    {
+      "id": "no-english-leak",
+      "kind": "generic",
+      "text": "We are excited to announce our partnership with the community.",
+      "why": "Ordinary prose must come back fully Persian — no half-translated clause.",
+      "checks": [
+        { "k": "persian", "n": 0.75 },
+        { "k": "absent", "v": ["excited", "announce", "partnership"] }
+      ]
+    },
+    {
+      "id": "sarcasm",
+      "kind": "tweet",
+      "text": "oh great, another mandatory update. exactly what I needed today.",
+      "why": "Sarcasm flattened into sincerity is a meaning error, not a style one.",
+      "checks": [{ "k": "persian" }]
+    }
+  ]
+}

@@ -1,0 +1,46 @@
+<!doctype html><html><meta charset="utf-8"><title>YouTube settings lifecycle</title>
+<style>#movie_player{position:relative;width:720px;height:405px}video{width:100%;height:100%}</style>
+<div id="movie_player"><video muted></video><div class="ytp-chrome-bottom" style="position:absolute;bottom:0;height:48px;width:100%"><button class="ytp-subtitles-button" aria-pressed="true">CC</button></div></div><pre id="summary"></pre>
+<script>
+globalThis.__gxtYtTestMode=true;
+globalThis.GXT_SHIM_SEED={settings:{enabled:true,ytAuto:false,ytDub:false},apiKeys:['dev-key']};
+const player=document.getElementById('movie_player'),video=player.querySelector('video');
+let videoId='settings-a';const track={languageCode:'en',baseUrl:'https://www.youtube.com/api/timedtext?v=settings-a&lang=en&pot=fixture',name:{simpleText:'English'}};
+player.getPlayerResponse=()=>({videoDetails:{videoId,title:'Settings test'},playabilityStatus:{status:'OK'},captions:{playerCaptionsTracklistRenderer:{captionTracks:[track]}}});
+player.getOption=(mod,key)=>key==='tracklist'?[track]:track;player.loadModule=()=>{};player.unloadModule=()=>{};player.setOption=()=>{};
+const nativeCc=player.querySelector('button');nativeCc.onclick=()=>nativeCc.setAttribute('aria-pressed',nativeCc.getAttribute('aria-pressed')==='true'?'false':'true');
+const realFetch=window.fetch.bind(window);
+let nativeBody = ''; let nativeCalls = 0; let nativeGate = null;
+window.fetch=(input,init)=>String(input).includes('/api/timedtext')?(nativeGate?.promise || Promise.resolve(new Response(nativeBody ? (nativeCalls++, nativeBody) : ''))):realFetch(input,init);
+async function nativeResponse(body, suffix='') { nativeBody=body; const response=await fetch(track.baseUrl+suffix); const original=await response.text(); nativeBody=''; await new Promise(r=>setTimeout(r,80)); return original; }
+
+Object.defineProperty(video,'currentTime',{configurable:true,get:()=>1});Object.defineProperty(video,'paused',{configurable:true,get:()=>true});
+history.replaceState(null,'','/watch?v='+videoId);
+let nativeMutations=0;new MutationObserver(records=>nativeMutations+=records.length).observe(nativeCc,{attributes:true});
+let route=message=>({ok:true,list:message.texts.map(t=>'فارسی '+t)});const sent=[];
+globalThis.GXT_SHIM_HANDLER=message=>{sent.push(message);return route(message)};
+</script>
+<script src="/dev/chrome-shim.js"></script><script src="/shared/settings.js"></script><script src="/shared/theme.js"></script><script src="/content/ui.js"></script><script src="/content/player.css.js"></script><script src="/content/dub.js"></script><script src="/content/yt-main.js"></script><script src="/content/youtube.js"></script>
+<script>
+const sleep=ms=>new Promise(r=>setTimeout(r,ms));const assert=(ok,reason='assertion failed')=>{if(!ok)throw Error(reason)};
+const defer=()=>{let resolve;const promise=new Promise(r=>resolve=r);return{promise,resolve}};
+async function until(fn,reason='timed out',ms=3500){const end=Date.now()+ms;while(Date.now()<end){if(fn())return;await sleep(15)}throw Error(reason)}
+const I=()=>GXT.yt._internal,Q=sel=>I().q(sel),painted=()=>I().surfaceRoot()?.textContent||'';
+let config;async function settings(patch){config={...config,...patch};await chrome.storage.local.set({settings:config})}
+async function activate(){await until(()=>I().trackCount()===1&&Q('#gxt-yt-pill'),'track/pill missing');Q('#gxt-yt-pill').click();await until(()=>I().subState()==='active','did not activate: '+I().subState())}
+function wav(){const b=new ArrayBuffer(2044),v=new DataView(b);for(const[offset,s]of[[0,'RIFF'],[8,'WAVE'],[12,'fmt '],[36,'data']])for(let i=0;i<s.length;i++)v.setUint8(offset+i,s.charCodeAt(i));v.setUint32(4,2036,true);v.setUint32(16,16,true);v.setUint16(20,1,true);v.setUint16(22,1,true);v.setUint32(24,16000,true);v.setUint32(28,32000,true);v.setUint16(32,2,true);v.setUint16(34,16,true);v.setUint32(40,2000,true);return btoa(String.fromCharCode(...new Uint8Array(b)))}
+const audioData=wav(),engines=[];
+function engine(send,overrides={}){const el=document.createElement('video');el.muted=true;const instance=GXT.dub.create({video:el,send,settings:{...GXT.DEFAULTS,...overrides}});engines.push(instance);instance.start();instance.setSegments([{id:'same',start:5000,end:8000,text:'متن فارسی'}]);return instance}
+const valid=JSON.stringify({events:[{tStartMs:0,dDurationMs:4000,segs:[{utf8:'A real native caption.'}]}]});
+const tests=[
+ ['native page response is usable when duplicate caption requests return empty',async()=>{await nativeResponse(valid);route=m=>({ok:true,list:m.texts.map(()=>'CAPTURED NATIVE')});await activate();await until(()=>painted().includes('CAPTURED NATIVE'),'native body was discarded',8500)}],
+ ['native fetch response remains readable by YouTube',async()=>{assert(await nativeResponse(valid)===valid,'response body was consumed by extension')}],
+ ['native srv3 XML response is parsed without changing request URL',async()=>{await nativeResponse('<timedtext><body><p t="0" d="4000"><s>XML caption</s></p></body></timedtext>','&fmt=srv3');route=m=>({ok:true,list:m.texts.map(t=>t.includes('XML caption')?'NATIVE XML':'WRONG')});await activate();await until(()=>painted().includes('NATIVE XML'),'native XML was discarded',8500)}],
+ ['native browser textTracks provide captions without another network request',async()=>{const t=video.addTextTrack('subtitles','Native English','en');t.addCue(new VTTCue(0,4,'TextTrack only caption'));t.mode='hidden';route=m=>({ok:true,list:m.texts.map(t=>t.includes('TextTrack only')?'NATIVE TRACK':'WRONG')});await activate();await until(()=>painted().includes('NATIVE TRACK'),'textTracks were ignored',8500);t.removeCue(t.cues[0])}],
+ ['worker context loss is visible and a recovered connection can retry',async()=>{await nativeResponse(valid);const original=chrome.runtime.sendMessage;chrome.runtime.sendMessage=()=>Promise.reject(Error('Extension context invalidated.'));try{await activate();await until(()=>[...document.querySelectorAll('[data-gxt-ui]')].some(h=>h.shadowRoot?.textContent.includes('اتصال این صفحه به افزونه قطع شده')),'runtime failure swallowed')}finally{chrome.runtime.sendMessage=original}await settings({enabled:false});await settings({enabled:true});route=m=>({ok:true,list:m.texts.map(()=>'RECOVERED WORKER')});await activate();await until(()=>painted().includes('RECOVERED WORKER'))}],
+ ['native response from a prior page generation cannot replay after A B A',async()=>{/* Test receiving cache generation via navigation: old cached A must be forgotten. */await nativeResponse(valid);history.replaceState(null,'','/watch?v=native-other');document.dispatchEvent(new Event('yt-navigate-start'));history.replaceState(null,'','/watch?v=settings-a');document.dispatchEvent(new Event('yt-navigate-start'));window.postMessage({source:'gxt-yt-cmd',cmd:'resend'},'*');await sleep(70);const bodies=[];const collect=e=>{if(e.data?.source==='gxt-yt-body')bodies.push(e.data)};window.addEventListener('message',collect);window.postMessage({source:'gxt-yt-cmd',cmd:'resend'},'*');await sleep(80);window.removeEventListener('message',collect);assert(bodies.length===0,'old A body revived by returning to A')}],
+ ['late native A response cannot enter a new A page generation',async()=>{nativeGate=defer();const pending=fetch(track.baseUrl+'&fmt=json3');const oldGate=nativeGate;nativeGate=null;history.replaceState(null,'','/watch?v=delayed-other');document.dispatchEvent(new Event('yt-navigate-start'));history.replaceState(null,'','/watch?v=settings-a');document.dispatchEvent(new Event('yt-navigate-start'));const bodies=[];const collect=e=>{if(e.data?.source==='gxt-yt-body')bodies.push(e.data)};window.addEventListener('message',collect);oldGate.resolve(new Response(valid));assert(await (await pending).text()===valid);await sleep(100);window.removeEventListener('message',collect);assert(bodies.length===0,'late native A body entered the new A generation')}],
+ ['missing metadata leaves a usable explicit retry action'  ,async()=>{videoId='captionless';player.getPlayerResponse=()=>({videoDetails:{videoId},playabilityStatus:{status:'OK'}});player.getOption=()=>[];history.replaceState(null,'','/watch?v=captionless');document.dispatchEvent(new Event('yt-navigate-start'));window.postMessage({source:'gxt-yt',videoId:'captionless',tracks:[],settled:true},'*');await until(()=>I().knownCaptionless(),'still has tracks '+I().trackCount());assert(!Q('#gxt-yt-pill').disabled,'missing tracks permanently disable retry')}],
+];
+(async()=>{await sleep(100);config=await GXT.getSettings();let passed=0;for(const[name,fn]of tests){let error='';try{await fn();passed++}catch(e){error=e.message}console.log(`GXT-YT-NATIVE ${error?'FAIL':'PASS'} ${name}${error?': '+error:''}`);await settings({enabled:false});await settings({enabled:true});sent.length=0;await sleep(40)}console.log(`GXT-YT-NATIVE SUMMARY ${passed}/${tests.length}`)})();
+</script></html>

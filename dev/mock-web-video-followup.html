@@ -1,0 +1,66 @@
+<!doctype html><meta charset="utf-8"><title>General video follow-up regressions</title>
+<style>body{font:14px system-ui;margin:20px}.player{position:relative;width:640px;height:360px;background:#234;margin-bottom:16px}video{width:100%;height:100%;display:block}.controls{position:absolute;bottom:0;left:0;right:0;height:45px;background:#555}.hidden-controls{opacity:0;visibility:hidden}#summary{position:fixed;top:2px;right:2px;background:white;z-index:2147483647}</style>
+<div id="summary">running</div><main id="fixtures"></main>
+<script>globalThis.GXT_SHIM_SEED={settings:{webVideoEnabled:true,webVideoDub:true,webVideoSubtitles:true,webVideoDisplay:'auto',webVideoDubEngine:'auto',ytLiveModel:'account-live-model',ytLiveSourceLang:'en',ytLiveDuck:10}};globalThis.GXT_SHIM_HANDLER=async m=>({ok:true,list:m.texts?.map(t=>'ترجمه '+t)});</script>
+<script src="chrome-shim.js"></script><script src="../shared/settings.js"></script><script src="../shared/theme.js"></script><script src="../shared/video-sources.js"></script><script>
+globalThis.dubCreations=[];GXT.dub={create(config){const record={config,starts:[],stops:0,settings:config.settings};dubCreations.push(record);return {start(mode){record.starts.push(mode)},stop(){record.stops++},dispose(){record.stops++},setMode(){},setSegments(){},update(){},configure(s){record.settings=s},stats(){return {running:true,live:{state:'active'}}}}}};
+</script><script src="../content/web-video.js"></script>
+<script>
+(async()=>{
+const checks=[];const check=async(name,fn)=>{let ok=false,detail='';try{ok=!!await fn()}catch(e){detail=e.message}checks.push([name,ok,detail]);console.log(`GXT-WEBFOLLOW ${ok?'PASS':'FAIL'} ${name}${detail?' — '+detail:''}`)};
+const wait=(ms=100)=>new Promise(r=>setTimeout(r,ms));const settle=()=>wait(180);await settle();const W=GXT.webVideo;const fixtures=document.querySelector('#fixtures');
+const make=(id,custom=false)=>{const p=document.createElement('section');p.className='player';p.id=id;const v=document.createElement('video');v.controls=!custom;p.append(v);if(custom){const c=document.createElement('div');c.className='controls';c.setAttribute('role','toolbar');c.innerHTML='<button>Play</button>';p.append(c)}fixtures.append(p);p.scrollIntoView();return v};const rec=v=>W._test.get(v);
+const bare=make('bare');await settle();
+await check('captionless video offers an independent Live dubbing action',()=>rec(bare)&&!rec(bare).dubButton.disabled);
+await check('per-player settings expose real Live engine model language and duck controls',()=>rec(bare)?.engineSelect&&rec(bare)?.liveModelInput&&rec(bare)?.sourceLanguageSelect&&rec(bare)?.duckInput);
+if(rec(bare)?.engineSelect){
+await rec(bare).toggleDub();await settle();const live=dubCreations.at(-1);
+await check('captionless click starts Live with safe stream capture only',()=>live.config.captureMode==='stream'&&live.starts.includes('live')&&rec(bare).dubbing);
+await check('Live player inherits configured account model and source language',()=>live.settings.ytLiveModel==='account-live-model'&&live.settings.ytLiveSourceLang==='en');
+await chrome.storage.local.set({modelList:[{id:'selected-live-model',methods:['bidiGenerateContent']}]});await rec(bare).refreshModels(false);
+rec(bare).liveModelInput.value='selected-live-model';rec(bare).liveModelInput.dispatchEvent(new Event('change'));rec(bare).sourceLanguageSelect.value='ja';rec(bare).sourceLanguageSelect.dispatchEvent(new Event('change'));rec(bare).duckInput.value='37';rec(bare).duckInput.dispatchEvent(new Event('change'));await settle();
+await check('per-player controls change the effective Live settings',()=>live.settings.ytLiveModel==='selected-live-model'&&live.settings.ytLiveSourceLang==='ja'&&Number(live.settings.ytLiveDuck)===37);
+await check('per-player settings do not overwrite global YouTube model or duck',async()=>{const s=await GXT.getSettings();return s.ytLiveModel==='account-live-model'&&s.ytLiveDuck===10});
+live.config.onState({live:{state:'error'},error:{code:'CAPTURE_UNAVAILABLE',error:'دسترسی به صدای ویدیو ممکن نیست'}});await settle();
+await check('capture failure is visible and permits retry without fake active status',()=>!rec(bare).dubbing&&rec(bare).status.textContent.includes('دسترسی')&&!rec(bare).dubButton.disabled);
+await rec(bare).toggleDub();await settle();await rec(bare).toggleDub();
+await check('Live can be explicitly retried and stopped on captionless video',()=>live.starts.filter(m=>m==='live').length>=2&&live.stops>0&&!rec(bare).dubbing);
+}
+const hidden=make('css-hidden');hidden.style.visibility='hidden';await settle();hidden.style.visibility='visible';await settle();
+await check('CSS visibility change discovers a previously ineligible visible video',()=>!!rec(hidden));
+const shadowHost=document.createElement('section');shadowHost.className='player';fixtures.append(shadowHost);const shadow=shadowHost.attachShadow({mode:'open'});shadow.innerHTML='<style>video{width:640px;height:360px}</style><video controls></video>';const shadowVideo=shadow.querySelector('video');shadowHost.scrollIntoView();await settle();
+await check('accessible open-shadow player is discovered without a site-specific adapter',()=>!!rec(shadowVideo));
+const lateHost=document.createElement('section');lateHost.className='player';fixtures.append(lateHost);lateHost.scrollIntoView();await settle();const lateRoot=lateHost.attachShadow({mode:'open'});lateRoot.innerHTML='<video style="width:640px;height:360px" controls></video>';const late=lateRoot.querySelector('video');late.dispatchEvent(new PointerEvent('pointerover',{bubbles:true,composed:true}));await settle();
+await check('interaction finds a late-created accessible shadow player',()=>!!rec(late));
+shadowHost.remove();lateHost.remove();await settle();
+await check('removed shadow players release records and orphan surfaces',()=>!rec(shadowVideo)&&!rec(late));
+const custom=make('custom',true);Object.defineProperty(custom,'paused',{configurable:true,get:()=>false});await settle();Object.defineProperty(document,'fullscreenElement',{configurable:true,get:()=>custom.parentElement});document.dispatchEvent(new Event('fullscreenchange'));await settle();
+custom.parentElement.querySelector('.controls').classList.add('hidden-controls');await wait(600);
+await check('fullscreen chrome follows hidden custom player controls',()=>rec(custom).toolbar.hidden);
+custom.dispatchEvent(new PointerEvent('pointermove',{bubbles:true}));await settle();
+await check('pointer interaction restores fullscreen extension controls',()=>!rec(custom).toolbar.hidden);
+rec(custom).openPanel();await wait(2800);
+await check('open settings panel remains usable during fullscreen idle',()=>!rec(custom).panel.hidden&&!rec(custom).toolbar.hidden);
+rec(custom).openPanel();custom.parentElement.querySelector('.controls').classList.remove('hidden-controls');custom.dispatchEvent(new PointerEvent('pointermove',{bubbles:true}));await wait(2800);
+await check('fullscreen controls retire after playback idle without scan polling',()=>rec(custom).toolbar.hidden);
+document.dispatchEvent(new KeyboardEvent('keydown',{key:'Tab',bubbles:true}));await settle();
+await check('keyboard interaction restores hidden fullscreen controls',()=>!rec(custom).toolbar.hidden);
+delete document.fullscreenElement;document.dispatchEvent(new Event('fullscreenchange'));await settle();
+await check('fullscreen exit restores normal visible controls',()=>!rec(custom).toolbar.hidden);
+const visual=make('visual');const textTrack=visual.addTextTrack('subtitles','English','en');textTrack.mode='hidden';textTrack.addCue(new VTTCue(0,8,'Original dialogue'));await settle();await rec(visual).toggleSubtitles();await settle();
+const visualRecord=rec(visual);const visualGeneration=visualRecord.generation;const fontBefore=parseFloat(getComputedStyle(visualRecord.caption).fontSize);visualRecord.scaleInput.value='1.6';visualRecord.scaleInput.dispatchEvent(new Event('input'));visualRecord.positionXInput.value='0';visualRecord.positionXInput.dispatchEvent(new Event('input'));visualRecord.positionYInput.value='0';visualRecord.positionYInput.dispatchEvent(new Event('input'));await settle();
+await check('per-player size changes rendered caption font without retranslating',()=>parseFloat(getComputedStyle(visualRecord.caption).fontSize)>fontBefore&&visualRecord.generation===visualGeneration&&visualRecord.cues[0].translation);
+await check('arbitrary per-player X Y position stays inside visible video bounds',()=>{const a=visualRecord.caption.getBoundingClientRect(),b=visual.getBoundingClientRect();return visualRecord.visual.manual&&a.left>=b.left&&a.top>=b.top&&a.right<=b.right&&a.bottom<=b.bottom});
+visualRecord.bilingualInput.checked=true;visualRecord.bilingualInput.dispatchEvent(new Event('change'));await settle();
+await check('bilingual preference adds source text and keeps operation generation',()=>visualRecord.caption.textContent.includes('Original dialogue')&&visualRecord.caption.textContent.includes('ترجمه')&&visualRecord.generation===visualGeneration);
+const frame=document.createElement('iframe');frame.width='700';frame.height='450';fixtures.append(frame);frame.scrollIntoView();frame.contentDocument.body.innerHTML='<video controls style="width:600px;height:340px"></video>';const movedVideo=frame.contentDocument.querySelector('video');W._test.attachWindow(frame.contentWindow);await settle();
+await check('same-origin secondary document receives a local player controller',()=>rec(movedVideo)&&rec(movedVideo).host.ownerDocument===frame.contentDocument);
+frame.contentDocument.body.append(visual);await settle();
+await check('video adoption into secondary document moves ownership and preserves local visual preferences',()=>rec(visual)&&rec(visual).host.ownerDocument===frame.contentDocument&&rec(visual).visual.scale===1.6&&!visualRecord.host.isConnected);
+frame.contentWindow.dispatchEvent(new frame.contentWindow.PageTransitionEvent('pagehide'));frame.remove();await settle();
+await check('closing secondary document releases its controller and manager',()=>W._test.managerCount()===1&&!rec(movedVideo));
+await GXT.setSettings({webVideoEnabled:false});await settle();await wait(2800);
+await check('disable cancels fullscreen idle work without resurrecting surfaces',()=>!document.querySelector('[data-gxt-web-video]')&&W.snapshot().players.length===0);
+const good=checks.filter(c=>c[1]).length;document.querySelector('#summary').textContent=good+'/'+checks.length;console.log(`GXT-WEBFOLLOW SUMMARY ${good}/${checks.length}`);
+})().catch(e=>{console.error(e);console.log('GXT-WEBFOLLOW FAIL uncaught '+e.message);console.log('GXT-WEBFOLLOW SUMMARY 0/1')});
+</script>

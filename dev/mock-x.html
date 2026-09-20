@@ -1,0 +1,322 @@
+﻿<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>GXT mock timeline</title>
+<link rel="stylesheet" href="../content/content.css?v=3300">
+<style>
+  body { margin: 0; background: #000; color: #e7e9ea; font-family: "Segoe UI", -apple-system, Roboto, Helvetica, Arial, sans-serif; }
+  body.light { background: #fff; color: #0f1419; }
+  .timeline { max-width: 598px; margin: 0 auto; border-inline: 1px solid #2f3336; }
+  article { padding: 12px 16px; border-bottom: 1px solid #2f3336; }
+  [data-testid="User-Name"] { font-weight: 700; font-size: 15px; margin-bottom: 4px; }
+  [data-testid="User-Name"] .handle { color: #71767b; font-weight: 400; }
+  [data-testid="tweetText"], [data-testid="UserDescription"] { font-size: 15px; line-height: 20px; white-space: pre-wrap; overflow-wrap: break-word; }
+  [data-testid="tweetText"] a, [data-testid="UserDescription"] a { color: #1d9bf0; text-decoration: none; }
+  [data-testid="tweetText"] img.emoji { width: 18px; height: 18px; vertical-align: -3px; }
+  .quote { margin-top: 10px; border: 1px solid #2f3336; border-radius: 16px; padding: 10px; }
+  #summary { position: fixed; top: 8px; left: 8px; z-index: 99999; background: #16181c; color: #e7e9ea; border: 1px solid #2f3336; border-radius: 10px; padding: 8px 12px; font-size: 12px; max-width: 340px; direction: ltr; }
+  #summary .pass { color: #00ba7c; }
+  #summary .fail { color: #f4212e; font-weight: 700; }
+  #themeToggle { position: fixed; top: 8px; right: 8px; z-index: 99999; }
+</style>
+</head>
+<body>
+<button id="themeToggle">theme</button>
+<div id="summary">running…</div>
+
+<div class="timeline">
+  <article data-testid="tweet">
+    <div data-testid="User-Name">Elon Musk <span class="handle">@elonmusk · 5h</span></div>
+    <div id="t1" data-testid="tweetText" lang="en" dir="ltr"><span>Just talked with </span><a href="/naval">@naval</a><span> about the future of </span><a href="/hashtag/AI">#AI</a><span> — this is huge </span><img class="emoji" alt="😂" src="data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 36 36'><circle cx='18' cy='18' r='16' fill='%23fc0'/></svg>"><span>
+Read the full interview: </span><a href="https://example.com/interview">example.com/interview…</a></div>
+    <!-- v2.1.0: the «ترجمهٔ تصویر» button attaches to tweet media. The URL only
+         has to LOOK like X media; the mock worker answers without fetching. -->
+    <div class="media-wrap" style="position:relative;width:220px;height:130px;background:#333;margin-top:8px">
+      <img id="tweetpic" src="https://pbs.twimg.com/media/mock.jpg?format=jpg&name=small" alt="" width="220" height="130">
+    </div>
+  </article>
+
+  <article data-testid="tweet">
+    <div data-testid="User-Name">アニメファン <span class="handle">@animefan · 2h</span></div>
+    <!-- lang deliberately WRONG (en): the label must use the model-detected
+         language, not this attribute. -->
+    <div id="t2" data-testid="tweetText" lang="en" dir="ltr"><span>今日のエピソードは最高だった！作画がすごい</span></div>
+  </article>
+
+  <article data-testid="tweet">
+    <div data-testid="User-Name">کاربر فارسی <span class="handle">@parsi_user · 1h</span></div>
+    <div id="t3" data-testid="tweetText" lang="fa" dir="rtl"><span>این توییت از قبل فارسی است و نباید ترجمه شود.</span></div>
+  </article>
+
+  <article data-testid="tweet">
+    <div data-testid="User-Name">Gamer <span class="handle">@gamer · 30m</span></div>
+    <div id="t4a" data-testid="tweetText" lang="en" dir="ltr"><span>This take is so based, ratio incoming</span></div>
+    <div class="quote">
+      <div data-testid="User-Name">Critic <span class="handle">@critic · 1h</span></div>
+      <div id="t4b" data-testid="tweetText" lang="en" dir="ltr"><span>Souls games are overrated and boring</span></div>
+    </div>
+  </article>
+
+  <article data-testid="tweet">
+    <div data-testid="User-Name">Flaky <span class="handle">@flaky · 10m</span></div>
+    <div id="terr" data-testid="tweetText" lang="en" dir="ltr"><span>FAILME this one simulates an API failure</span></div>
+  </article>
+
+  <article data-testid="tweet">
+    <div data-testid="User-Name">Grok case <span class="handle">@grokcase · 3m</span></div>
+    <!-- Starts in English; later swapped in place to a Persian "Grok
+         translation" (lang attr unchanged), then back to English. -->
+    <div id="t6" data-testid="tweetText" lang="en" dir="ltr"><span>The new update completely changed the meta</span></div>
+  </article>
+
+  <article data-testid="tweet">
+    <div data-testid="User-Name">Pre-translated <span class="handle">@pretranslated · 1m</span></div>
+    <!-- Persian text but lang="en" (the Grok-shown state on load): the
+         Persian-marker heuristic must skip it. -->
+    <div id="t7" data-testid="tweetText" lang="en" dir="rtl"><span>این متن از قبل به فارسی ترجمه شده و نباید دوباره ترجمه شود.</span></div>
+  </article>
+
+  <article data-testid="tweet">
+    <div data-testid="User-Name">Profile preview</div>
+    <div id="bio1" data-testid="UserDescription"><span>Software engineer. Building things with </span><a href="/hashtag/TypeScript">#TypeScript</a><span> and coffee.</span></div>
+  </article>
+</div>
+
+<script>
+  // Seed settings BEFORE the shim loads. ?mode=manual tests the manual flow.
+  const params = new URLSearchParams(location.search);
+  globalThis.GXT_SHIM_SEED = {
+    settings: { mode: params.get('mode') || 'auto', xImageButton: true },
+    apiKeys: ['dev-key'],
+  };
+</script>
+<script src="chrome-shim.js?v=3300"></script>
+<script>
+  // The embedded test pane never composites frames, so real
+  // IntersectionObserver callbacks never fire here. Replace it with an
+  // eager fake (everything intersects immediately) so the rest of the
+  // pipeline runs for real. Production Chrome uses the real observer.
+  globalThis.IntersectionObserver = class {
+    constructor(callback) { this.callback = callback; }
+    observe(el) { setTimeout(() => this.callback([{ target: el, isIntersecting: true }], this), 0); }
+    unobserve() {}
+    disconnect() {}
+  };
+</script>
+<script>
+  // Fake translator: prefixes Persian text, keeps everything else verbatim so
+  // the render pipeline (placeholders, mentions, hashtags, emoji) is
+  // exercised. Also "detects" the source language like the real model does.
+  // Record the author/context the content script extracted for each item so
+  // the assertions below can verify getAuthor() + getContext() (v1.6.5).
+  window.__gxtSent = [];
+  globalThis.GXT_SHIM_HANDLER = async (message) => {
+    // v2.1.0 — the tweet-image button routes through here too.
+    if (message.type === 'TRANSLATE_IMAGE') {
+      window.__gxtImageUrl = message.url;
+      await new Promise((r) => setTimeout(r, 120));
+      return { ok: true, t: 'ترجمهٔ تصویر آزمایشی' };
+    }
+    if (message.type !== 'TRANSLATE_BATCH') return { ok: false, code: 'DEV' };
+    await new Promise((r) => setTimeout(r, 400));
+    const results = {};
+    for (const item of message.items) {
+      window.__gxtSent.push({ text: item.text, author: item.author || '', ctx: item.ctx || '' });
+      if (item.text.includes('FAILME')) {
+        results[item.id] = {
+          ok: false,
+          code: 'RATE_LIMIT',
+          error: 'سهمیهٔ همهٔ کلیدهای API موقتاً پر شده است',
+          detail: {
+            provider: 'gemini', model: 'gemini-test', code: 'RATE_LIMIT',
+            http: 429, apiStatus: 'RESOURCE_EXHAUSTED',
+            quotaId: 'GenerateRequestsPerMinutePerProjectPerModel-FreeTier',
+            retryAfterMs: 41000, raw: 'You exceeded your current quota.',
+            attempts: [
+              { key: 'AIzaMockKeyOne', code: 'RATE_LIMIT', http: 429, apiStatus: 'RESOURCE_EXHAUSTED', retryAfterMs: 41000, raw: 'quota', quotaId: '' },
+              { key: 'AIzaMockKeyTwo', code: 'RATE_LIMIT', http: 429, apiStatus: 'RESOURCE_EXHAUSTED', retryAfterMs: 39000, raw: 'quota', quotaId: '' },
+            ],
+          },
+        };
+      } else {
+        const sl = /[぀-ヿ㐀-䶵一-鿋]/.test(item.text) ? 'ja' : 'en';
+        results[item.id] = { ok: true, t: 'ترجمهٔ آزمایشی فارسی — ' + item.text, sl, cached: false };
+      }
+    }
+    return { ok: true, results };
+  };
+</script>
+<script src="../shared/settings.js?v=3300"></script>
+<script src="../shared/memory.js?v=3300"></script>
+<script src="../shared/theme.js?v=3300"></script>
+<script src="../content/dom.js?v=3300"></script>
+<script src="../content/render.js?v=3300"></script>
+<script src="../content/ui.js?v=3300"></script>
+<script src="../content/main.js?v=3300"></script>
+<script src="../content/composer.js?v=3300"></script>
+<script>
+  document.getElementById('themeToggle').addEventListener('click', () => {
+    document.body.classList.toggle('light');
+  });
+
+  // Dynamically inserted tweet: exercises the MutationObserver path.
+  setTimeout(() => {
+    const article = document.createElement('article');
+    article.setAttribute('data-testid', 'tweet');
+    article.innerHTML =
+      '<div data-testid="User-Name">Late <span class="handle">@late · now</span></div>' +
+      '<div id="t5" data-testid="tweetText" lang="en" dir="ltr"><span>This tweet was inserted dynamically while scrolling</span></div>';
+    document.querySelector('.timeline').appendChild(article);
+  }, 1200);
+
+  // --- Grok scenario -------------------------------------------------------
+  // 1) t6 is translated normally. 2) X swaps in Grok's Persian translation
+  // IN PLACE (same node, lang still "en") — our box must disappear and no
+  // re-translation must fire. 3) The user clicks "Show original": English
+  // returns — our translation must come back.
+  const t6 = document.getElementById('t6');
+  setTimeout(() => {
+    t6.replaceChildren();
+    const span = document.createElement('span');
+    span.textContent = 'آپدیت جدید کلاً متا رو عوض کرد';
+    t6.appendChild(span);
+  }, 2600);
+  setTimeout(() => {
+    window.__t6DuringGrok =
+      !document.querySelector('#t6 + .gxt-box') &&
+      !document.querySelector('#t6 + .gxt-linkrow');
+  }, 4200);
+  setTimeout(() => {
+    t6.replaceChildren();
+    const span = document.createElement('span');
+    span.textContent = 'The new update completely changed the meta';
+    t6.appendChild(span);
+  }, 4600);
+
+  // v2.1.0 — click the tweet-image button so the shared result card is up by
+  // the time the assertions run.
+  setTimeout(() => {
+    document.querySelector('.gxt-imgbtn')?.click();
+  }, 5200);
+
+  // Assertions. Generous delay: timers are throttled in non-focused panes.
+  setTimeout(() => {
+    const q = (sel) => document.querySelector(sel);
+    const boxAnchors = (id) => [...(q(id + ' + .gxt-box')?.querySelectorAll('a') || [])];
+    const checks = [
+      ['EN tweet translated', () => (q('#t1 + .gxt-box .gxt-text')?.textContent || '').includes('ترجمهٔ آزمایشی')],
+      // v2.9.5 — WCAG 3.1.2. x.com declares lang="en"; a Persian box left
+      // undeclared inside it is read aloud by an English speech engine.
+      ['v2.9.5: the translation box declares Persian', () => q('#t1 + .gxt-box')?.lang === 'fa'],
+      ['link placeholder restored', () => !!q('#t1 + .gxt-box a[href^="https://example.com"]')],
+      ['emoji image restored', () => !!q('#t1 + .gxt-box img')],
+      ['mention re-linkified', () => boxAnchors('#t1').some((a) => a.textContent.trim() === '@naval')],
+      ['hashtag re-linkified', () => boxAnchors('#t1').some((a) => a.textContent.trim() === '#AI')],
+      ['line break preserved', () => (q('#t1 + .gxt-box .gxt-text')?.textContent || '').includes('\n')],
+      ['JA tweet translated', () => !!q('#t2 + .gxt-box .gxt-text')],
+      ['label uses DETECTED language', () => (q('#t2 + .gxt-box .gxt-label')?.textContent || '').includes('ژاپنی')],
+      ['label shows engine', () => (q('#t1 + .gxt-box .gxt-label')?.textContent || '').includes('Gemini')],
+      ['FA tweet skipped', () => !q('#t3 + .gxt-box') && !q('#t3 + .gxt-linkrow')],
+      ['Persian-with-wrong-lang skipped', () => !q('#t7 + .gxt-box') && !q('#t7 + .gxt-linkrow')],
+      ['quote commentary translated', () => !!q('#t4a + .gxt-box .gxt-text')],
+      ['quoted tweet translated', () => !!q('#t4b + .gxt-box .gxt-text')],
+      ['author sent as name + handle', () => {
+        const sent = window.__gxtSent.find((s) => s.text.includes('Just talked with'));
+        return (sent?.author || '') === 'Elon Musk (@elonmusk)';
+      }],
+      ['quote context captured for commentary', () => {
+        const ctx = window.__gxtSent.find((s) => s.text.includes('This take is so based'))?.ctx || '';
+        return ctx.includes('quoting') && ctx.includes('@critic') && ctx.includes('overrated');
+      }],
+      ['error UI with retry', () => !!q('#terr + .gxt-box .gxt-err .gxt-retry')],
+      ['error headline uses worker message', () => (q('#terr + .gxt-box .gxt-err')?.textContent || '').includes('همهٔ کلیدها')],
+      // v2.7.0: the expander still shows WHICH key failed and why — but the
+      // key is masked, because this box lives in x.com's own DOM and x.com's
+      // own scripts can read it. The popup keeps showing the full key.
+      ['error detail expander names the key without leaking it', () => {
+        const btn = q('#terr + .gxt-box .gxt-detail-btn');
+        const pre = q('#terr + .gxt-box .gxt-detail');
+        const text = pre?.textContent || '';
+        return !!btn && !!pre
+          && text.includes('AIzaMo')                 // identifiable
+          && !text.includes('AIzaMockKeyOne')        // not usable
+          && text.includes('RESOURCE_EXHAUSTED');
+      }],
+      ['error detail is keyboard-activatable', () => {
+        const btn = q('#terr + .gxt-box .gxt-detail-btn');
+        const pre = q('#terr + .gxt-box .gxt-detail');
+        if (!btn || !pre) return false;
+        const before = pre.style.display;
+        btn.dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter', bubbles: true }));
+        const opened = pre.style.display !== before;
+        btn.dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter', bubbles: true }));
+        return opened && pre.style.display === before;
+      }],
+      ['dynamic tweet translated', () => !!q('#t5 + .gxt-box .gxt-text')],
+      ['bio translated', () => !!q('#bio1 + .gxt-box .gxt-text')],
+      ['translation is RTL', () => q('#t1 + .gxt-box')?.dir === 'rtl'],
+      ['Grok swap-in removed our box', () => window.__t6DuringGrok === true],
+      ['Grok show-original re-translates', () => (q('#t6 + .gxt-box .gxt-text')?.textContent || '').includes('ترجمهٔ آزمایشی')],
+      ['font variable applied', () => (document.documentElement.style.getPropertyValue('--gxt-font') || '').includes('Vazirmatn')],
+
+      // ---- v2.1.0: the image card is the SHARED window ---------------------
+      ['image button rendered on tweet media', () => !!q('.gxt-imgbtn')],
+      ['image request upgraded to the large variant', () =>
+        (window.__gxtImageUrl || '').includes('name=large')],
+      ['image card lives in the shared shadow UI', () => {
+        const sr = q('[data-gxt-ui]')?.shadowRoot;
+        return !!sr?.querySelector('.card') &&
+          (sr.querySelector('.card-body')?.textContent || '').includes('ترجمهٔ تصویر آزمایشی');
+      }],
+      ['image card is themed (tokens on the host), not hardcoded', () => {
+        const host = q('[data-gxt-ui]');
+        const sr = host?.shadowRoot;
+        if (!host || !sr) return false;
+        const bg = getComputedStyle(sr.querySelector('.card')).backgroundColor;
+        return host.style.cssText.includes('--gxt-card') &&
+          bg !== 'rgb(28, 29, 32)' && bg !== 'rgba(0, 0, 0, 0)';
+      }],
+      ['image card carries the opacity toggle', () => {
+        const sr = q('[data-gxt-ui]')?.shadowRoot;
+        return [...(sr?.querySelectorAll('.card-head button') || [])]
+          .some((b) => b.textContent === '◐' || b.textContent === '●');
+      }],
+      ['image card is draggable by its header', () => {
+        const sr = q('[data-gxt-ui]')?.shadowRoot;
+        const card = sr?.querySelector('.card');
+        const head = sr?.querySelector('.card-head');
+        if (!card || !head) return false;
+        // Park it at a known spot first (see mock-page.html for the why).
+        card.style.left = '40px';
+        card.style.top = '40px';
+        const start = card.getBoundingClientRect();
+        head.dispatchEvent(new PointerEvent('pointerdown', {
+          bubbles: true, button: 0, pointerId: 11,
+          clientX: start.left + 25, clientY: start.top + 10,
+        }));
+        window.dispatchEvent(new PointerEvent('pointermove', {
+          bubbles: true, pointerId: 11,
+          clientX: start.left + 85, clientY: start.top + 40,
+        }));
+        window.dispatchEvent(new PointerEvent('pointerup', { bubbles: true, pointerId: 11 }));
+        const end = card.getBoundingClientRect();
+        return Math.round(end.left - start.left) === 60 && Math.round(end.top - start.top) === 30;
+      }],
+    ];
+    const lines = [];
+    let passed = 0;
+    for (const [name, fn] of checks) {
+      let ok = false;
+      try { ok = !!fn(); } catch { ok = false; }
+      if (ok) passed += 1;
+      lines.push(`<div class="${ok ? 'pass' : 'fail'}">${ok ? 'PASS' : 'FAIL'} — ${name}</div>`);
+      console.log(`GXT-TEST ${ok ? 'PASS' : 'FAIL'} ${name}`);
+    }
+    document.getElementById('summary').innerHTML =
+      `<b>${passed}/${checks.length} checks passed</b>` + lines.join('');
+    console.log(`GXT-TEST SUMMARY ${passed}/${checks.length}`);
+  }, 8000);
+</script>
+</body>
+</html>

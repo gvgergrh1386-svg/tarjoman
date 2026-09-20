@@ -1,0 +1,1970 @@
+/*
+ * ترجمان — popup stylesheet, v2.9.0 «نما».
+ *
+ * Not a single colour, size, radius, shadow or duration is written here as a
+ * literal: every value comes from the semantic tokens that shared/theme.js
+ * writes onto <html>. That was already the rule for COLOUR in v2.0; v2.9
+ * extends it to TYPE (a 7-step scale replaces ~25 hard-coded pixel sizes),
+ * ELEVATION, FOCUS and MOTION, so "change the density" now genuinely changes
+ * the density instead of scaling three of the twenty sizes on screen.
+ *
+ * LAYOUT
+ *   A fixed column: app bar + search stay put, one scrolling view underneath,
+ *   an appearance sheet that slides over everything. Views are swapped, never
+ *   stacked, so the scroll position of a section is its own.
+ *
+ * WIDTH
+ *   400px, widening to 440px at the «بزرگ» density — Chrome sizes the popup
+ *   from the body and offers no way to resize it, so a reader who needs larger
+ *   text would otherwise get the same 400px with more wrapping.
+ */
+
+/* Fallback tokens so the UI is never unstyled if JS is late. Kept in sync with
+   the graphite defaults in shared/theme.js. */
+:root {
+  --gxt-bg: #0e1014;
+  --gxt-bg-elev: #171a21;
+  --gxt-bg-sunken: #0a0c10;
+  --gxt-fg: #e2e5e8;
+  --gxt-fg-muted: #b7bdc6;
+  --gxt-fg-faint: #98a0ad;
+  --gxt-line: #232936;
+  --gxt-line-strong: #3a4356;
+  --gxt-accent: #1d9bf0;
+  --gxt-accent-brand: #1d9bf0;
+  --gxt-accent-solid: #177bbf;
+  --gxt-accent-fg: #fff;
+  --gxt-accent-ink: #32a5f1;
+  --gxt-accent-on-soft: #5cb8f5;
+  --gxt-accent-hover: #146aa6;
+  --gxt-accent-soft: rgba(29, 155, 240, 0.18);
+  --gxt-accent-line: rgba(29, 155, 240, 0.45);
+  --gxt-card: #171a21;
+  --gxt-ok: #12b981;
+  --gxt-warn: #eab308;
+  --gxt-err: #f77289;
+  --gxt-ok-soft: rgba(18, 185, 129, 0.16);
+  --gxt-warn-soft: rgba(234, 179, 8, 0.16);
+  --gxt-err-soft: rgba(247, 114, 137, 0.16);
+  --gxt-ok-on-soft: #2ecf95;
+  --gxt-warn-on-soft: #f0c53a;
+  --gxt-err-on-soft: #fb8ba0;
+  --gxt-ok-edge: #12b981;
+  --gxt-warn-edge: #eab308;
+  --gxt-err-edge: #f77289;
+  --gxt-elev-1: 0 2px 8px rgba(0, 0, 0, 0.25);
+  --gxt-elev-2: 0 8px 24px rgba(0, 0, 0, 0.38);
+  --gxt-elev-3: 0 18px 44px rgba(0, 0, 0, 0.5);
+  --gxt-shadow: var(--gxt-elev-3);
+  --gxt-shadow-sm: var(--gxt-elev-1);
+  --gxt-radius-sm: 9px;
+  --gxt-radius-md: 13px;
+  --gxt-radius-lg: 18px;
+  --gxt-radius-xl: 24px;
+  --gxt-radius-pill: 9999px;
+  --gxt-focus-ring: 0 0 0 2px var(--gxt-bg), 0 0 0 4px var(--gxt-accent);
+  --gxt-focus-ring-inset: inset 0 0 0 2px var(--gxt-accent);
+  --gxt-dur-1: 120ms;
+  --gxt-dur-2: 180ms;
+  --gxt-dur-3: 260ms;
+  --gxt-ease: cubic-bezier(0.2, 0, 0, 1);
+  --gxt-ease-emphasized: cubic-bezier(0.2, 0.8, 0.25, 1);
+  --gxt-motion: var(--gxt-dur-2) var(--gxt-ease);
+  --gxt-backdrop: blur(16px);
+  --gxt-sp-1: 4px;
+  --gxt-sp-2: 8px;
+  --gxt-sp-3: 12px;
+  --gxt-sp-4: 16px;
+  --gxt-sp-5: 22px;
+  --gxt-sp-6: 30px;
+  --gxt-row-y: 10px;
+  --gxt-card-p: 13px 14px;
+  --gxt-tap: 36px;
+  --gxt-fs-2xs: 11.5px;
+  --gxt-fs-xs: 12px;
+  --gxt-fs-sm: 12.5px;
+  --gxt-fs-md: 13.5px;
+  --gxt-fs-lg: 15px;
+  --gxt-fs-xl: 17px;
+  --gxt-fs-2xl: 23px;
+  --gxt-lh-tight: 1.4;
+  --gxt-lh: 1.75;
+  --gxt-lh-loose: 2;
+  --gxt-font: "Vazirmatn", "Segoe UI", Tahoma, sans-serif;
+}
+
+* {
+  box-sizing: border-box;
+  margin: 0;
+}
+
+body {
+  width: 400px;
+  min-height: 460px;
+  max-height: 598px;
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+  background: var(--gxt-bg);
+  color: var(--gxt-fg);
+  font: var(--gxt-fs-md) / var(--gxt-lh) var(--gxt-font);
+  font-weight: var(--gxt-weight, 400);
+  /* A soft accent aura behind the header: depth without a heavy shadow. */
+  background-image: radial-gradient(
+    120% 70% at 100% 0%,
+    var(--gxt-accent-soft) 0%,
+    transparent 62%
+  );
+  background-repeat: no-repeat;
+}
+
+html[data-density="large"] body {
+  width: 440px;
+}
+
+.hidden,
+[hidden] {
+  display: none !important;
+}
+
+.faint {
+  color: var(--gxt-fg-faint);
+  font-weight: var(--gxt-weight, 400);
+}
+
+.small {
+  font-size: var(--gxt-fs-xs);
+}
+
+.ltr {
+  direction: ltr;
+}
+
+/* Visible to assistive technology, invisible on screen. Used for the labels
+   that a sighted reader gets from context (the search field, the two prompt
+   selects) and for the live search-result count. */
+.sr-only {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  padding: 0;
+  margin: -1px;
+  overflow: hidden;
+  clip: rect(0 0 0 0);
+  clip-path: inset(50%);
+  white-space: nowrap;
+  border: 0;
+}
+
+/* One focus treatment for the whole window. Two rings — surface then accent —
+   so it stays visible on a filled control as well as on the background, and
+   the accent ring is derived to clear 3:1 against the page (WCAG 1.4.11). */
+/* No border-radius here on purpose: box-shadow already follows the element's
+   own radius, and forcing one reshaped every pill-shaped control the moment it
+   took focus. */
+:focus-visible {
+  outline: none;
+  box-shadow: var(--gxt-focus-ring);
+}
+
+/* ══════════════════════════════════════════════════════════════ app bar */
+
+.appbar {
+  display: flex;
+  align-items: center;
+  gap: var(--gxt-sp-2);
+  padding: 10px var(--gxt-sp-4) 9px;
+  border-bottom: 1px solid var(--gxt-line);
+  flex: none;
+}
+
+.logo {
+  border-radius: 8px;
+  flex: none;
+}
+
+.appbar-text {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  line-height: var(--gxt-lh-tight);
+}
+
+#viewTitle {
+  font-size: var(--gxt-fs-lg);
+  font-weight: 800;
+  letter-spacing: -0.01em;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+/* The engine status: the single most important sentence in the window. It used
+   to be 10.5px in the faintest ink available, i.e. the least legible thing on
+   screen. Now it is body-small in a status colour that clears AAA. */
+.appbar-status {
+  font-size: var(--gxt-fs-xs);
+  color: var(--gxt-fg-muted);
+  display: flex;
+  align-items: center;
+  gap: 5px;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.appbar-status::before {
+  content: "";
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  flex: none;
+  background: var(--gxt-ok-edge);
+}
+
+.appbar-status.warn {
+  color: var(--gxt-warn);
+}
+
+.appbar-status.warn::before {
+  background: var(--gxt-warn-edge);
+}
+
+/* ═════════════════════════════════════════════════════════════ controls */
+
+button {
+  cursor: pointer;
+  border: none;
+  border-radius: var(--gxt-radius-pill);
+  font-family: inherit;
+  font-size: var(--gxt-fs-sm);
+  color: inherit;
+  background: transparent;
+  /* Text colour switches immediately with the theme. Animating dark ink into
+     light ink briefly crosses a low-contrast midpoint on a light surface. */
+  transition: background var(--gxt-motion), border-color var(--gxt-motion),
+    transform var(--gxt-dur-1) var(--gxt-ease);
+}
+
+button:active {
+  transform: scale(0.97);
+}
+
+/* Every icon-only control clears the 24×24 minimum target size that WCAG 2.2
+   added (2.5.8). Several used to be 16px. */
+.icon-btn {
+  display: grid;
+  place-items: center;
+  width: var(--gxt-tap);
+  height: var(--gxt-tap);
+  flex: none;
+  color: var(--gxt-fg-muted);
+  border: 1px solid transparent;
+  font-size: var(--gxt-fs-lg);
+}
+
+.icon-btn svg {
+  width: 18px;
+  height: 18px;
+  fill: currentColor;
+}
+
+.icon-btn:hover {
+  color: var(--gxt-fg);
+  background: var(--gxt-accent-soft);
+}
+
+.icon-btn.tiny {
+  width: 28px;
+  height: 28px;
+  font-size: var(--gxt-fs-sm);
+}
+
+.icon-btn.tiny svg {
+  width: 14px;
+  height: 14px;
+}
+
+.primary {
+  background: var(--gxt-accent-solid);
+  color: var(--gxt-accent-fg);
+  padding: 9px 18px;
+  font-weight: var(--gxt-weight-strong, 700);
+  flex: none;
+  min-height: var(--gxt-tap);
+}
+
+.primary:hover {
+  background: var(--gxt-accent-hover);
+}
+
+.primary:disabled,
+.ghost:disabled {
+  opacity: 0.55;
+  cursor: default;
+}
+
+.primary.block {
+  width: 100%;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: var(--gxt-sp-2);
+  font-size: var(--gxt-fs-md);
+}
+
+.primary.block svg {
+  width: 17px;
+  height: 17px;
+  fill: currentColor;
+  flex: none;
+}
+
+.ghost {
+  border: 1px solid var(--gxt-line-strong);
+  color: var(--gxt-fg-muted);
+  padding: 8px 14px;
+  background: transparent;
+  min-height: var(--gxt-tap);
+}
+
+.ghost:hover {
+  color: var(--gxt-fg);
+  border-color: var(--gxt-accent-line);
+  background: var(--gxt-accent-soft);
+}
+
+.ghost.wide {
+  width: 100%;
+  margin-top: var(--gxt-sp-2);
+}
+
+.link {
+  color: var(--gxt-accent-ink);
+  font-size: var(--gxt-fs-xs);
+  text-decoration: none;
+  white-space: nowrap;
+  padding: 4px 2px;
+  border-radius: var(--gxt-radius-sm);
+}
+
+.link:hover {
+  text-decoration: underline;
+}
+
+/* iOS-style switch, RTL aware.
+   The INPUT itself covers the whole control and is the click target, so the
+   switch keeps native keyboard behaviour and can carry an accessible name from
+   the row title (wired in popup.js). Before v2.9 the input was 0×0 inside a
+   <label>, which worked with a mouse and announced nothing at all. */
+/* v3.2.5 — the switch is on the control scale now.
+ *
+ * These were literal 46×27 / 40×24 boxes with a literal 19px / 16px knob
+ * travel, and content/player.css.js held a THIRD copy of the same control at a
+ * fourth set of numbers. So the one control that appears ~40 times in this
+ * product had three definitions, and «بزرگ» — a setting that exists because a
+ * reader needs bigger targets — moved none of them. The geometry lives in
+ * shared/theme.js as `sw-*` per density; the `.sm` variant keeps the compact
+ * density's numbers whatever the reader chose, because it is used inside dense
+ * list rows whose height is set by the row, not by the switch.
+ */
+.switch {
+  position: relative;
+  display: inline-block;
+  width: var(--gxt-sw-w);
+  height: var(--gxt-sw-h);
+  flex: none;
+}
+
+.switch.sm {
+  width: var(--gxt-sw-sm-w, 40px);
+  height: var(--gxt-sw-sm-h, 24px);
+}
+
+.switch input {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  margin: 0;
+  opacity: 0;
+  cursor: pointer;
+  z-index: 1;
+}
+
+.switch .track {
+  position: absolute;
+  inset: 0;
+  border-radius: var(--gxt-switch-radius, 9999px);
+  background: var(--gxt-line-strong);
+  transition: background var(--gxt-motion);
+  pointer-events: none;
+}
+
+.switch .track::before {
+  content: "";
+  position: absolute;
+  top: 3px;
+  inset-inline-start: 3px;
+  width: var(--gxt-sw-knob);
+  height: var(--gxt-sw-knob);
+  border-radius: var(--gxt-switch-knob-radius, 50%);
+  background: #fff;
+  box-shadow: var(--gxt-elev-1);
+  transition: transform var(--gxt-dur-2) var(--gxt-ease-emphasized);
+}
+
+.switch.sm .track::before {
+  width: var(--gxt-sw-sm-knob, 18px);
+  height: var(--gxt-sw-sm-knob, 18px);
+}
+
+.switch input:checked + .track {
+  background: var(--gxt-accent-solid);
+}
+
+/* The knob travels toward the LEADING edge, which in an RTL UI is the left
+   one. `sw-travel` is `sw-w - sw-knob - 6` by construction (the knob is inset
+   3px), so it lands flush at both ends at every density instead of needing the
+   offset re-guessed per size. */
+.switch input:checked + .track::before {
+  transform: translateX(calc(var(--gxt-sw-travel) * var(--gxt-switch-sign, -1)));
+}
+
+.switch.sm input:checked + .track::before {
+  transform: translateX(calc(var(--gxt-sw-sm-travel, 16px) * var(--gxt-switch-sign, -1)));
+}
+
+.switch input:focus-visible {
+  box-shadow: none;
+}
+
+.switch input:focus-visible + .track {
+  box-shadow: var(--gxt-focus-ring);
+}
+
+/* ═══════════════════════════════════════════════════════════════ search */
+
+.searchbar {
+  position: relative;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  margin: var(--gxt-sp-2) var(--gxt-sp-4) 0;
+  padding: 0 10px;
+  border: 1px solid var(--gxt-line);
+  border-radius: var(--gxt-radius-pill);
+  background: var(--gxt-bg-sunken);
+  transition: border-color var(--gxt-motion), box-shadow var(--gxt-motion);
+  flex: none;
+}
+
+.searchbar:focus-within {
+  border-color: var(--gxt-accent-line);
+  box-shadow: 0 0 0 3px var(--gxt-accent-soft);
+}
+
+.search-ico {
+  width: 16px;
+  height: 16px;
+  fill: var(--gxt-fg-faint);
+  flex: none;
+}
+
+.searchbar input {
+  flex: 1;
+  min-width: 0;
+  border: none;
+  background: none;
+  color: inherit;
+  font: inherit;
+  font-size: var(--gxt-fs-sm);
+  padding: 8px 0;
+  outline: none;
+}
+
+.searchbar input:focus-visible {
+  box-shadow: none;
+}
+
+.searchbar input::-webkit-search-cancel-button {
+  display: none;
+}
+
+/* ════════════════════════════════════════════════════════════════ views */
+
+main {
+  flex: 1;
+  min-height: 0;
+  overflow-y: auto;
+  overscroll-behavior: contain;
+  padding: var(--gxt-sp-3) var(--gxt-sp-4) var(--gxt-sp-5);
+  scrollbar-width: var(--gxt-scrollbar-width, thin);
+  scrollbar-color: var(--gxt-line-strong) transparent;
+}
+
+main::-webkit-scrollbar {
+  width: 9px;
+}
+
+main::-webkit-scrollbar-thumb {
+  background: var(--gxt-line-strong);
+  border-radius: 99px;
+  border: 2px solid transparent;
+  background-clip: content-box;
+}
+
+.view {
+  display: none;
+  flex-direction: column;
+  gap: var(--gxt-sp-3);
+}
+
+.view:focus-visible {
+  box-shadow: none;
+}
+
+.view.active {
+  display: flex;
+  animation: rise var(--gxt-dur-3) var(--gxt-ease-emphasized);
+}
+
+@keyframes rise {
+  from {
+    opacity: 0;
+    transform: translateY(7px);
+  }
+}
+
+/* Search shows the matching sections in place, each under its own name — in a
+   drill-down structure a result is useless if you cannot see where it lives. */
+.view-label {
+  display: none;
+  font-size: var(--gxt-fs-xs);
+  font-weight: 800;
+  letter-spacing: 0.02em;
+  color: var(--gxt-accent-ink);
+  padding-bottom: 2px;
+  border-bottom: 1px solid var(--gxt-line);
+}
+
+body.searching .view {
+  display: none;
+  animation: none;
+}
+
+body.searching .view.searchhit {
+  display: flex;
+}
+
+body.searching .view-label {
+  display: block;
+}
+
+.empty-state {
+  color: var(--gxt-fg-muted);
+  text-align: center;
+  padding: var(--gxt-sp-5) 0;
+  font-size: var(--gxt-fs-sm);
+}
+
+.card.no-match,
+.row-item.no-match,
+.nav-row.no-match {
+  display: none;
+}
+
+/* In search, home shows only the matching DESTINATIONS — its action card and
+   the first-run prompt are not results. A group with nothing left in it goes
+   with them. */
+body.searching #view-home > .card {
+  display: none;
+}
+
+body.searching .nav-group:not(:has(.nav-row:not(.no-match))) {
+  display: none;
+}
+
+/* A card that matched only through one of its rows is stripped to that row. */
+body.searching .card.filtered > *:not(.card-head):not(.row-item) {
+  display: none;
+}
+
+/* Loose prose that belongs to a whole section (the "the rest is inside the
+   player" tip) is not a search result and must not ride along with one. */
+body.searching .view > .note {
+  display: none;
+}
+
+/* `:last-of-type` is DOM order, not visible order, so a filtered card kept a
+   separator under its last VISIBLE row. Results read cleaner without any. */
+body.searching .card .row-item {
+  border-bottom: none;
+}
+
+/* ═══════════════════════════════════════════════════ home: destinations */
+
+.nav-group {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.group-lbl {
+  display: block;
+  font-size: var(--gxt-fs-2xs);
+  font-weight: 800;
+  color: var(--gxt-fg-faint);
+  letter-spacing: 0.03em;
+  padding: 0 var(--gxt-sp-1) var(--gxt-sp-1);
+}
+
+.nav-row {
+  display: flex;
+  align-items: center;
+  gap: var(--gxt-sp-3);
+  width: 100%;
+  padding: var(--gxt-sp-2) var(--gxt-sp-3);
+  border-radius: var(--gxt-radius-md);
+  border: 1px solid transparent;
+  text-align: start;
+  min-height: 52px;
+}
+
+.nav-row:hover {
+  background: var(--gxt-bg-elev);
+  border-color: var(--gxt-line);
+}
+
+.nav-ico {
+  display: grid;
+  place-items: center;
+  width: 30px;
+  height: 30px;
+  flex: none;
+  border-radius: var(--gxt-radius-sm);
+  background: var(--gxt-accent-soft);
+  color: var(--gxt-accent-on-soft);
+}
+
+.nav-ico svg {
+  width: 17px;
+  height: 17px;
+  fill: currentColor;
+}
+
+.nav-main {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  line-height: var(--gxt-lh-tight);
+  gap: 1px;
+}
+
+.nav-title {
+  font-size: var(--gxt-fs-md);
+  font-weight: var(--gxt-weight-strong, 700);
+}
+
+.nav-sub {
+  font-size: var(--gxt-fs-2xs);
+  color: var(--gxt-fg-faint);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+/* Direction matters here. Drilling INTO a destination moves the eye leftward
+   in an RTL layout, so the chevron points left and the hover nudge is
+   negative. These are SVG rather than the character «‹»: U+2039 is
+   bidi-mirrored, so it silently rendered as a RIGHT-pointing chevron —
+   pointing back the way you came. */
+.nav-chev {
+  flex: none;
+  display: grid;
+  place-items: center;
+  color: var(--gxt-fg-faint);
+  transition: transform var(--gxt-motion), color var(--gxt-motion);
+}
+
+.nav-chev svg {
+  width: 18px;
+  height: 18px;
+  fill: currentColor;
+}
+
+.nav-chev.ext svg {
+  width: 15px;
+  height: 15px;
+}
+
+.nav-row:hover .nav-chev {
+  color: var(--gxt-accent-ink);
+  transform: translateX(-3px);
+}
+
+.nav-row:hover .nav-chev.ext {
+  transform: none;
+}
+
+/* Back travels the other way, so its arrow is the mirror of the same glyph. */
+.icon-btn.back svg {
+  transform: scaleX(-1);
+}
+
+/* ═════════════════════════════════════════════════════════════════ cards */
+
+.card {
+  border: 1px solid var(--gxt-panel-line, var(--gxt-line));
+  border-radius: var(--gxt-radius-lg);
+  background: var(--gxt-card);
+  padding: var(--gxt-card-p);
+  box-shadow: var(--gxt-elev-1);
+  backdrop-filter: var(--gxt-backdrop, none);
+  -webkit-backdrop-filter: var(--gxt-backdrop, none);
+}
+
+.card-head {
+  display: flex;
+  align-items: center;
+  gap: var(--gxt-sp-2);
+  margin-bottom: var(--gxt-sp-2);
+}
+
+.card-head h2 {
+  flex: 1;
+  font-size: var(--gxt-fs-heading, var(--gxt-fs-md));
+  color: var(--gxt-heading-ink, var(--gxt-fg));
+  font-weight: 800;
+  letter-spacing: -0.01em;
+  min-width: 0;
+}
+
+.pill-tag {
+  flex: none;
+  padding: 2px 9px;
+  border-radius: var(--gxt-radius-pill);
+  border: 1px solid var(--gxt-accent-line);
+  color: var(--gxt-accent-on-soft);
+  background: var(--gxt-accent-soft);
+  font-size: var(--gxt-fs-2xs);
+  font-weight: var(--gxt-weight-strong, 700);
+  max-width: 58%;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.chip-mini {
+  padding: 1px 7px;
+  border-radius: var(--gxt-radius-pill);
+  background: var(--gxt-accent-soft);
+  color: var(--gxt-accent-on-soft);
+  font-size: var(--gxt-fs-2xs);
+  font-weight: var(--gxt-weight-strong, 700);
+}
+
+.chip-mini.warn {
+  background: var(--gxt-warn-soft);
+  color: var(--gxt-warn-on-soft);
+}
+
+.section {
+  margin-top: var(--gxt-sp-3);
+  padding-top: var(--gxt-sp-3);
+  border-top: 1px dashed var(--gxt-line);
+  display: flex;
+  flex-direction: column;
+}
+
+/* ══════════════════════════════════════════ context card (the new home) */
+
+.ctx-actions {
+  display: flex;
+  flex-direction: column;
+  gap: var(--gxt-sp-2);
+  margin-bottom: var(--gxt-sp-2);
+}
+
+.ctx-row {
+  display: flex;
+  gap: var(--gxt-sp-2);
+}
+
+.ctx-row .ghost {
+  flex: 1;
+  text-align: center;
+  padding-inline: var(--gxt-sp-2);
+}
+
+.card.setup {
+  border-color: var(--gxt-accent-line);
+  background: linear-gradient(180deg, var(--gxt-accent-soft), transparent 70%),
+    var(--gxt-card);
+}
+
+/* ═════════════════════════════════════════════════════════ rows + help */
+
+.row-item {
+  display: flex;
+  align-items: flex-start;
+  gap: var(--gxt-sp-3);
+  padding: var(--gxt-row-y) 0;
+  border-bottom: 1px solid color-mix(in srgb, var(--gxt-line) 60%, transparent);
+}
+
+.row-item:last-of-type,
+.row-item.flat {
+  border-bottom: none;
+}
+
+.row-main {
+  flex: 1;
+  min-width: 0;
+}
+
+.row-title {
+  font-size: var(--gxt-fs-sm);
+  font-weight: 600;
+  line-height: var(--gxt-lh-tight);
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  flex-wrap: wrap;
+  min-height: 20px;
+}
+
+.field-row {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  margin-bottom: var(--gxt-sp-1);
+}
+
+.field-row.spaced {
+  margin-top: var(--gxt-sp-3);
+}
+
+.lbl {
+  font-size: var(--gxt-fs-sm);
+  font-weight: 600;
+}
+
+/* The «؟» affordance — the reason the window reads calm instead of like a
+   manual. 24×24 so it satisfies the 2.5.8 target-size rule; the glyph inside
+   stays small. */
+.info {
+  width: 24px;
+  height: 24px;
+  flex: none;
+  border-radius: 50%;
+  border: 1px solid var(--gxt-line-strong);
+  color: var(--gxt-fg-muted);
+  font-size: var(--gxt-fs-2xs);
+  font-weight: 800;
+  line-height: 1;
+  display: inline-grid;
+  place-items: center;
+  padding: 0;
+}
+
+.info::before {
+  content: "؟";
+}
+
+.info:hover,
+.info[aria-expanded="true"] {
+  color: var(--gxt-accent-fg);
+  background: var(--gxt-accent-solid);
+  border-color: var(--gxt-accent-solid);
+}
+
+.row-help {
+  display: none;
+  margin-top: 5px;
+  padding: 8px 10px;
+  border-radius: var(--gxt-radius-sm);
+  background: var(--gxt-bg-sunken);
+  border: 1px solid var(--gxt-line);
+  color: var(--gxt-fg-muted);
+  font-size: var(--gxt-fs-xs);
+  line-height: var(--gxt-lh);
+  animation: fold var(--gxt-dur-2) var(--gxt-ease);
+}
+
+.row-help.open,
+body.hints-on .row-help {
+  display: block;
+}
+
+@keyframes fold {
+  from {
+    opacity: 0;
+    transform: translateY(-3px);
+  }
+}
+
+.note {
+  color: var(--gxt-fg-muted);
+  font-size: var(--gxt-fs-xs);
+  line-height: var(--gxt-lh);
+}
+
+.note.tip {
+  margin-top: var(--gxt-sp-2);
+  padding-inline-start: 10px;
+  border-inline-start: 2px solid var(--gxt-accent-line);
+}
+
+.note:empty {
+  display: none;
+}
+
+/* ═══════════════════════════════════════════════════════════════ inputs */
+
+/* NOTE: input[type="search"] is deliberately absent. The only search field
+   lives inside `.searchbar`, which already draws the pill — including it here
+   painted a second bordered box inside the first. */
+input[type="text"],
+input[type="password"],
+input[type="number"],
+textarea,
+select {
+  width: 100%;
+  min-width: 0;
+  padding: 9px 10px;
+  border-radius: var(--gxt-radius-sm);
+  border: 1px solid var(--gxt-line);
+  background: var(--gxt-bg-sunken);
+  color: var(--gxt-fg);
+  font-size: var(--gxt-fs-sm);
+  font-family: inherit;
+  transition: border-color var(--gxt-motion), box-shadow var(--gxt-motion);
+}
+
+select {
+  cursor: pointer;
+  min-height: var(--gxt-tap);
+}
+
+input:focus-visible,
+select:focus-visible,
+textarea:focus-visible {
+  outline: none;
+  border-color: var(--gxt-accent-line);
+  box-shadow: 0 0 0 3px var(--gxt-accent-soft);
+}
+
+textarea {
+  direction: ltr;
+  text-align: left;
+  resize: vertical;
+  font-family: Consolas, "Courier New", monospace;
+  font-size: var(--gxt-fs-xs);
+  line-height: 1.7;
+  white-space: pre-wrap;
+}
+
+textarea.fa-area {
+  direction: var(--gxt-ui-dir, rtl);
+  text-align: start;
+  font-family: inherit;
+  font-size: var(--gxt-fs-sm);
+}
+
+#promptEditor {
+  min-height: 170px;
+  margin-top: 6px;
+}
+
+#model,
+#oaiModels {
+  direction: ltr;
+}
+
+.field {
+  display: block;
+  font-size: var(--gxt-fs-xs);
+  color: var(--gxt-fg-muted);
+  margin-bottom: var(--gxt-sp-2);
+}
+
+.field input,
+.field select,
+.field textarea {
+  margin-top: var(--gxt-sp-1);
+}
+
+.field.slim {
+  margin-top: var(--gxt-sp-2);
+  margin-bottom: 0;
+}
+
+.row {
+  display: flex;
+  gap: var(--gxt-sp-2);
+  align-items: center;
+  margin-top: var(--gxt-sp-2);
+  flex-wrap: wrap;
+}
+
+.row.tight {
+  margin-top: 0;
+}
+
+.row.actions {
+  margin-top: var(--gxt-sp-3);
+}
+
+.row.actions .ghost {
+  flex: 1;
+  text-align: center;
+}
+
+.statusline {
+  display: flex;
+  gap: var(--gxt-sp-2);
+  align-items: baseline;
+  margin-top: 6px;
+  flex-wrap: wrap;
+}
+
+.status {
+  font-size: var(--gxt-fs-xs);
+  color: var(--gxt-fg-muted);
+  flex: 1;
+  min-width: 0;
+}
+
+.status:empty {
+  display: none;
+}
+
+.status.ok {
+  color: var(--gxt-ok);
+}
+
+.status.err {
+  color: var(--gxt-err);
+}
+
+.status.warn {
+  color: var(--gxt-warn);
+}
+
+/* Segmented control (radio group or plain buttons) */
+.seg {
+  display: flex;
+  gap: 2px;
+  padding: 3px;
+  border-radius: var(--gxt-radius-md);
+  background: var(--gxt-bg-sunken);
+  border: 1px solid var(--gxt-line);
+}
+
+.seg label,
+.seg button {
+  flex: 1;
+  text-align: center;
+  border-radius: 10px;
+  padding: 7px 4px;
+  font-size: var(--gxt-fs-sm);
+  font-weight: var(--gxt-weight-strong, 700);
+  color: var(--gxt-fg-muted);
+  cursor: pointer;
+  transition: background var(--gxt-motion), color var(--gxt-motion);
+  min-height: 30px;
+}
+
+.seg input {
+  position: absolute;
+  opacity: 0;
+  pointer-events: none;
+}
+
+.seg label:has(input:checked),
+.seg button[aria-checked="true"],
+.seg button.on {
+  background: var(--gxt-accent-solid);
+  color: var(--gxt-accent-fg);
+}
+
+.seg label:has(input:focus-visible) {
+  box-shadow: var(--gxt-focus-ring);
+}
+
+/* ══════════════════════════════════════════════════════════════ details */
+
+.fold {
+  margin-top: var(--gxt-sp-2);
+  border-top: 1px dashed var(--gxt-line);
+  padding-top: var(--gxt-sp-2);
+}
+
+.fold > summary {
+  cursor: pointer;
+  font-size: var(--gxt-fs-xs);
+  font-weight: var(--gxt-weight-strong, 700);
+  color: var(--gxt-accent-ink);
+  user-select: none;
+  list-style: none;
+  padding: 5px 2px;
+  border-radius: var(--gxt-radius-sm);
+}
+
+.fold > summary::-webkit-details-marker {
+  display: none;
+}
+
+.fold > summary::before {
+  content: "▾";
+  display: inline-block;
+  margin-inline-end: 5px;
+  transition: transform var(--gxt-motion);
+}
+
+.fold[open] > summary::before {
+  transform: rotate(180deg);
+}
+
+/* ══════════════════════════════════════════════════════ keys and sites */
+
+.keylist,
+.sitelist {
+  display: flex;
+  flex-direction: column;
+  gap: var(--gxt-sp-1);
+  margin-top: var(--gxt-sp-2);
+}
+
+.keylist:empty,
+.sitelist:empty {
+  display: none;
+}
+
+.key-row,
+.site-row {
+  display: flex;
+  align-items: center;
+  gap: var(--gxt-sp-2);
+  font-size: var(--gxt-fs-2xs);
+  padding: 5px 8px;
+  border-radius: var(--gxt-radius-sm);
+  background: var(--gxt-bg-sunken);
+  border: 1px solid var(--gxt-line);
+}
+
+.key-row code,
+.site-row code {
+  direction: ltr;
+  text-align: left;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  flex: 1;
+  color: var(--gxt-fg-muted);
+  font-family: Consolas, "Courier New", monospace;
+  user-select: text;
+}
+
+.site-row .icon-btn {
+  width: 26px;
+  height: 26px;
+}
+
+.chip {
+  flex: none;
+  border-radius: var(--gxt-radius-pill);
+  padding: 1px 8px;
+  font-size: var(--gxt-fs-2xs);
+  font-weight: var(--gxt-weight-strong, 700);
+  border: 1px solid var(--gxt-line-strong);
+}
+
+.chip.ok {
+  color: var(--gxt-ok);
+  border-color: var(--gxt-ok-edge);
+}
+
+.chip.warn {
+  color: var(--gxt-warn);
+  border-color: var(--gxt-warn-edge);
+}
+
+.chip.err {
+  color: var(--gxt-err);
+  border-color: var(--gxt-err-edge);
+}
+
+/* ════════════════════════════════════════════════════════════════ stats */
+
+.tiles {
+  display: grid;
+  grid-template-columns: repeat(3, 1fr);
+  gap: var(--gxt-sp-2);
+}
+
+.tile {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 2px;
+  padding: 12px 6px;
+  border-radius: var(--gxt-radius-md);
+  border: 1px solid var(--gxt-line);
+  background: var(--gxt-bg-sunken);
+}
+
+.tile .num {
+  font-size: var(--gxt-fs-2xl);
+  font-weight: 800;
+  line-height: 1.15;
+  letter-spacing: -0.02em;
+}
+
+.tile .lbl {
+  font-size: var(--gxt-fs-2xs);
+  color: var(--gxt-fg-faint);
+  text-align: center;
+}
+
+.breakdown {
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+  margin: var(--gxt-sp-2) 0 0;
+}
+
+.breakdown .stat-row {
+  display: flex;
+  justify-content: space-between;
+  gap: var(--gxt-sp-2);
+  font-size: var(--gxt-fs-xs);
+  color: var(--gxt-fg-muted);
+}
+
+.quota-head {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: var(--gxt-sp-2);
+}
+
+#quotaUsed {
+  font-size: var(--gxt-fs-xl);
+  font-weight: 800;
+  letter-spacing: -0.02em;
+}
+
+.quota-bar {
+  height: 8px;
+  margin: var(--gxt-sp-2) 0 6px;
+  border-radius: var(--gxt-radius-pill);
+  background: var(--gxt-bg-sunken);
+  border: 1px solid var(--gxt-line);
+  overflow: hidden;
+}
+
+.quota-fill {
+  height: 100%;
+  width: 0;
+  border-radius: var(--gxt-radius-pill);
+  background: var(--gxt-accent);
+  transition: width var(--gxt-dur-3) var(--gxt-ease-emphasized);
+}
+
+.quota-fill.warn {
+  background: var(--gxt-warn-edge);
+}
+
+.quota-fill.full {
+  background: var(--gxt-err-edge);
+}
+
+/* Per-key quota (v2.5.5): the daily quota is a PER-KEY fact, so the display is
+   per key — one row, its own bar, its own state. */
+.quota-verdict {
+  font-size: var(--gxt-fs-xs);
+  font-weight: var(--gxt-weight-strong, 700);
+  margin-bottom: 3px;
+}
+
+.quota-verdict.ok {
+  color: var(--gxt-ok);
+}
+
+.quota-verdict.warn {
+  color: var(--gxt-warn);
+}
+
+.quota-verdict.exhausted {
+  color: var(--gxt-err);
+}
+
+.quota-keys {
+  display: flex;
+  flex-direction: column;
+  gap: 5px;
+  margin-top: var(--gxt-sp-2);
+}
+
+.qkey {
+  display: grid;
+  grid-template-columns: 1fr auto;
+  gap: 3px var(--gxt-sp-2);
+  align-items: center;
+  padding: 6px 8px;
+  border-radius: var(--gxt-radius-sm);
+  background: var(--gxt-bg-sunken);
+  border: 1px solid var(--gxt-line);
+}
+
+.qkey code {
+  direction: ltr;
+  text-align: left;
+  font-size: var(--gxt-fs-2xs);
+  color: var(--gxt-fg-muted);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.qkey .qnum {
+  font-size: var(--gxt-fs-2xs);
+  font-weight: var(--gxt-weight-strong, 700);
+  white-space: nowrap;
+}
+
+.qkey .qbar {
+  grid-column: 1 / -1;
+  height: 4px;
+  border-radius: var(--gxt-radius-pill);
+  background: var(--gxt-bg);
+  border: 1px solid var(--gxt-line);
+  overflow: hidden;
+}
+
+.qkey .qbar > i {
+  display: block;
+  height: 100%;
+  width: 0;
+  background: var(--gxt-accent);
+  transition: width var(--gxt-dur-3) var(--gxt-ease-emphasized);
+}
+
+.qkey.warn .qbar > i {
+  background: var(--gxt-warn-edge);
+}
+
+.qkey.exhausted .qbar > i {
+  background: var(--gxt-err-edge);
+}
+
+.qkey.exhausted code {
+  opacity: 0.7;
+}
+
+.qkey .qmeasured {
+  color: var(--gxt-ok);
+}
+
+/* ═══════════════════════════════════════════════ diagnostic report card */
+
+.report {
+  margin-top: var(--gxt-sp-2);
+  padding: 10px 11px;
+  border-radius: var(--gxt-radius-sm);
+  border: 1px solid var(--gxt-line);
+  background: var(--gxt-bg-sunken);
+  font-size: var(--gxt-fs-xs);
+  line-height: var(--gxt-lh);
+  color: var(--gxt-fg-muted);
+}
+
+.report .vsr-head {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font-weight: var(--gxt-weight-strong, 700);
+  color: var(--gxt-fg);
+  margin-bottom: 2px;
+}
+
+.report .vsr-dot {
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  flex: none;
+  background: var(--gxt-ok-edge);
+}
+
+.report .vsr-dot.warn {
+  background: var(--gxt-warn-edge);
+}
+
+.report .vsr-dot.err {
+  background: var(--gxt-err-edge);
+}
+
+.report ul {
+  margin: 3px 0 0;
+  padding-inline-start: 16px;
+}
+
+.report li {
+  margin: 2px 0;
+}
+
+.report .vsr-fixed {
+  color: var(--gxt-ok);
+}
+
+.report .warn {
+  color: var(--gxt-warn);
+}
+
+.report code {
+  font-family: Consolas, "Courier New", monospace;
+  direction: ltr;
+  display: inline-block;
+}
+
+/* ══════════════════════════════════════════════════ keyboard shortcuts */
+
+.keys {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.keys > div {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--gxt-sp-2);
+  font-size: var(--gxt-fs-xs);
+}
+
+.keys dt {
+  color: var(--gxt-fg-muted);
+}
+
+.keys dd {
+  margin: 0;
+  display: flex;
+  gap: 3px;
+  align-items: center;
+  direction: ltr;
+  color: var(--gxt-fg-faint);
+}
+
+kbd {
+  font: 700 var(--gxt-fs-2xs) / 1 Consolas, "Courier New", monospace;
+  padding: 4px 6px;
+  border-radius: 5px;
+  border: 1px solid var(--gxt-line-strong);
+  background: var(--gxt-bg-sunken);
+  color: var(--gxt-fg);
+}
+
+/* ═════════════════════════════════════════════════════ appearance sheet */
+
+.preset-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: var(--gxt-sp-2); }
+.preset-card { display: flex; align-items: center; gap: var(--gxt-sp-2); padding: var(--gxt-sp-2); min-width: 0; text-align: start; color: var(--gxt-fg); background: var(--gxt-bg-sunken); border: 1px solid var(--gxt-line); border-radius: var(--gxt-radius-md); cursor: pointer; font: inherit; font-size: var(--gxt-fs-sm); }
+.preset-card[aria-checked="true"] { border-color: var(--gxt-accent); box-shadow: var(--gxt-focus-ring-inset); }
+.preset-thumb { flex: none; width: 52px; height: 44px; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 3px; color: var(--gxt-fg); background: var(--gxt-bg); border: 1px solid var(--gxt-panel-line); border-radius: var(--gxt-radius-md); box-shadow: var(--gxt-elev-1); }
+.preset-thumb i { font: inherit; font-size: 9px; }
+.preset-thumb b { font: inherit; font-size: 9px; padding: 0 8px; border-radius: var(--gxt-radius-pill); background: var(--gxt-accent-solid); color: var(--gxt-accent-fg); }
+.appearance-details { border: 1px solid var(--gxt-panel-line); border-radius: var(--gxt-radius-md); padding: var(--gxt-sp-3); }
+.appearance-details summary { cursor: pointer; min-height: var(--gxt-ctl-h-sm); font-weight: var(--gxt-weight-strong); }
+.appearance-controls { display: flex; flex-direction: column; gap: var(--gxt-sp-3); padding-top: var(--gxt-sp-3); }
+.appearance-control { display: grid; grid-template-columns: minmax(0,1fr) auto; gap: var(--gxt-sp-1); font-size: var(--gxt-fs-sm); }
+.appearance-control input { grid-column: 1 / -1; width: 100%; }
+.appearance-control output { color: var(--gxt-fg-muted); font-variant-numeric: tabular-nums; direction: ltr; }
+.appearance-colors { display: flex; flex-direction: column; gap: var(--gxt-sp-2); }
+.appearance-color { display: flex; align-items: center; gap: var(--gxt-sp-2); }
+.appearance-color label { flex: 1; font-size: var(--gxt-fs-sm); }
+.appearance-color input[type="color"] { width: 44px; min-height: var(--gxt-ctl-h); padding: 3px; cursor: pointer; }
+.appearance-color .ghost { font-size: var(--gxt-fs-xs); padding-inline: var(--gxt-sp-2); }
+
+/* Semantic treatments also cover independent settings fields. */
+.field input:not([type="range"]):not([type="checkbox"]), .field select, .field textarea {
+  background: var(--gxt-input-bg, var(--gxt-bg-sunken));
+  border-color: var(--gxt-input-line, var(--gxt-line));
+}
+
+.sheet {
+  position: fixed;
+  inset: 0;
+  z-index: 50;
+  display: flex;
+  align-items: flex-end;
+}
+
+.sheet-scrim {
+  position: absolute;
+  inset: 0;
+  background: rgba(0, 0, 0, 0.6);
+  animation: fade var(--gxt-dur-2) var(--gxt-ease);
+}
+
+.sheet-card {
+  position: relative;
+  width: 100%;
+  max-height: 94%;
+  display: flex;
+  flex-direction: column;
+  border-radius: var(--gxt-radius-xl) var(--gxt-radius-xl) 0 0;
+  border: 1px solid var(--gxt-line-strong);
+  border-bottom: none;
+  background: var(--gxt-bg-elev);
+  box-shadow: var(--gxt-elev-3);
+  animation: slide-up var(--gxt-dur-3) var(--gxt-ease-emphasized);
+}
+
+@keyframes slide-up {
+  from {
+    transform: translateY(20px);
+    opacity: 0;
+  }
+}
+
+@keyframes fade {
+  from {
+    opacity: 0;
+  }
+}
+
+.sheet-head {
+  display: flex;
+  align-items: center;
+  gap: var(--gxt-sp-2);
+  padding: 13px var(--gxt-sp-4) 9px;
+  border-bottom: 1px solid var(--gxt-line);
+}
+
+.sheet-head h2 {
+  flex: 1;
+  font-size: var(--gxt-fs-lg);
+  font-weight: 800;
+  color: var(--gxt-heading-ink, var(--gxt-fg));
+}
+
+.sheet-head::before {
+  content: "";
+  position: absolute;
+  top: 6px;
+  left: 50%;
+  transform: translateX(-50%);
+  width: 38px;
+  height: 4px;
+  border-radius: 99px;
+  background: var(--gxt-line-strong);
+}
+
+.sheet-body {
+  overflow-y: auto;
+  padding: var(--gxt-sp-3) var(--gxt-sp-4) var(--gxt-sp-4);
+  display: flex;
+  flex-direction: column;
+  gap: var(--gxt-sp-4);
+  scrollbar-width: var(--gxt-scrollbar-width, thin);
+  scrollbar-color: var(--gxt-line-strong) transparent;
+}
+
+.sheet-group {
+  display: flex;
+  flex-direction: column;
+  gap: 7px;
+}
+
+.theme-grid {
+  display: grid;
+  grid-template-columns: repeat(3, 1fr);
+  gap: 8px;
+}
+
+.theme-card {
+  display: flex;
+  flex-direction: column;
+  gap: 5px;
+  padding: 6px;
+  border-radius: var(--gxt-radius-md);
+  border: 1px solid var(--gxt-line);
+  background: var(--gxt-bg-sunken);
+  cursor: pointer;
+  transition: border-color var(--gxt-motion), transform var(--gxt-motion);
+}
+
+.theme-card:hover {
+  transform: translateY(-1px);
+  border-color: var(--gxt-line-strong);
+}
+
+.theme-card[aria-checked="true"] {
+  border-color: var(--gxt-accent);
+  box-shadow: 0 0 0 2px var(--gxt-accent-soft);
+}
+
+/* Miniature of the real UI: a bar, a line and a dot in the theme's colours. */
+.theme-mini {
+  height: 36px;
+  border-radius: 8px;
+  border: 1px solid var(--gxt-line);
+  overflow: hidden;
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+  padding: 6px;
+}
+
+.theme-mini i {
+  display: block;
+  height: 4px;
+  border-radius: 99px;
+  background: currentColor;
+  opacity: 0.55;
+}
+
+.theme-mini i:first-child {
+  width: 60%;
+  opacity: 0.9;
+}
+
+.theme-mini i:last-child {
+  width: 85%;
+  opacity: 0.32;
+}
+
+.theme-name {
+  font-size: var(--gxt-fs-2xs);
+  font-weight: var(--gxt-weight-strong, 700);
+  text-align: center;
+  color: var(--gxt-fg-muted);
+}
+
+.theme-card[aria-checked="true"] .theme-name {
+  color: var(--gxt-fg);
+}
+
+.accent-row {
+  display: flex;
+  gap: 9px;
+  flex-wrap: wrap;
+}
+
+.accent-dot {
+  width: 34px;
+  height: 34px;
+  border-radius: 50%;
+  border: 2px solid transparent;
+  padding: 0;
+  position: relative;
+  transition: transform var(--gxt-motion), border-color var(--gxt-motion);
+}
+
+.accent-dot::after {
+  content: "";
+  position: absolute;
+  inset: 4px;
+  border-radius: 50%;
+  background: var(--dot);
+}
+
+.accent-dot:hover {
+  transform: scale(1.08);
+}
+
+.accent-dot[aria-checked="true"] {
+  border-color: var(--dot);
+}
+
+.accent-dot[aria-checked="true"]::before {
+  content: "✓";
+  position: absolute;
+  inset: 0;
+  display: grid;
+  place-items: center;
+  color: var(--check, #fff);
+  font-size: var(--gxt-fs-sm);
+  font-weight: 800;
+  z-index: 1;
+}
+
+#fontPreview {
+  margin-top: var(--gxt-sp-1);
+  padding: 10px 12px;
+  border-radius: var(--gxt-radius-sm);
+  border: 1px dashed var(--gxt-line-strong);
+  background: var(--gxt-bg-sunken);
+  font-size: var(--gxt-fs-lg);
+}
+
+/* ═══════════════════════════════════════════════════════════ range input */
+
+input[type="range"] {
+  -webkit-appearance: none;
+  appearance: none;
+  width: 100%;
+  height: 4px;
+  margin: var(--gxt-sp-3) 0;
+  border-radius: 999px;
+  background: var(--gxt-line-strong);
+  cursor: pointer;
+}
+
+input[type="range"]:disabled {
+  opacity: 0.45;
+  cursor: not-allowed;
+}
+
+input[type="range"]::-webkit-slider-thumb {
+  -webkit-appearance: none;
+  appearance: none;
+  width: 18px;
+  height: 18px;
+  border: 2px solid var(--gxt-bg-elev);
+  border-radius: 50%;
+  background: var(--gxt-accent);
+  transition: transform var(--gxt-motion);
+}
+
+input[type="range"]:hover::-webkit-slider-thumb {
+  transform: scale(1.12);
+}
+
+input[type="range"]:focus-visible {
+  box-shadow: none;
+  outline: 2px solid var(--gxt-accent);
+  outline-offset: 4px;
+}
+
+/* ══════════════════════════════════════════════════ user preferences */
+
+/* Someone who asks the OS for less transparency should not have to find a
+   setting in here to get it. Same for motion. */
+@media (prefers-reduced-transparency: reduce) {
+  .card,
+  .sheet-card {
+    backdrop-filter: none !important;
+    -webkit-backdrop-filter: none !important;
+    background: var(--gxt-bg-elev);
+  }
+}
+
+@media (prefers-contrast: more) {
+  .card,
+  .searchbar,
+  .seg,
+  .tile,
+  .key-row,
+  .site-row,
+  .qkey,
+  .report,
+  .row-help {
+    border-color: var(--gxt-line-strong);
+  }
+
+  .row-item {
+    border-bottom-color: var(--gxt-line-strong);
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    animation: none !important;
+    transition: none !important;
+  }
+
+  button:active {
+    transform: none;
+  }
+}
+
+/* ═══════════════════════════════ forced colours (Windows High Contrast) ══
+ *
+ * WHY THIS BLOCK EXISTS — measured, not guessed.
+ *
+ * Rendered under `forced-colors: active`, v2.9.0 was not merely degraded, it
+ * was unusable:
+ *
+ *   · ALL ~40 switches vanished. The visible part of a switch is a <span>
+ *     whose only paint is `background`, and forced colours replace every
+ *     author background with the system Canvas — so track, knob and card all
+ *     became the same black. Not "on and off look alike": no control at all.
+ *   · «ترجمهٔ این صفحه», the primary action of the product, lost its fill and
+ *     has no border, so it read as a line of text — while the two SECONDARY
+ *     buttons beside it kept their borders and read as the real controls. The
+ *     visual hierarchy inverted.
+ *   · In «ظاهر», the five theme previews became five identical black
+ *     rectangles and the six accent dots six identical black circles. Both
+ *     pickers are choose-by-colour, so both conveyed nothing.
+ *   · Every selected segment («فشرده/راحت/بزرگ», «شیشه‌ای/یکدست») looked
+ *     exactly like the unselected ones.
+ *   · And FOCUS disappeared everywhere: the global rule is
+ *     `outline: none; box-shadow: var(--gxt-focus-ring)`, and forced colours
+ *     do not paint box-shadow at all. That is WCAG 2.4.7 (Level A) failing
+ *     outright for keyboard users in this mode.
+ *
+ * THE RULES APPLIED HERE
+ *   1. A control needs a BORDER, not a fill, to prove it exists.
+ *   2. State that was carried by the accent is carried by `Highlight` /
+ *      `HighlightText` — system colours, which this mode honours, unlike the
+ *      custom properties everything else is built from.
+ *   3. Where colour IS the content — a theme preview, an accent swatch, a
+ *      usage bar — `forced-color-adjust: none` keeps it, which is precisely
+ *      the exemption the CSS spec provides for.
+ *   4. Focus becomes a real `outline`, because that is what survives.
+ */
+@media (forced-colors: active) {
+  /* 1 ─────────────────────────────────────────────────────── focus first */
+  :focus-visible {
+    outline: 3px solid CanvasText;
+    outline-offset: 2px;
+  }
+
+  .switch input:focus-visible + .track,
+  .searchbar:focus-within {
+    outline: 3px solid CanvasText;
+    outline-offset: 2px;
+  }
+
+  /* 2 ─────────────────────────────────────────────────────────── switches */
+  .switch .track {
+    background: Canvas;
+    border: 1px solid ButtonBorder;
+  }
+
+  .switch .track::before {
+    background: CanvasText;
+    border: 1px solid ButtonBorder;
+    box-sizing: border-box;
+  }
+
+  .switch input:checked + .track {
+    background: Highlight;
+    border-color: Highlight;
+  }
+
+  .switch input:checked + .track::before {
+    background: HighlightText;
+    border-color: HighlightText;
+  }
+
+  /* A switch the user cannot currently change must still say so. `opacity`
+     is honoured here, but on its own it is a weak signal against a forced
+     palette, so the border drops to the system's disabled ink as well. */
+  .switch input:disabled + .track {
+    border-color: GrayText;
+  }
+
+  .switch input:disabled + .track::before {
+    background: GrayText;
+  }
+
+  /* 3 ───────────────────────────────────────────────────────────  buttons */
+  .primary {
+    background: Highlight;
+    color: HighlightText;
+    border: 1px solid Highlight;
+  }
+
+  .primary svg {
+    fill: HighlightText;
+  }
+
+  .ghost,
+  .icon-btn {
+    border: 1px solid ButtonBorder;
+    color: ButtonText;
+  }
+
+  .primary:disabled,
+  .ghost:disabled,
+  button:disabled {
+    color: GrayText;
+    border-color: GrayText;
+    background: Canvas;
+  }
+
+  .primary:disabled svg {
+    fill: GrayText;
+  }
+
+  /* 4 ────────────────────────────────────────────── segmented selection */
+  .seg label:has(input:checked),
+  .seg button[aria-checked="true"],
+  .seg button.on {
+    background: Highlight;
+    color: HighlightText;
+  }
+
+  .seg button,
+  .seg label {
+    border: 1px solid transparent;
+  }
+
+  .seg button[aria-checked="true"],
+  .seg label:has(input:checked) {
+    border-color: Highlight;
+  }
+
+  /* 5 ──────────────────────────────────── colour IS the content, keep it */
+  .theme-mini,
+  .accent-dot,
+  .quota-fill,
+  .appbar-status::before,
+  .chip-mini {
+    forced-color-adjust: none;
+  }
+
+  /* The bar's own frame must still be visible around a kept-colour fill. */
+  .quota-bar {
+    border: 1px solid CanvasText;
+  }
+
+  /* Selection on the two colour pickers cannot be a colour, so it is shape:
+     an outline that forced colours paints, plus the ✓ the dot already draws. */
+  .theme-card[aria-checked="true"],
+  .accent-dot[aria-checked="true"] {
+    outline: 3px solid Highlight;
+    outline-offset: 2px;
+  }
+
+  .theme-card {
+    border: 1px solid ButtonBorder;
+  }
+
+  /* 6 ─────────────────────────────────────────────── surfaces and status */
+  .nav-row,
+  .tile,
+  .chip,
+  .pill-tag,
+  .key-row,
+  .site-row,
+  .qkey,
+  .report {
+    border: 1px solid ButtonBorder;
+  }
+
+  /* Status text is coloured ok/warn/error everywhere in this window. Colour
+     alone was never sufficient (WCAG 1.4.1) and here it is not even
+     available, so the forced ink is used and the wording carries the state —
+     which it already does in every string this window prints. */
+  .status,
+  .statusline,
+  .quota-verdict {
+    color: CanvasText;
+  }
+}
+
+.locale-card { padding:16px; }
+.locale-grid {display:grid;grid-template-columns:1fr 1fr;gap:12px;margin-block:12px;}
+.locale-field {display:flex;flex-direction:column;gap:5px;min-width:0;}
+.locale-field select,.locale-field input {width:100%;min-width:0;}
+[dir="ltr"] #navBack svg {transform:none;}
+[dir="rtl"] #navBack svg {transform:scaleX(-1);}

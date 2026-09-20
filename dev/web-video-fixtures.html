@@ -1,0 +1,16 @@
+<!doctype html><html lang="en"><meta charset="utf-8"><title>Web video fixtures — real extension</title>
+<style>body{font:16px system-ui;margin:24px;background:#e6e9ed;color:#152335}section{position:relative;margin:24px 0;width:640px;height:360px;background:#152335}video{width:100%;height:100%;display:block;object-fit:contain}.bar{position:absolute;top:0;left:0;right:0;height:44px;background:#304557;color:white;display:flex;align-items:center;gap:12px;padding:4px 12px}button{padding:6px 12px}#tiny{width:112px;height:64px}#vertical{width:220px;height:420px}#native:fullscreen{width:100vw;height:100vh}h1{font-size:24px}.tools{display:flex;gap:10px;flex-wrap:wrap}</style>
+<h1>Real HTML video players</h1><p>These fixtures contain no Chrome shim and no extension source scripts. The extension must be installed and enabled.</p>
+<div class="tools"><button id="resize">Resize first player</button><button id="fullscreen">Fullscreen first player</button><button id="replace">Replace first video</button><button id="remove">Remove last player</button></div>
+<section id="native"><video id="native-video" controls muted playsinline><track kind="subtitles" src="web-video-en.vtt" srclang="en" label="English"><track kind="subtitles" src="web-video-fr.vtt" srclang="fr" label="French"></video></section>
+<section id="custom"><video id="custom-video" muted playsinline></video><div class="bar" role="toolbar"><button onclick="document.querySelector('#custom-video').play()">Play</button><input aria-label="Timeline" type="range"><span>Top controls</span></div></section>
+<section id="vertical"><video muted playsinline></video></section><section id="tiny"><video muted playsinline controls></video></section>
+<script>
+  const canvas=document.createElement('canvas');canvas.width=640;canvas.height=360;const context=canvas.getContext('2d');context.fillStyle='#26435d';context.fillRect(0,0,640,360);context.fillStyle='#fff';context.font='28px system-ui';context.fillText('Accessible browser video',80,155);context.fillText('Native and custom controls',70,205);
+  const stream=canvas.captureStream(1);document.querySelectorAll('video').forEach(v=>{v.srcObject=stream;v.play().catch(()=>{})});
+  const custom=document.querySelector('#custom-video').addTextTrack('captions','English (auto-generated)','en');custom.mode='hidden';custom.addCue(new VTTCue(0,600,'This caption is exposed by the browser player.'));
+  document.querySelector('#resize').onclick=()=>{const p=document.querySelector('#native');p.style.width=p.style.width==='220px'?'640px':'220px';p.style.height=p.style.height==='140px'?'360px':'140px'};
+  document.querySelector('#fullscreen').onclick=()=>document.querySelector('#native').requestFullscreen();
+  document.querySelector('#replace').onclick=()=>{const old=document.querySelector('#native-video'),v=old.cloneNode(true);old.replaceWith(v);v.srcObject=stream;v.play().catch(()=>{})};
+  document.querySelector('#remove').onclick=()=>document.querySelector('section:last-of-type')?.remove();
+</script></html>

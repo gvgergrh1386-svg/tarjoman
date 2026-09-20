@@ -1,0 +1,482 @@
+/*
+ * The translation card on X — v2.0.0.
+ *
+ * Two colour sources, on purpose:
+ *  - Structure (surface, hairlines, muted text) is derived from `currentColor`
+ *    with color-mix(), which the box inherits from the tweet itself. That is
+ *    what makes it sit correctly in X's light / dim / dark themes with zero
+ *    theme detection, and it keeps working if X reskins.
+ *  - Personality (the accent line, the label dot, links, buttons) comes from
+ *    --gxt-accent, the accent the user picked in the extension's appearance
+ *    sheet, applied to :root by main.js.
+ */
+
+.gxt-box {
+  --gxt-surface: color-mix(in srgb, currentColor 4%, transparent);
+  --gxt-hairline: color-mix(in srgb, currentColor 12%, transparent);
+  /* v2.9.5 — 55% → 72%, and the number is now a measurement.
+   *
+   * `--gxt-muted` is the ink of «ترجمه از انگلیسی» and of the box's own
+   * buttons, and it is currentColor at partial alpha — so, exactly like the
+   * page cards, its real colour is a COMPOSITE and its contrast depends on the
+   * surface underneath. Measured against X's three shipped themes at 55%:
+   *
+   *     light 4.08:1   ·   dim 5.58:1   ·   lights-out 5.31:1
+   *
+   * The light theme was below the 4.5:1 AA floor — for label text and for
+   * button labels, on the extension's most-used surface. At 72% all three
+   * clear AAA (7.41 / 8.63 / 8.79) while the body text they sit beside stays
+   * at 15-18:1, so de-emphasis is still carried by the gap, not by dropping
+   * text under the legibility floor. Pinned in dev/uicheck.html. */
+  --gxt-muted: color-mix(in srgb, currentColor 72%, transparent);
+  position: relative;
+  margin-top: 10px;
+  padding: 9px 12px 10px;
+  border: 1px solid var(--gxt-hairline);
+  border-radius: var(--gxt-radius-md, 14px);
+  background: var(--gxt-surface);
+  text-align: start;
+  unicode-bidi: isolate;
+  /* User-chosen font first (set on :root by main.js), then X's own chain
+     (copied from the tweet onto the box as --gxt-x-font). */
+  font-family: var(--gxt-font, var(--gxt-x-font, inherit));
+}
+
+/* A slim accent rail on the leading edge — the one strong colour cue. */
+.gxt-box::before {
+  content: "";
+  position: absolute;
+  inset-block: 10px;
+  inset-inline-start: 0;
+  width: 2px;
+  border-radius: var(--gxt-radius-pill, 9999px);
+  background: var(--gxt-accent, #1d9bf0);
+  opacity: 0.85;
+}
+
+.gxt-head {
+  direction: var(--gxt-ui-dir, rtl);
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  margin-bottom: 4px;
+  font-size: var(--gxt-fs-sm, 12.5px);
+  line-height: 17px;
+  color: var(--gxt-muted);
+}
+
+.gxt-label {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  user-select: none;
+  font-weight: 600;
+  letter-spacing: -0.01em;
+}
+
+.gxt-label::before {
+  content: "";
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  flex: none;
+  background: var(--gxt-accent, #1d9bf0);
+  box-shadow: 0 0 7px var(--gxt-accent, #1d9bf0);
+}
+
+/* These are `role="button"` spans on X's own DOM (render.js wires Enter/Space
+   activation). They had no focus treatment at all, so a keyboard user could
+   reach «نمایش متن اصلی» and «ترجمهٔ دوباره» and see nothing happen — the
+   control was focused, just invisibly. The ring is drawn in the user's accent
+   because the box has no surface colour of its own to sit against. */
+.gxt-btn {
+  cursor: pointer;
+  user-select: none;
+  padding: 3px 10px;
+  min-height: 24px;
+  display: inline-flex;
+  align-items: center;
+  border-radius: var(--gxt-radius-pill, 9999px);
+  border: 1px solid transparent;
+  color: var(--gxt-muted);
+  font-size: var(--gxt-fs-xs, 12px);
+  transition: color var(--gxt-motion, .18s ease), background var(--gxt-motion, .18s ease), border-color var(--gxt-motion, .18s ease);
+}
+
+.gxt-btn:hover {
+  color: inherit;
+  border-color: var(--gxt-hairline);
+  background: color-mix(in srgb, currentColor 7%, transparent);
+}
+
+.gxt-btn:focus-visible,
+.gxt-link:focus-visible,
+.gxt-retry:focus-visible,
+.gxt-detail-btn:focus-visible {
+  outline: 2px solid var(--gxt-accent, #1d9bf0);
+  outline-offset: 2px;
+  border-radius: var(--gxt-radius-pill, 9999px);
+}
+
+.gxt-text {
+  white-space: pre-wrap;
+  overflow-wrap: break-word;
+}
+
+.gxt-text a {
+  color: var(--gxt-accent, #1d9bf0);
+  text-decoration: none;
+}
+
+.gxt-text a:hover {
+  text-decoration: underline;
+}
+
+.gxt-ltr {
+  direction: ltr;
+  unicode-bidi: isolate;
+}
+
+/* ------------------------------------------------------------- loading */
+
+.gxt-skel {
+  height: 0.85em;
+  margin: 0.4em 0;
+  border-radius: var(--gxt-radius-sm, 7px);
+  background: linear-gradient(
+    90deg,
+    color-mix(in srgb, currentColor 9%, transparent) 25%,
+    color-mix(in srgb, currentColor 17%, transparent) 37%,
+    color-mix(in srgb, currentColor 9%, transparent) 63%
+  );
+  background-size: 400% 100%;
+  animation: gxt-shimmer 1.4s ease-in-out infinite;
+}
+
+@keyframes gxt-shimmer {
+  from {
+    background-position: 100% 50%;
+  }
+  to {
+    background-position: 0 50%;
+  }
+}
+
+.gxt-fade {
+  animation: gxt-in 0.22s cubic-bezier(0.2, 0.7, 0.3, 1);
+}
+
+@keyframes gxt-in {
+  from {
+    opacity: 0;
+    transform: translateY(3px);
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .gxt-skel {
+    animation: none;
+    opacity: 0.7;
+  }
+  .gxt-fade {
+    animation: none;
+  }
+}
+
+/* -------------------------------------------------------------- errors */
+
+/* The error colour comes from the theme (`--gxt-err` is derived to clear 7:1
+   on the user's chosen surface) with X's own crimson as the fallback for the
+   moment before main.js has written the tokens onto :root. */
+.gxt-err {
+  font-size: var(--gxt-fs-md, 13.5px);
+  color: var(--gxt-err, #f4212e);
+  line-height: 1.75;
+}
+
+.gxt-retry {
+  cursor: pointer;
+  font-weight: 700;
+  padding: 2px 9px;
+  min-height: 24px;
+  display: inline-flex;
+  align-items: center;
+  border-radius: var(--gxt-radius-pill, 9999px);
+  border: 1px solid color-mix(in srgb, var(--gxt-err, #f4212e) 45%, transparent);
+}
+
+.gxt-retry:hover {
+  background: color-mix(in srgb, var(--gxt-err, #f4212e) 12%, transparent);
+}
+
+.gxt-detail-btn {
+  font-size: var(--gxt-fs-2xs, 11.5px);
+}
+
+.gxt-detail {
+  margin-top: 7px;
+  padding: var(--gxt-sp-2, 8px) var(--gxt-sp-3, 10px);
+  border-radius: var(--gxt-radius-sm, 9px);
+  border: 1px solid var(--gxt-hairline);
+  background: color-mix(in srgb, currentColor 6%, transparent);
+  color: color-mix(in srgb, currentColor 78%, transparent);
+  /* Was a literal 11px — below the 11.5px floor `--gxt-fs-2xs` holds at every
+     density, and the one size in this stylesheet that ignored the reader's
+     «بزرگ» choice. */
+  font-size: var(--gxt-fs-2xs, 11.5px);
+  line-height: 1.65;
+  font-family: Consolas, "Courier New", monospace;
+  text-align: left;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+  max-height: 200px;
+  overflow-y: auto;
+  user-select: text;
+}
+
+/* ------------------------------------------------------- manual trigger */
+
+.gxt-linkrow {
+  margin-top: 7px;
+  text-align: start;
+}
+
+.gxt-link {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  cursor: pointer;
+  user-select: none;
+  font-size: var(--gxt-fs-md, 13.5px);
+  font-weight: 600;
+  padding: 2px 12px;
+  border-radius: var(--gxt-radius-pill, 9999px);
+  color: var(--gxt-accent, #1d9bf0);
+  border: 1px solid color-mix(in srgb, var(--gxt-accent, #1d9bf0) 40%, transparent);
+  background: color-mix(in srgb, var(--gxt-accent, #1d9bf0) 10%, transparent);
+  transition: background var(--gxt-motion, .18s ease);
+}
+
+.gxt-link::before {
+  content: "";
+  width: 5px;
+  height: 5px;
+  border-radius: 50%;
+  background: currentColor;
+}
+
+.gxt-link:hover {
+  background: color-mix(in srgb, var(--gxt-accent, #1d9bf0) 20%, transparent);
+}
+
+/* ------------------------------------------------ composer chip (v3.2.5)
+ *
+ * The «EN ⇄ ترجمه به انگلیسی» chip under X's compose box, and the
+ * «ترجمهٔ تصویر» button on tweet media. Both were built in composer.js as inline
+ * style strings, which is why they were the last two controls on X that ignored
+ * the user's accent and type scale — and why neither had a focus ring, since a
+ * style attribute cannot express `:focus-visible`.
+ *
+ * They are `role="button"` spans on X's own DOM (composer.js wires Enter/Space),
+ * so the ring is drawn in the user's accent: neither control has a surface
+ * colour of its own to sit against.
+ */
+
+.gxt-compose-chip {
+  margin: var(--gxt-sp-1, 4px) 0 2px;
+  text-align: start;
+}
+
+.gxt-compose-chip[hidden] {
+  display: none;
+}
+
+.gxt-chip-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  min-height: 24px;
+  padding: 2px 12px;
+  cursor: pointer;
+  user-select: none;
+  font-size: var(--gxt-fs-sm, 12.5px);
+  font-weight: 600;
+  border-radius: var(--gxt-radius-pill, 9999px);
+  color: var(--gxt-accent, #1d9bf0);
+  border: 1px solid color-mix(in srgb, var(--gxt-accent, #1d9bf0) 45%, transparent);
+  background: color-mix(in srgb, var(--gxt-accent, #1d9bf0) 10%, transparent);
+  transition: background var(--gxt-motion, 0.18s ease), border-color var(--gxt-motion, 0.18s ease);
+}
+
+.gxt-chip-btn:hover {
+  background: color-mix(in srgb, var(--gxt-accent, #1d9bf0) 20%, transparent);
+  border-color: var(--gxt-accent, #1d9bf0);
+}
+
+/* The button on tweet media. This one DOES keep a fixed dark fill rather than
+ * following the theme, for the same reason the YouTube caption keeps a scrim: it
+ * sits on a photograph the extension does not control, and there is no theme
+ * colour that is legible over every photograph. What it takes from the design
+ * system is its shape, its type scale, its motion and its focus ring. */
+.gxt-imgbtn {
+  position: absolute;
+  bottom: 8px;
+  inset-inline-start: 8px;
+  z-index: 5;
+  display: inline-flex;
+  align-items: center;
+  min-height: 24px;
+  padding: 2px 10px;
+  cursor: pointer;
+  user-select: none;
+  font-size: var(--gxt-fs-xs, 12px);
+  font-weight: 600;
+  border-radius: var(--gxt-radius-pill, 9999px);
+  /* Measured: white on this composite is 12.6:1 over a white photo. */
+  background: rgba(8, 8, 8, 0.86);
+  color: #fff;
+  border: 1px solid rgba(255, 255, 255, 0.3);
+  transition: background var(--gxt-motion, 0.18s ease), border-color var(--gxt-motion, 0.18s ease);
+}
+
+.gxt-imgbtn:hover {
+  background: rgba(8, 8, 8, 0.96);
+  border-color: var(--gxt-accent, #1d9bf0);
+}
+
+.gxt-chip-btn:focus-visible,
+.gxt-imgbtn:focus-visible {
+  outline: 2px solid var(--gxt-accent, #1d9bf0);
+  outline-offset: 2px;
+}
+
+/* ---------------------------------------- bilingual bar (page translate) */
+
+/* The Persian line inserted under an original paragraph in bilingual mode. It
+ * was an inline style string with a literal grey rule and `opacity: .96`; the
+ * rail is the accent line every other leading-edge rule in this product uses. */
+.gxt-bi {
+  display: block;
+  margin: 0.3em 0 0.55em;
+  padding-inline-start: 0.6em;
+  border-inline-start: 2px solid var(--gxt-accent-line, rgba(128, 128, 128, 0.55));
+  text-align: start;
+}
+
+/* --------------------------------------------------------------- toast */
+
+/* v3.2.5 — this is the FALLBACK toast, and it should almost never be seen.
+ * render.js now routes to the shared themed toast in content/ui.js (one toast
+ * in the product, not two), and only falls back here if that layer is absent.
+ * It is on the tokens either way, so the two cannot look like different
+ * products: a fallback that is visibly a downgrade is a bug report waiting to
+ * happen. The fill stays a fixed near-black because this path runs precisely
+ * when the theme module may not have published anything to read. */
+.gxt-toast {
+  position: fixed;
+  bottom: 26px;
+  left: 50%;
+  transform: translate(-50%, 14px);
+  z-index: 2147483647;
+  max-width: min(480px, 90vw);
+  padding: 11px 20px;
+  border-radius: var(--gxt-radius-md, 13px);
+  border: 1px solid rgba(255, 255, 255, 0.14);
+  background: rgba(20, 21, 26, 0.97);
+  color: #fff;
+  font-size: var(--gxt-fs-md, 13.5px);
+  line-height: var(--gxt-lh, 1.7);
+  font-family: var(--gxt-font, "Vazirmatn"), "Segoe UI", Tahoma, sans-serif;
+  text-align: center;
+  box-shadow: 0 16px 44px rgba(0, 0, 0, 0.5);
+  opacity: 0;
+  pointer-events: none;
+  transition: opacity 0.25s ease, transform 0.25s ease;
+}
+
+.gxt-toast-show {
+  opacity: 1;
+  transform: translate(-50%, 0);
+}
+
+/* ═══════════════════ forced colours (Windows High Contrast) — v2.9.5 ═══
+ *
+ * The translation box lives inside x.com's own DOM, so it inherits the same
+ * problem the rest of the extension had: every control it draws is
+ * distinguished by fill, and forced colours replace author fills with the
+ * system palette. The «جزئیات فنی» and «تلاش دوباره» buttons had transparent
+ * borders and therefore vanished as controls, and the focus ring is a
+ * box-shadow, which this mode never paints — so a keyboard user had no visible
+ * focus anywhere in the box (WCAG 2.4.7, Level A).
+ */
+@media (forced-colors: active) {
+  .gxt-box {
+    border: 1px solid CanvasText;
+  }
+
+  .gxt-btn,
+  .gxt-retry,
+  .gxt-detail-btn {
+    border: 1px solid ButtonBorder;
+    color: ButtonText;
+  }
+
+  .gxt-btn:focus-visible,
+  .gxt-retry:focus-visible,
+  .gxt-detail-btn:focus-visible,
+  .gxt-link:focus-visible {
+    outline: 3px solid CanvasText;
+    outline-offset: 2px;
+    box-shadow: none;
+  }
+
+  /* The loading shimmer is a moving gradient; forced colours flatten it to one
+     block, which reads as a rendering fault rather than as progress. A plain
+     outlined placeholder says "not here yet" honestly. */
+  .gxt-skel {
+    background: Canvas;
+    border: 1px dashed GrayText;
+  }
+
+  /* Error text is coloured; here the wording has to carry it, as it already
+     does — but the block still needs to separate itself from the translation
+     above it. */
+  .gxt-err {
+    color: CanvasText;
+    border: 1px solid CanvasText;
+  }
+
+  .gxt-toast {
+    border: 1px solid CanvasText;
+  }
+
+  /* v3.2.5 — the two controls that moved out of composer.js. Both were
+     distinguished by fill, which this mode replaces, so both need a border to
+     exist as controls at all. */
+  .gxt-chip-btn,
+  .gxt-imgbtn {
+    border: 1px solid ButtonBorder;
+    background: ButtonFace;
+    color: ButtonText;
+  }
+
+  .gxt-chip-btn:focus-visible,
+  .gxt-imgbtn:focus-visible {
+    outline: 3px solid CanvasText;
+    outline-offset: 2px;
+  }
+
+  /* The bilingual rule is the only thing separating a translation from the
+     paragraph above it. */
+  .gxt-bi {
+    border-inline-start-color: CanvasText;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .gxt-chip-btn,
+  .gxt-imgbtn,
+  .gxt-toast {
+    transition: none;
+  }
+}
