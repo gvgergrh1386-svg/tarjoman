@@ -202,10 +202,15 @@
     const wantSize = (c.getPropertyValue('--gxt-fs-md') || '').trim();
     if (!wantFamily || !wantSize) return false;      // no tokens at all
     const firstOf = (s) => s.split(',')[0].replace(/["']/g, '').trim();
-    return firstOf(c.fontFamily) === firstOf(wantFamily)
+    const matches = firstOf(c.fontFamily) === firstOf(wantFamily)
       && c.fontSize === wantSize
       && c.lineHeight !== 'normal'
       && c.color !== 'rgb(0, 0, 0)';
+    if (!matches) console.log('GXT-YT-TEST detail host ' + JSON.stringify({
+      family: c.fontFamily, wantFamily, size: c.fontSize, wantSize,
+      lineHeight: c.lineHeight, color: c.color,
+    }));
+    return matches;
   })());
   check('REGRESSION: the panel text is not a serif fallback', (() => {
     const el = Q('#gxt-yt-panel .yt-lbl') || Q('#gxt-yt-pill');

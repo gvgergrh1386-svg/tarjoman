@@ -478,6 +478,10 @@ def main() -> int:
                 mark = "FAIL" if result["problems"] else "OK  "
                 label = page.replace(".html", "").replace("?", " ")
                 print(f"{mark} {label:<30} {good}/{all_}", flush=True)
+                if result["problems"]:
+                    for line in lines:
+                        if " detail " in line:
+                            print(f"       {line}")
                 for problem in result["problems"]:
                     print(f"       {problem}")
                     failures.append(f"{page}: {problem}")
