@@ -14,5 +14,7 @@ for command in commands:
     name=Path(command[-1]).stem; (out/(name+'.log')).write_text(result.stdout,encoding='utf8')
     results.append({'suite':command[-1],'exit':result.returncode,'log':name+'.log'})
     print(('PASS ' if result.returncode==0 else 'FAIL ')+command[-1],flush=True)
+    if result.returncode:
+        print(result.stdout,flush=True)
 (out/('browser.json' if '--browser' in sys.argv else 'suites.json')).write_text(json.dumps(results,indent=2),encoding='utf8')
 sys.exit(any(x['exit'] for x in results))
