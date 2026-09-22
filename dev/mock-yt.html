@@ -556,10 +556,15 @@
     // Measure settled colors on systems that enable motion too. A transition
     // can temporarily retain the preceding theme or unpressed button colors.
     const settlePaint = async () => {
-      root.host.getBoundingClientRect();
-      await Promise.all(root.getAnimations()
+      // Allow the browser to create transitions after style invalidation.
+      // A layout-only read need not flush a color-only change.
+      const frame = () => new Promise((resolve) => requestAnimationFrame(resolve));
+      await frame();
+      await frame();
+      await Promise.all([...root.host.getAnimations(), ...root.getAnimations()]
         .filter((a) => Number.isFinite(a.effect?.getComputedTiming().endTime))
         .map((a) => a.finished.catch(() => {})));
+      await frame();
     };
     const px = (el, prop) => getComputedStyle(el).getPropertyValue(prop).trim();
     /** A computed rgb()/rgba() to hex, composited over `under` if translucent. */
