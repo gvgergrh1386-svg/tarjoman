@@ -18,7 +18,7 @@ jobs:
       - run: python tools/build_i18n.py --check
       - run: node tools/check_i18n.cjs
       - run: python tools/test_all.py
-      - run: python tools/test_all.py --browser
+      - run: python dev/run_harness.py mock-yt.html && python tools/test_all.py --browser
         env:
           CHROME: /usr/bin/google-chrome
       - run: python tools/build_release.py

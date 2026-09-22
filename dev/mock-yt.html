@@ -589,6 +589,10 @@
 
         // The panel's own surface, over the two extreme frames it can sit on.
         const surface = px(panel, 'background-color');
+        if (themeId === 'daylight' && accentId === 'sky') console.log('GXT-YT-TEST detail daylight paint ' + JSON.stringify({
+          surface, label: px(label, 'color'), caption: px(cap, 'color'), captionBg: px(cap, 'background-color'),
+          fg: px(root.host, '--gxt-fg'), card: px(root.host, '--gxt-card'), agent: navigator.userAgent,
+        }));
         for (const frame of ['#ffffff', '#000000']) {
           const under = flat(surface, frame);
           const ink = flat(px(label, 'color'), under);
