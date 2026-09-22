@@ -2,6 +2,8 @@
 
 [English](README.md) · [راهنمای کامل](docs/guide.fa.md) · [حریم خصوصی](docs/privacy.fa.md)
 
+[دانلود نسخهٔ ۳.۷.۷](https://github.com/gvgergrh1386-svg/tarjoman/releases/tag/v3.7.7) · [گزارش اشکال](https://github.com/gvgergrh1386-svg/tarjoman/issues) · [آزمون‌های خودکار](https://github.com/gvgergrh1386-svg/tarjoman/actions)
+
 ترجمان افزونهٔ Manifest V3 کروم برای ترجمهٔ پست، صفحه، تصویر و زیرنویس است. رابط فارسی و انگلیسی دارد؛ زبان رابط، زبان مقصد ترجمه و قالب‌های منطقه‌ای را جداگانه انتخاب می‌کنید.
 
 ## قابلیت‌ها
@@ -17,7 +19,7 @@
 
 ## نصب
 
-۱. فایل `Tarjoman-3.7.7-Chrome.zip` را در پوشه‌ای دائمی استخراج کنید.
+۱. فایل [Tarjoman-3.7.7-Chrome.zip](https://github.com/gvgergrh1386-svg/tarjoman/releases/download/v3.7.7/Tarjoman-3.7.7-Chrome.zip) را دانلود و در پوشه‌ای دائمی استخراج کنید.
 
 ۲. در `chrome://extensions` حالت **Developer mode** را روشن کنید، **Load unpacked** را بزنید و پوشهٔ دارای `manifest.json` را انتخاب کنید.
 

@@ -200,12 +200,20 @@
     const c = getComputedStyle(host);
     const wantFamily = (c.getPropertyValue('--gxt-font') || '').trim();
     const wantSize = (c.getPropertyValue('--gxt-fs-md') || '').trim();
-    if (!wantFamily || !wantSize) return false;      // no tokens at all
+    const wantColor = (c.getPropertyValue('--gxt-fg') || '').trim();
+    if (!wantFamily || !wantSize || !wantColor) return false;
+    // Light themes may intentionally use black. Compare the resolved token,
+    // rather than assuming that every valid theme has non-black text.
+    const colorProbe = document.createElement('span');
+    colorProbe.style.color = 'var(--gxt-fg)';
+    host.shadowRoot.appendChild(colorProbe);
+    const expectedColor = getComputedStyle(colorProbe).color;
+    colorProbe.remove();
     const firstOf = (s) => s.split(',')[0].replace(/["']/g, '').trim();
     const matches = firstOf(c.fontFamily) === firstOf(wantFamily)
       && c.fontSize === wantSize
       && c.lineHeight !== 'normal'
-      && c.color !== 'rgb(0, 0, 0)';
+      && c.color === expectedColor;
     if (!matches) console.log('GXT-YT-TEST detail host ' + JSON.stringify({
       family: c.fontFamily, wantFamily, size: c.fontSize, wantSize,
       lineHeight: c.lineHeight, color: c.color,
@@ -545,6 +553,14 @@
     }
 
     const shaky = [];
+    // Measure settled colors on systems that enable motion too. A transition
+    // can temporarily retain the preceding theme or unpressed button colors.
+    const settlePaint = async () => {
+      root.host.getBoundingClientRect();
+      await Promise.all(root.getAnimations()
+        .filter((a) => Number.isFinite(a.effect?.getComputedTiming().endTime))
+        .map((a) => a.finished.catch(() => {})));
+    };
     const px = (el, prop) => getComputedStyle(el).getPropertyValue(prop).trim();
     /** A computed rgb()/rgba() to hex, composited over `under` if translucent. */
     const flat = (value, under) => {
@@ -558,6 +574,7 @@
     for (const themeId of ['graphite', 'midnight', 'daylight', 'paper']) {
       for (const accentId of ['sky', 'amber', 'emerald']) {
         GXT.youtube.__applyTheme({ uiTheme: themeId, uiAccent: accentId });
+        await settlePaint();
         const panel = root.querySelector('#gxt-yt-panel');
         const label = panel?.querySelector('.yt-lbl');
         const hint = panel?.querySelector('.yt-hint, .yt-note');
@@ -590,6 +607,7 @@
         // An ACTIVE control fills with the accent and writes on it. Read from
         // the pill with aria-pressed forced on, so this measures the real rule.
         pill.setAttribute('aria-pressed', 'true');
+        await settlePaint();
         const fill = flat(px(pill, 'background-color'), '#000000');
         const on = flat(px(pill, 'color'), fill);
         if (contrast(on, fill) < 4.48) {

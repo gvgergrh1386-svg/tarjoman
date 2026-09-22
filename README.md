@@ -2,6 +2,8 @@
 
 [فارسی](README.fa.md) · [User guide](docs/guide.md) · [Privacy](PRIVACY.md)
 
+[Download 3.7.7](https://github.com/gvgergrh1386-svg/tarjoman/releases/tag/v3.7.7) · [Report a bug](https://github.com/gvgergrh1386-svg/tarjoman/issues) · [Automated checks](https://github.com/gvgergrh1386-svg/tarjoman/actions)
+
 Tarjoman is a Chrome Manifest V3 extension for translating posts, pages, images and subtitles. Its interface is available in Persian and English. Choose the interface language, translation language and regional formats separately.
 
 ## Features
@@ -17,7 +19,7 @@ Capabilities depend on the chosen service, permissions, available captions and o
 
 ## Install
 
-1. Extract `Tarjoman-3.7.7-Chrome.zip` to a permanent folder.
+1. Download [Tarjoman-3.7.7-Chrome.zip](https://github.com/gvgergrh1386-svg/tarjoman/releases/download/v3.7.7/Tarjoman-3.7.7-Chrome.zip) and extract it to a permanent folder.
 2. Open `chrome://extensions`, enable **Developer mode**, choose **Load unpacked**, and select the folder containing `manifest.json`.
 3. Open Tarjoman. In the translation-engine settings, select a service and enter your own key if required. Grant optional website access only for features you use.
 4. Under **Language and region**, select **Automatic**, **Persian** or **English**. The default translation target remains Persian.

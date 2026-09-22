@@ -1,5 +1,7 @@
 # 3.7.7 verification report
 
+> This is the original preparation report. GitHub publication work subsequently corrected two environment-dependent test assumptions (light-theme foreground color and CSS transition settling), retained all 944 browser checks, and added failure diagnostics. See [current CI runs](https://github.com/gvgergrh1386-svg/tarjoman/actions) and [release downloads](https://github.com/gvgergrh1386-svg/tarjoman/releases/tag/v3.7.7) for publication status.
+
 Completed locally on **2026-09-21**, on Windows with Node 24, Python 3.11 and desktop Chrome. Work was completed in a separate directory; the original runtime was preserved. Nothing was published to a repository or store.
 
 ## Delivered behavior
