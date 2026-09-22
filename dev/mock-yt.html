@@ -567,14 +567,20 @@
       await frame();
     };
     const px = (el, prop) => getComputedStyle(el).getPropertyValue(prop).trim();
-    /** A computed rgb()/rgba() to hex, composited over `under` if translucent. */
+    /** Computed rgb()/rgba()/color(srgb) to hex, including translucency. */
     const flat = (value, under) => {
-      const n = (value.match(/[\d.]+/g) || []).map(Number);
+      const n = (value.match(/[-+]?(?:\d*\.)?\d+(?:e[-+]?\d+)?/gi) || []).map(Number);
       if (n.length < 3) return null;
-      const hex = `#${n.slice(0, 3).map((c) => Math.round(c).toString(16).padStart(2, '0')).join('')}`;
+      const scale = /^color\(srgb\s/i.test(value) ? 255 : 1;
+      const hex = `#${n.slice(0, 3).map((c) => Math.round(Math.max(0, Math.min(255, c * scale))).toString(16).padStart(2, '0')).join('')}`;
       const a = n.length > 3 ? n[3] : 1;
       return a < 1 && under ? compositeOver(hex, under, a) : hex;
     };
+    check('computed sRGB colors preserve RGB channels and alpha',
+      flat('color(srgb 1 0 0)', '#000000') === '#ff0000'
+      && ['#ffffff', '#000000'].every((under) =>
+        flat('color(srgb 0.956863 0.968627 0.980392 / 0.84)', under)
+          === flat('rgba(244, 247, 250, 0.84)', under)));
 
     for (const themeId of ['graphite', 'midnight', 'daylight', 'paper']) {
       for (const accentId of ['sky', 'amber', 'emerald']) {
