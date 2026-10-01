@@ -149,7 +149,9 @@
 
   /** Text that carries no letters (music glyphs, dashes, numbers) has nothing
    *  to translate; sending it wastes a slot and invites hallucination. */
-  const HAS_LETTERS = /[A-Za-zÀ-ɏͰ-ϿЀ-ӿ֐-׿؀-ۿ぀-ヿ一-鿿]/;
+  // Preserve the historical accepted ranges for saved-project compatibility,
+  // and recognize letters from every Unicode script (including astral CJK).
+  const HAS_LETTERS = /[A-Za-zÀ-ɏͰ-ϿЀ-ӿ֐-׿؀-ۿ぀-ヿ一-鿿\p{L}]/u;
 
   const isTranslatable = (plain) => HAS_LETTERS.test(String(plain || '').replace(/⟦\d+⟧/g, ''));
 

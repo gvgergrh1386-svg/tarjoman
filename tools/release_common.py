@@ -34,6 +34,8 @@ def scan(name,data):
                 raise ValueError(label+' pattern in '+name+' (value withheld)')
 def validate_manifest(names,read):
     m=json.loads(read('manifest.json'));required=[m['background']['service_worker'],m['action']['default_popup']]+list(m['icons'].values())
+    if m.get('options_ui',{}).get('page'):
+        required.append(m['options_ui']['page'].split('?')[0].split('#')[0])
     if 'bridge/bridge.py' in names:
         required += ['bridge/messages.json','bridge/manga_target_runner.py']
     for group in m.get('content_scripts',[]):required+=group.get('js',[])+group.get('css',[])
@@ -52,6 +54,13 @@ def validate_manifest(names,read):
             if ':' in relative or relative.startswith('#'):continue
             resolved=(ROOT/name).parent.joinpath(relative).resolve()
             if not resolved.is_relative_to(ROOT) or resolved.relative_to(ROOT).as_posix() not in names:raise ValueError('missing HTML asset '+relative)
+    # Shared first-paint styles/fonts are real dependencies too, including
+    # nested @imports loaded by popup and workshop regression harnesses.
+    for name in [n for n in names if n.endswith('.css')]:
+        for relative in re.findall(r'url\(["\']?([^\)"\']+)',read(name).decode('utf8')):
+            if ':' in relative or relative.startswith('#'):continue
+            resolved=(ROOT/name).parent.joinpath(relative.split('?')[0]).resolve()
+            if not resolved.is_relative_to(ROOT) or resolved.relative_to(ROOT).as_posix() not in names:raise ValueError('missing CSS asset '+relative+' from '+name)
     return m
 def preflight(lists):
     for name in lists['source']:
@@ -61,6 +70,7 @@ def preflight(lists):
     for item in json.loads((ROOT/'licenses/sources.json').read_text('utf8')):
         if digest((ROOT/'licenses'/item['file']).read_bytes())!=item['sha256']:raise ValueError('upstream license hash mismatch: '+item['file'])
     subprocess.run([sys.executable,'tools/build_i18n.py','--check'],cwd=ROOT,check=True)
+    subprocess.run(['node','tools/build_ui.cjs','--check'],cwd=ROOT,check=True)
     subprocess.run(['node','tools/check_i18n.cjs'],cwd=ROOT,check=True)
     # Acorn validates JS/CJS and inline regression scripts without executing them.
     subprocess.run(['node','tools/check_syntax.cjs'],cwd=ROOT,check=True)

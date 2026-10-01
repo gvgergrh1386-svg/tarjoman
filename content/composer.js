@@ -30,8 +30,12 @@
   const EDITOR_SEL = 'div[data-testid^="tweetTextarea"][contenteditable="true"]';
   const IMAGE_SEL = 'article img[src*="pbs.twimg.com/media"]';
 
-  const send = async (message) => {
+  const actions = new Set();
+  const composeControllers = new WeakMap();
+  let imageController = null;
+  const send = async (message, signal) => {
     try {
+      if(globalThis.GXT.requestXAction)return await globalThis.GXT.requestXAction(message,signal);
       return await chrome.runtime.sendMessage(message);
     } catch {
       return null;
@@ -85,6 +89,7 @@
   let card = null;
 
   function closeCard() {
+    imageController?.abort();imageController=null;
     const open = card;
     card = null;
     open?.close();
@@ -97,6 +102,7 @@
       get title() { return globalThis.GXT.i18n.t("content_composer_ensureImageButton_2"); },
       anchorPoint: { x, y },
       onClose: () => {
+        imageController?.abort();imageController=null;
         card = null;
       },
     });
@@ -114,6 +120,7 @@
 
   function forgetChip(chip) {
     const editor = chipEditors.get(chip);
+    composeControllers.get(editor)?.abort();
     const sync = chipSyncs.get(chip);
     if (editor && sync) editor.removeEventListener('input', sync);
     if (editor && chipOf.get(editor) === chip) chipOf.delete(editor);
@@ -159,6 +166,8 @@
     chipOf.set(editor, chip);
 
     const sync = () => {
+      const running=composeControllers.get(editor);
+      if(running&&((editor.innerText||'')!==running.source||!settings.enabled||!settings.composerTranslate))running.abort();
       const on =
         settings.enabled &&
         settings.composerTranslate &&
@@ -172,15 +181,17 @@
 
     let busy = false;
     activatable(btn, async () => {
-      if (busy || !settings.enabled || !settings.composerTranslate || !editor.isConnected) return;
+      if(busy){composeControllers.get(editor)?.abort();return;}
+      if (!settings.enabled || !settings.composerTranslate || !editor.isConnected) return;
       const snapshot = editor.innerText || '';
       const draft = snapshot.trim();
       if (!draft || !PERSIAN_RE.test(draft)) return;
       busy = true;
       const generation = requestGeneration;
-      btn.setAttribute('aria-disabled', 'true');
-      globalThis.GXT.i18n.bind(btn, "textContent", () => (globalThis.GXT.i18n.t("content_composer_ensureComposerChip_8")));
-      const res = await send({ type: 'TRANSLATE_COMPOSE', text: draft });
+      const controller=new AbortController();controller.source=snapshot;composeControllers.set(editor,controller);actions.add(controller);
+      globalThis.GXT.i18n.bind(btn, 'textContent', () => globalThis.GXT.i18n.t('x.cancel'));
+      const res = await send({ type: 'TRANSLATE_COMPOSE', text: draft },controller.signal);
+      actions.delete(controller);if(composeControllers.get(editor)===controller)composeControllers.delete(editor);
       busy = false;
       btn.setAttribute('aria-disabled', 'false');
       if (generation !== requestGeneration && chip.isConnected) {
@@ -188,6 +199,7 @@
       }
       if (generation !== requestGeneration || !settings.enabled || !settings.composerTranslate || !editor.isConnected ||
           !chip.isConnected || chipOf.get(editor) !== chip) return;
+      if(res?.code==='CANCELLED') {globalThis.GXT.i18n.bind(btn,'textContent',()=>globalThis.GXT.i18n.t('content_composer_ensureComposerChip_1'));return;}
       if ((editor.innerText || '') !== snapshot) {
         globalThis.GXT.i18n.bind(btn, "textContent", () => (globalThis.GXT.i18n.t("content_composer_ensureComposerChip_6")));
         return;
@@ -283,13 +295,16 @@
       const x = event.clientX || rect.left + rect.width / 2;
       const y = event.clientY || rect.top + rect.height / 2;
       const body = openCard(x, y);
+      const controller=new AbortController();imageController=controller;actions.add(controller);
       const requestCard = card;
       const generation = requestGeneration;
       const source = img.src;
+      controller.owner=img;controller.source=source;
       const selectedSource = img.currentSrc;
       globalThis.GXT.i18n.bind(body, "textContent", () => (globalThis.GXT.i18n.t("content_composer_ensureImageButton_1")));
       body.classList.add('dots');
-      const res = await send({ type: 'TRANSLATE_IMAGE', url: bigImageUrl(source) });
+      const res = await send({ type: 'TRANSLATE_IMAGE', url: bigImageUrl(source) },controller.signal);
+      actions.delete(controller);if(imageController===controller)imageController=null;
       if (card !== requestCard || !body.isConnected) return;
       if (generation !== requestGeneration || !img.isConnected || !btn.isConnected ||
           img.src !== source || (selectedSource && img.currentSrc !== selectedSource)) {
@@ -336,6 +351,7 @@
 
   function scan() {
     scanScheduled = false;
+    if(imageController&&(!imageController.owner?.isConnected||imageController.owner.src!==imageController.source))closeCard();
     if (!settings.enabled) return;
     if (settings.composerTranslate) {
       for (const editor of document.querySelectorAll(EDITOR_SEL)) ensureComposerChip(editor);
@@ -393,6 +409,7 @@
           before.enabled !== next.enabled || before.composerTranslate !== next.composerTranslate ||
           before.xImageButton !== next.xImageButton) {
         requestGeneration += 1;
+        for(const controller of actions)controller.abort();
       }
       // Theme / accent / opacity changes re-skin an open card immediately.
       UI().configure(next);
@@ -408,4 +425,5 @@
     syncObserver();
     scheduleScan();
   })();
+  addEventListener('pagehide',()=>{for(const controller of actions)controller.abort();});
 })();

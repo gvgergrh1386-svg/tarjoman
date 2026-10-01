@@ -821,7 +821,8 @@
         const cues = built.cues.filter(c => !/^comment$/i.test(c.kind || '') && !/\\p[1-9]/.test(c.text || '')).map(c => ({ ...c, text: c.text.replace(/\{[^}]*\}/g, '').replace(/\\[Nn]/g, '\n').replace(/\\h/g, ' ') }));
         text = format === 'vtt' ? S._internal.serializeVtt(cues) : S._internal.serializeSrt(cues);
       }
-      download(`${stem()}.fa.${ext}`, new Blob([text], { type: 'text/plain;charset=utf-8' }));
+      const target = project?.translation?.targetLang || GXTS.forScope(currentSettings, 'file').targetLang;
+      download(`${stem()}.${target}.${ext}`, new Blob([text], { type: 'text/plain;charset=utf-8' }));
     });
     $('copyBtn').addEventListener('click', async () => {
       if (!output) return;
@@ -846,7 +847,8 @@
       if (!dubBlobUrl) return;
       const a = document.createElement('a');
       a.href = dubBlobUrl;
-      a.download = `${stem()}.fa.wav`;
+      const target = project?.translation?.targetLang || GXTS.forScope(currentSettings, 'file').targetLang;
+      a.download = `${stem()}.${target}.wav`;
       a.click();
     });
 

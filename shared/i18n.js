@@ -99,6 +99,7 @@
     const host = root.documentElement || root.host || root;
     host.setAttribute?.('lang',language()); host.setAttribute?.('dir',direction());
     host.style?.setProperty('--gxt-ui-dir',direction());
+    host.style?.setProperty('--gxt-switch-sign',direction()==='ltr'?'1':'-1');
     host.style?.setProperty('--gxt-ui-align','start');
     for (const el of root.querySelectorAll?.('[data-i18n]') || []) el.textContent = t(el.dataset.i18n);
     for (const attr of ['title','placeholder','aria-label','alt']) for(const el of root.querySelectorAll?.(`[data-i18n-${attr}]`) || []) el.setAttribute(attr,t(el.getAttribute(`data-i18n-${attr}`)));

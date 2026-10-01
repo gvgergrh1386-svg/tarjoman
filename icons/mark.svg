@@ -1,0 +1,6 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="64" height="64" viewBox="0 0 64 64" fill="none">
+  <title>Tarjoman</title>
+  <rect width="64" height="64" rx="13" fill="#0f766e"/>
+  <path d="M17 31v10a5 5 0 0 0 5 5h20a5 5 0 0 0 5-5V27" stroke="#fff" stroke-width="6" stroke-linecap="square"/>
+  <path d="M26 19h6v6h-6zm10 0h6v6h-6z" fill="#fff"/>
+</svg>

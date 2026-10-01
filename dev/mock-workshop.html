@@ -139,7 +139,7 @@
     s.onerror = () => reject(new Error('failed to load ' + src));
     document.body.appendChild(s);
   });
-  for (const src of ['../shared/settings.js', '../shared/theme.js', '../shared/subtitles.js', '../shared/workshop.js', '../pages/subtitles.js']) {
+  for (const src of ['../shared/settings.js', '../shared/theme.js', '../shared/subtitles.js', '../shared/workshop.js', '../pages/workshop-shell.js', '../pages/subtitles.js']) {
     await load(`${src}?v=3300`);
   }
 
@@ -374,6 +374,29 @@
     $('clearFile').click(); await wait(80); $('savedProjects').value=saved.id; $('savedProjects').dispatchEvent(new Event('change')); sent.length=0; $('restoreProjectBtn').click();
     if (!await until(() => !$('editorCard').classList.contains('hidden') && $('workshopModel').value === 'saved/version-2026')) return false;
     return $('workshopThinking').value === 'medium' && $('workshopCustomPrompt').value === 'قواعد پروژهٔ ذخیره‌شده' && !sent.some(m => m.type === 'TRANSLATE_WORKSHOP');
+  });
+  await check('non-Latin subtitle scripts reach the translation transport and translated export', async () => {
+    const texts = ['안녕하세요', 'नमस्ते', 'สวัสดี', 'বাংলা', 'Բարև', '𠮷'];
+    dropFile('unicode-scripts.srt', texts.map((text, i) => `${i + 1}\n00:00:${String(i * 3).padStart(2, '0')},000 --> 00:00:${String(i * 3 + 2).padStart(2, '0')},000\n${text}`).join('\n\n'));
+    if (!await until(() => $('fileName').textContent === 'unicode-scripts.srt')) return false;
+    if (rows().length !== texts.length) return false;
+    sent.length = 0; $('translateBtn').click();
+    if (!await until(() => !$('translateBtn').disabled)) return false;
+    const requested = sent.filter(m => m.type === 'TRANSLATE_WORKSHOP').flatMap(m => m.cues.map(c => c.text));
+    return texts.every(text => requested.includes(text)) && rows().every(row => row.querySelector('textarea').value.startsWith('ترجمه ')) && $('resultPreview').textContent.includes('ترجمه 안녕하세요');
+  });
+  await check('downloaded subtitles and audio use the chosen project language',async()=>{
+    const click=HTMLAnchorElement.prototype.click,names=[];
+    HTMLAnchorElement.prototype.click=function(){if(this.download)names.push(this.download);else click.call(this);};
+    try {
+      $('workshopTargetLang').value='fr';$('workshopTargetLang').dispatchEvent(new Event('change'));
+      $('translateBtn').click();if(!await until(()=>!$('translateBtn').disabled))return false;
+      $('downloadBtn').click();
+      $('dubBtn').click();if(!await until(()=>!$('dubDownloadRow').classList.contains('hidden')&&$('dubPreview').src.startsWith('blob:')&&!$('dubBtn').disabled,15000))return false;
+      $('dubDownloadBtn').click();
+      if(!names.some(n=>n.endsWith('.fr.srt'))||!names.some(n=>n.endsWith('.fr.wav')))throw Error(JSON.stringify(names));
+      return true;
+    }finally{HTMLAnchorElement.prototype.click=click;}
   });
   // Leave a representative populated page available for screenshot review.
   dropFile('بازبینی نمونه.srt',source);await until(()=>$('fileName').textContent==='بازبینی نمونه.srt');

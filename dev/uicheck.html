@@ -196,7 +196,7 @@
     // cardOpaque paints on the theme's deepest colour with no page behind it,
     // so deriving for a composite there would darken ink for no reason.
     const solid = tokenMap({ uiTheme: 'graphite', cardOpaque: true }, { inPage: true });
-    const glass = tokenMap({ uiTheme: 'graphite', cardOpaque: false }, { inPage: true });
+    const glass = tokenMap({ uiTheme: 'graphite', uiSurface: 'glass', cardOpaque: false }, { inPage: true });
     const popup = tokenMap({ uiTheme: 'graphite' });
     assert(solid['--gxt-fg'] === popup['--gxt-fg'], 'opaque mode did not use the opaque ink');
     assert(glass['--gxt-fg'] !== popup['--gxt-fg'], 'translucent mode was not re-derived at all');
@@ -365,7 +365,7 @@
     const base = GXT.cacheNamespace({ ...GXT.DEFAULTS });
     for (const patch of [
       { uiTheme: 'paper' }, { uiAccent: 'rose' }, { uiDensity: 'large' },
-      { uiSurface: 'solid' }, { showHints: true }, { cardOpaque: true },
+      { uiSurface: 'glass' }, { showHints: true }, { cardOpaque: true },
       { videoSafeUi: false },
     ]) {
       assert(
@@ -762,7 +762,7 @@
     assert(doc.activeElement === shown[0], 'focus did not move into the view');
     assert(!byId('navBack').classList.contains('hidden'), 'no way back');
     byId('navBack').click();
-    assert(byId('view-home').classList.contains('active'), 'back did not return home');
+    assert(byId('view-settings').classList.contains('active'), 'back did not return to the settings directory');
   });
 
   await t('every settings control lives inside exactly one destination', () => {
@@ -857,7 +857,7 @@
     search.dispatchEvent(new win.Event('input', { bubbles: true }));
     const row = doc.querySelector('.nav-row[data-sheet]');
     assert(row && !row.classList.contains('no-match'), 'the appearance row did not match');
-    assert(byId('view-home').classList.contains('searchhit'), 'home was not offered as a result');
+    assert(byId('view-settings').classList.contains('searchhit'), 'settings directory was not offered as a result');
   });
 
   await t('a destination can be found by its own name', () => {

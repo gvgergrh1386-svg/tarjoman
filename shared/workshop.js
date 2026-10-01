@@ -137,17 +137,23 @@
     return [...new Set((index.get(JSON.stringify([normalize(row.text), row.speaker])) || []).filter(other => other.id !== row.id).map(other => other.translation))];
   }
   function snapshot(project) {
-    return { version: 1, id: project.id, name: project.name, doc: clone(project.doc), rules: clone(project.rules),
+    return { version: 1, textCoverage: 'unicode', id: project.id, name: project.name, doc: clone(project.doc), rules: clone(project.rules),
       translation: normalizeTranslation(project.translation), rows: project.rows.map(savedFields), revision: project.revision, signature: project.signature, savedAt: Date.now() };
   }
   function restore(value) {
     if (value?.version !== 1 || !value.doc || !Array.isArray(value.doc.cues) || value.doc.cues.length > 300000 || !Array.isArray(value.rows)) throw Error(globalThis.GXT.i18n.t("shared_workshop_restore_4"));
     if (value.doc.cues.some(c => !Number.isSafeInteger(c?.start) || !Number.isSafeInteger(c?.end) || c.start < 0 || c.end < 0)) throw Error(globalThis.GXT.i18n.t("shared_workshop_restore_3"));
     const project = createProject(value.doc, String(value.name || ''));
-    if (value.id !== project.id || value.rows.length !== project.rows.length || value.rows.some((r, i) => r?.id !== project.rows[i].id)) throw Error(globalThis.GXT.i18n.t("shared_workshop_restore_2"));
+    const savedIds = new Set(value.rows.map(r => r?.id));
+    const savedRows = project.rows.filter(row => savedIds.has(row.id));
+    // Earlier builds skipped entire scripts (Hangul, Devanagari, Thai, etc.).
+    // Restore their known edits by identity and leave newly recognized cues
+    // pending. Missing previously supported cues still indicate corruption.
+    const missingLegacy = project.rows.some(row => !savedIds.has(row.id) && (value.textCoverage === 'unicode' || /[A-Za-zÀ-ɏͰ-ϿЀ-ӿ֐-׿؀-ۿ぀-ヿ一-鿿]/.test(row.text.replace(/⟦\d+⟧/g, ''))));
+    if (value.id !== project.id || missingLegacy || value.rows.length !== savedRows.length || value.rows.some((r, i) => r?.id !== savedRows[i].id)) throw Error(globalThis.GXT.i18n.t("shared_workshop_restore_2"));
     if (project.rows.some(r => !Number.isSafeInteger(r.start) || !Number.isSafeInteger(r.end) || r.start < 0 || r.end <= r.start)) throw Error(globalThis.GXT.i18n.t("shared_workshop_restore_1"));
     value.rows.forEach((saved, i) => {
-      const row = project.rows[i];
+      const row = savedRows[i];
       row.translation = typeof saved.translation === 'string' ? saved.translation.slice(0, 24000) : null;
       row.locked = saved.locked === true; row.status = row.translation ? (row.locked ? 'manual' : 'ready') : 'pending';
     });

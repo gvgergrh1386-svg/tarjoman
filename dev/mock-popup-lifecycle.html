@@ -37,6 +37,103 @@
     try{$('ttsTest').click();await until(()=>release);await w.GXT.setSettings({ttsRate:1.7});release({ok:true,mime:'audio/wav',data:'test'});await wait(120);return plays===0&&!$('ttsTest').disabled;}
     finally{c.runtime.sendMessage=send;w.Audio=Audio;}
   });
+  await test('thinking options follow model capabilities and reject an old hidden value',async()=>{
+    await w.GXT.setSettings({provider:'gemini',model:'gemini-3.6-flash',modelTuning:{'gemini-3.6-flash':{thinkingLevel:'minimal'},'gemini-3.8-flash':{thinkingLevel:'minimal'}}});
+    await until(()=>$('tuningModelName').textContent==='gemini-3.6-flash');
+    const old=[...$('thinkingLevel').options].map(o=>o.value);
+    if(!old.includes('minimal')||$('thinkingLevel').value!=='minimal')return false;
+    await w.GXT.setSettings({model:'gemini-3.8-flash'});
+    await until(()=>$('tuningModelName').textContent==='gemini-3.8-flash');
+    if([...$('thinkingLevel').options].some(o=>o.value==='minimal')||$('thinkingLevel').value!=='')return false;
+    await w.GXT.setSettings({model:'gemini-future-flash'});
+    await until(()=>$('tuningModelName').textContent==='gemini-future-flash');
+    if($('thinkingLevel').options.length!==1)return false;
+    await w.GXT.setSettings({model:'gemini-3.6-flash'});
+    await until(()=>$('tuningModelName').textContent==='gemini-3.6-flash');
+    return $('thinkingLevel').value==='minimal';
+  });
+  for (const [name,reply] of [
+    ['missing response',null],
+    ['failed response',{ok:false,error:'SYNTHETIC_DIAGNOSTIC_FAILURE'}],
+    ['empty diagnostic report',{ok:true,checks:[]}],
+  ]) await test('diagnostics never reports a clean bill of health for '+name,async()=>{
+    const send=c.runtime.sendMessage;
+    c.runtime.sendMessage=msg=>msg.type==='DIAGNOSE'?Promise.resolve(reply):send(msg);
+    try {
+      $('runDiagnose').click();await until(()=>!$('runDiagnose').disabled);
+      return !!$('diagReport').querySelector('.warn')&&!$('diagReport').querySelector('.ok');
+    } finally {c.runtime.sendMessage=send;}
+  });
+  for (const [type,id,status] of [
+    ['CLEAR_CACHE','clearCache','statsStatus'],
+    ['RESET_STATS','resetStats','statsStatus'],
+    ['CLEAR_MEMORY','memClear','memStatus'],
+    ['TTS_CLEAR_CACHE','ttsClearCache','ttsCacheNote'],
+  ]) await test(type+' reports a rejected operation and remains retryable',async()=>{
+    const send=c.runtime.sendMessage, original=$(id).textContent;
+    c.runtime.sendMessage=msg=>msg.type===type?Promise.resolve({ok:false,error:'SYNTHETIC_STORAGE_FAILURE'}):send(msg);
+    try {
+      $(id).click();await until(()=>!$(id).disabled);await wait(30);
+      return $(status)?.classList.contains('warn')&&$(status).textContent.includes('SYNTHETIC_STORAGE_FAILURE')&&$(id).textContent===original;
+    } finally {c.runtime.sendMessage=send;}
+  });
+  await test('a real successful diagnostic report still shows its individual checks',async()=>{
+    const send=c.runtime.sendMessage;
+    c.runtime.sendMessage=msg=>msg.type==='DIAGNOSE'?Promise.resolve({ok:true,checks:[{ok:true,label:'SYNTHETIC_VERIFIED_CHECK'}]}):send(msg);
+    try {
+      $('runDiagnose').click();await until(()=>!$('runDiagnose').disabled);
+      return $('diagReport').textContent.includes('SYNTHETIC_VERIFIED_CHECK')&&!$('diagReport').querySelector('.warn')&&$('diagReport').querySelectorAll('.ok').length===2;
+    } finally {c.runtime.sendMessage=send;}
+  });
+  await test('a failed memory refresh preserves the last confirmed list and count',async()=>{
+    const send=c.runtime.sendMessage;let fail=false;
+    c.runtime.sendMessage=msg=>msg.type==='GET_MEMORY'?Promise.resolve(fail?{ok:false,error:'SYNTHETIC_MEMORY_READ_FAILURE'}:{ok:true,count:1,lines:['KEPT TERM']}):send(msg);
+    try {
+      $('memRefresh').click();await until(()=>$('memList').textContent.includes('KEPT TERM'));
+      const count=$('memCount').textContent;fail=true;$('memRefresh').click();await wait(30);
+      return $('memList').textContent.includes('KEPT TERM')&&$('memCount').textContent===count&&$('memStatus').classList.contains('warn');
+    } finally {c.runtime.sendMessage=send;}
+  });
+  await test('an audio cache retry replaces the old failure with confirmed empty state',async()=>{
+    const send=c.runtime.sendMessage;
+    c.runtime.sendMessage=msg=>['TTS_CLEAR_CACHE','TTS_CACHE_STATS'].includes(msg.type)?Promise.resolve({ok:true,count:0,bytes:0}):send(msg);
+    try {
+      $('ttsClearCache').click();await until(()=>!$('ttsClearCache').disabled);
+      return !$('ttsCacheNote').classList.contains('warn')&&!$('ttsCacheNote').textContent.includes('SYNTHETIC_STORAGE_FAILURE');
+    } finally {c.runtime.sendMessage=send;}
+  });
+  await test('declined quick engine access preserves the confirmed engine in both views',async()=>{
+    const request=c.permissions.request;let requests=0;
+    c.permissions.request=async()=>{requests++;return false};
+    try {
+      await w.GXT.setSettings({provider:'gemini'});await wait(50);
+      $('quickProvider').value='bing';$('quickProvider').dispatchEvent(new w.Event('change'));
+      await until(()=>!$('quickProvider').disabled);
+      return requests===1&&(await w.GXT.getSettings()).provider==='gemini'&&$('provider').value==='gemini'&&$('quickProvider').value==='gemini'&&!!$('providerStatus').textContent&&!!$('quickProviderStatus').textContent;
+    }finally{c.permissions.request=request}
+  });
+  await test('approved quick engine choice updates the original settings and both selectors',async()=>{
+    const request=c.permissions.request;c.permissions.request=async()=>true;
+    try {
+      $('quickProvider').value='bing';$('quickProvider').dispatchEvent(new w.Event('change'));
+      await until(()=>!$('quickProvider').disabled);
+      return (await w.GXT.getSettings()).provider==='bing'&&$('provider').value==='bing'&&$('quickProvider').value==='bing'&&!$('providerStatus').textContent;
+    }finally{c.permissions.request=request}
+  });
+  await test('an engine update from another surface is reflected in both selectors',async()=>{
+    await w.GXT.setSettings({provider:'google'});await until(()=>$('provider').value==='google');
+    return $('quickProvider').value==='google';
+  });
+  await test('directory Back returns to the visible settings destination',async()=>{
+    const row=w.document.querySelector('.nav-row[data-goto=engine]');
+    row.click();await wait(30);$('navBack').click();await wait(40);
+    return $('view-settings').classList.contains('active')&&!$('view-settings').hidden;
+  });
+  await test('full settings shortcut opens the registered options page once',async()=>{
+    const original=c.runtime.openOptionsPage;let calls=0;c.runtime.openOptionsPage=async()=>{calls++};
+    try{$('openSettingsPage').click();await wait(30);return calls===1}
+    finally{c.runtime.openOptionsPage=original}
+  });
   console.log(`GXT-POPUP-AUDIT SUMMARY ${passed}/${total}`);
 })().catch(e=>{console.error(e);});
 </script>

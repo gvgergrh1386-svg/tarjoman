@@ -84,6 +84,149 @@ globalThis.GXT_SHIM_HANDLER=async m=>{
   };
   await check('a screen capture that never delivers a frame times out and stops sharing',()=>captureFailure(false));
   await check('ending screen sharing while waiting for a frame settles and releases tracks',()=>captureFailure(true));
+  await check('full-page Stop retires active ports and never paints or queues late responses',async()=>{
+    await GXT.setSettings({pageDynamic:false,pageBilingual:false});hold=true;
+    const p=document.createElement('p');p.textContent='A stopped selection must not become a delayed translation.';document.querySelector('#fixture').append(p);
+    dispatch();assert(await until(()=>pending.length),'page request did not start');
+    click(GXT.i18n.t('content_page_translate_cancelBtn_1'));await sleep(40);
+    assert(root()?.querySelector('.pill-label')?.textContent.includes('متوقف'),'stop did not settle the UI immediately');
+    const waiting=pending.splice(0);for(const job of waiting)job.resolve({ok:true,list:job.m.texts.map(t=>'LATE STOP '+t)});
+    await sleep(300);assert(!document.querySelector('#fixture').textContent.includes('LATE STOP'),'late output painted');
+    assert(pending.length===0,'new chunk dispatched after Stop');click(GXT.i18n.t('content_page_translate_runPageInner_3'));
+    assert(await until(()=>pending.length),'restart was blocked by a cancelled request');
+    while(pending.length){const job=pending.shift();job.resolve({ok:true,list:job.m.texts.map(t=>'FRESH STOP '+t)});}
+    assert(await until(()=>p.textContent.includes('FRESH STOP')),'fresh request did not paint');click('بازگرداندن');hold=false;
+  });
+  const clearPending=()=>{for(const job of pending.splice(0))job.resolve({ok:true,list:job.m.texts.map(t=>'LATE '+t)});};
+  const restore=()=>{const b=[...(root()?.querySelectorAll('.pill button')||[])].find(b=>b.textContent==='بازگرداندن');b?.click();};
+  for(const [name,patch] of [['glossary',{glossary:'article = مقالهٔ تازه'}],['provider',{provider:'google'}],['translation memory',{memoryEnabled:false}]]) {
+    await check(name+' change retires pending page output and session memory',async()=>{
+      const previous=await GXT.getSettings();
+      try{
+        await GXT.setSettings({pageTargetLang:'de'});await GXT.setSettings({pageTargetLang:'inherit'});
+        hold=true;dispatch();assert(await until(()=>pending.length),'initial request not started');
+        await GXT.setSettings(patch);clearPending();await sleep(100);
+        assert(!document.querySelector('#fixture').textContent.includes('LATE'),'old settings painted after change');
+        dispatch();assert(await until(()=>pending.length),'old settings were reused from session memory');
+        const jobs=pending.splice(0);for(const job of jobs)job.resolve({ok:true,list:job.m.texts.map(t=>'CURRENT '+t)});
+        assert(await until(()=>document.querySelector('#fixture').textContent.includes('CURRENT')),'current output missing');
+      }finally{restore();hold=false;clearPending();await GXT.setSettings(previous);await sleep(60);}
+    });
+  }
+  await check('visual settings preserve valid pending page output and session memory',async()=>{
+    const previous=await GXT.getSettings();
+    try{
+      await GXT.setSettings({pageTargetLang:'de'});await GXT.setSettings({pageTargetLang:'inherit'});
+      hold=true;dispatch();assert(await until(()=>pending.length),'request not started');
+      await GXT.setSettings({uiTheme:'light'});
+      for(const job of pending.splice(0))job.resolve({ok:true,list:job.m.texts.map(t=>'VISUAL '+t)});
+      assert(await until(()=>document.querySelector('#fixture').textContent.includes('VISUAL')),'visual settings discarded translation');
+      restore();dispatch();await sleep(100);
+      assert(!pending.length && document.querySelector('#fixture').textContent.includes('VISUAL'),'visual settings invalidated session memory');
+    }finally{restore();hold=false;clearPending();await GXT.setSettings(previous);}
+  });
+  await check('selection response cannot paint after provider settings change',async()=>{
+    const previous=await GXT.getSettings();
+    try{
+      hold=true;GXT_SHIM_DISPATCH({type:'GXT_SELECTION',fallbackText:'A selected sentence with its own operation.'});
+      assert(await until(()=>pending.length),'selection request missing');
+      await GXT.setSettings({provider:'google'});clearPending();await sleep(70);
+      assert(!root()?.querySelector('.card-body')?.textContent.includes('LATE'),'retired selection response painted');
+    }finally{hold=false;clearPending();GXT.ui.closeAll();await GXT.setSettings(previous);}
+  });
+
+  const png=color=>{const c=document.createElement('canvas');c.width=40;c.height=60;c.getContext('2d').fillStyle=color;c.getContext('2d').fillRect(0,0,40,60);return c.toDataURL();};
+  const originals=[png('red'),png('blue')], translated=png('green');
+  const image=async()=>{const img=document.createElement('img');img.src=originals[0];document.querySelector('#fixture').append(img);await img.decode();return img;};
+  const begin=(img,id)=>GXT_SHIM_DISPATCH({type:'GXT_MANGA_BEGIN',src:img.currentSrc||img.src,requestId:id});
+  const result=(id,src=originals[0])=>GXT_SHIM_DISPATCH({type:'GXT_MANGA_RESULT',src,requestId:id,res:{ok:true,dataUrl:translated}});
+  const body=()=>root()?.querySelector('.card-body');
+  const action=text=>[...(body()?.querySelectorAll('button')||[])].find(b=>b.textContent===text);
+  await check('context image response is paired with its request even for the same source',async()=>{
+    try{
+      GXT_SHIM_DISPATCH({type:'GXT_IMAGE_BEGIN',requestId:'image-old'});
+      GXT_SHIM_DISPATCH({type:'GXT_IMAGE_BEGIN',requestId:'image-current'});
+      GXT_SHIM_DISPATCH({type:'GXT_IMAGE_RESULT',requestId:'image-old',res:{ok:true,t:'STALE IMAGE'}});
+      assert(!body()?.textContent.includes('STALE IMAGE'),'old image request overwrote new card');
+      GXT_SHIM_DISPATCH({type:'GXT_IMAGE_RESULT',requestId:'image-current',res:{ok:true,t:'CURRENT IMAGE'}});
+      assert(body()?.textContent==='CURRENT IMAGE','matching request did not render');
+    }finally{GXT.ui.closeAll();}
+  });
+  await check('context manga responses cannot cross between repeated requests',async()=>{
+    const img=await image();
+    try{begin(img,'manga-old');begin(img,'manga-current');result('manga-old');assert(img.src===originals[0],'old manga request replaced image');result('manga-current');assert(img.src===translated,'current manga did not render');}
+    finally{GXT.page._internal.restoreImage(img);img.remove();GXT.ui.closeAll();}
+  });
+  await check('context manga result cannot replace a connected recycled image',async()=>{
+    const img=await image();
+    try{begin(img,'manga-recycled');img.src=originals[1];result('manga-recycled');assert(img.src===originals[1],'late output replaced newly selected source');assert(body()?.querySelector('img')?.src===translated,'detached output should remain available as a preview');}
+    finally{GXT.page._internal.restoreImage(img);img.remove();GXT.ui.closeAll();}
+  });
+  await check('context manga restore and reapply preserve a source changed by the page',async()=>{
+    const img=await image();
+    try{begin(img,'manga-toggle');result('manga-toggle');assert(img.src===translated);const toggle=action('تصویر اصلی');assert(toggle,'restore control missing');toggle.click();assert(img.src===originals[0]);img.src=originals[1];toggle.click();assert(img.src===originals[1],'reapply overwrote recycled image');}
+    finally{GXT.page._internal.restoreImage(img);img.remove();GXT.ui.closeAll();}
+  });
+  await check('context manga restore preserves absent src on srcset-only images',async()=>{
+    const img=await image();
+    try{img.removeAttribute('src');img.srcset=originals[0]+' 1x';await img.decode();begin(img,'manga-srcset');result('manga-srcset');assert(img.src===translated);action('تصویر اصلی')?.click();assert(!img.hasAttribute('src'),'restore left translated src behind');assert(img.getAttribute('srcset')===originals[0]+' 1x','srcset was not restored');}
+    finally{GXT.page._internal.restoreImage(img);img.remove();GXT.ui.closeAll();}
+  });
+
+  // Real picker DOM and OCR flow; only the browser capture permission and
+  // worker boundary are replaced. Every frame is a local synthetic canvas.
+  const screenPending=[];
+  const captureSetup=()=>{
+    const create=document.createElement, getMedia=navigator.mediaDevices.getDisplayMedia, handler=GXT_SHIM_HANDLER;
+    let stopped=0;
+    document.createElement=function(tag,...args){
+      if(tag!=='video')return create.call(document,tag,...args);
+      const frame=create.call(document,'canvas');frame.width=400;frame.height=300;
+      frame.videoWidth=400;frame.videoHeight=300;frame.play=()=>Promise.resolve();return frame;
+    };
+    navigator.mediaDevices.getDisplayMedia=async()=>{const track=new EventTarget();track.readyState='live';track.stop=()=>{stopped++;};return {getTracks:()=>[track]};};
+    globalThis.GXT_SHIM_HANDLER=m=>m.type==='OCR_TRANSLATE'?new Promise(resolve=>screenPending.push({m,resolve})):handler(m);
+    return {stopped:()=>stopped,cleanup:()=>{document.dispatchEvent(new KeyboardEvent('keydown',{key:'Escape',bubbles:true}));document.createElement=create;navigator.mediaDevices.getDisplayMedia=getMedia;globalThis.GXT_SHIM_HANDLER=handler;for(const job of screenPending.splice(0))job.resolve({ok:true,text:'late',translated:'SCREEN STALE'});GXT.ui.closeAll();}};
+  };
+  const picker=()=>[...document.querySelectorAll('[data-gxt-ui="screen"],[data-gxt-screen]')].map(h=>h.shadowRoot?.querySelector('.wrap')).find(Boolean);
+  const cropScreen=async()=>{
+    assert(await until(picker),'screen picker missing');const wrap=picker();wrap.setPointerCapture=()=>{};
+    wrap.dispatchEvent(new PointerEvent('pointerdown',{clientX:innerWidth/2-30,clientY:innerHeight/2-30,pointerId:1}));
+    wrap.dispatchEvent(new PointerEvent('pointerup',{clientX:innerWidth/2+30,clientY:innerHeight/2+30,pointerId:1}));
+    assert(await until(()=>screenPending.length),'OCR request missing');
+  };
+  await check('screen target change retires a pending OCR result',async()=>{
+    const previous=await GXT.getSettings(),capture=captureSetup();
+    try{const running=GXT.screen.translateScreenRegion();await cropScreen();await GXT.setSettings({targetLang:'fr'});screenPending.shift().resolve({ok:true,text:'source',translated:'SCREEN STALE'});await running;assert(!body()?.textContent.includes('SCREEN STALE'),'old target screen response painted');assert(capture.stopped()===1,'capture did not stop');}
+    finally{capture.cleanup();await GXT.setSettings(previous);}
+  });
+  await check('disabling screen translation closes its picker before OCR dispatch',async()=>{
+    const previous=await GXT.getSettings(),capture=captureSetup();
+    try{const running=GXT.screen.translateScreenRegion();assert(await until(picker),'screen picker missing');await GXT.setSettings({enabled:false});await sleep(50);assert(!picker(),'disabled screen picker remains open');assert(!screenPending.length,'disabled flow sent pixels');await running;}
+    finally{document.dispatchEvent(new KeyboardEvent('keydown',{key:'Escape',bubbles:true}));capture.cleanup();await GXT.setSettings(previous);}
+  });
+  await check('screen captures refresh theme settings instead of restoring a stale snapshot',async()=>{
+    const previous=await GXT.getSettings(),capture=captureSetup(),seen=[],configure=GXT.ui.configure;
+    GXT.ui.configure=s=>{if(s)seen.push(s.uiTheme);return configure(s);};
+    try{await GXT.setSettings({uiTheme:'light'});seen.length=0;const running=GXT.screen.translateScreenRegion();assert(await until(picker));document.dispatchEvent(new KeyboardEvent('keydown',{key:'Escape',bubbles:true}));await running;assert(seen.length && seen.every(x=>x==='light'),'screen restored an old theme');}
+    finally{GXT.ui.configure=configure;capture.cleanup();await GXT.setSettings(previous);}
+  });
+  for (const [name,response,expected,error] of [
+    ['success',{ok:true,text:'Source',translated:'SCREEN COMPLETE',lines:1},'SCREEN COMPLETE',false],
+    ['empty OCR',{ok:true,text:'',translated:'',lines:0},GXT.i18n.t('content_screen_translateScreenRegion_2'),false],
+    ['failure',{ok:false,error:'SYNTHETIC_SCREEN_FAILURE'},'SYNTHETIC_SCREEN_FAILURE',true],
+    ['partial translation',{ok:true,text:'Source',translated:'PARTIAL OUTPUT',failed:{error:'PARTIAL_FAILURE'}},'PARTIAL OUTPUT',true],
+  ]) await check('screen '+name+' settles the actual result card without unavailable methods',async()=>{
+    const capture=captureSetup();
+    try {const running=GXT.screen.translateScreenRegion();await cropScreen();assert(body()?.classList.contains('dots'),'missing visible loading state');screenPending.shift().resolve(response);await running;
+      assert(body()?.textContent.includes(expected),'result missing');assert(!body()?.classList.contains('dots'),'loading did not settle');assert(!!body()?.querySelector('.err')===error,'incorrect failure state');assert(capture.stopped()===1,'capture leaked');
+    }finally{capture.cleanup();}
+  });
+  await check('closing a screen card settles its pending operation without awaiting OCR',async()=>{
+    const capture=captureSetup();let finished=false;
+    try {const running=GXT.screen.translateScreenRegion().then(()=>{finished=true;});await cropScreen();GXT.ui.closeAll();assert(await until(()=>finished,500),'closed operation is still pending');await running;assert(!body(),'closed card reappeared');}
+    finally{capture.cleanup();}
+  });
   document.querySelector('#results').textContent=checks.filter(Boolean).length+'/'+checks.length;
   console.log(`GXT-PAGE-LIFE SUMMARY ${checks.filter(Boolean).length}/${checks.length}`);
 })();

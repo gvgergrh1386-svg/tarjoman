@@ -11,9 +11,18 @@ globalThis.dubCreations=[];GXT.dub={create(config){const record={config,starts:[
  const wait=ms=>new Promise(r=>setTimeout(r,ms));await wait(100);
  const section=document.createElement('section');section.className='player';section.innerHTML='<video controls></video>';document.querySelector('#fixtures').append(section);await wait(250);
  const video=section.querySelector('video'),W=GXT.webVideo,r=W._test.get(video);r.openPanel();await wait(80);
- const rgb=s=>{const a=s.match(/[\d.]+/g)?.map(Number);return a?.slice(0,3).map(v=>v/255)};
+ const rgba=s=>{const a=s.match(/[\d.]+/g)?.map(Number)||[0,0,0,0];return [...a.slice(0,3).map(v=>s.startsWith('color(')?v:v/255),a[3]??1]};
+ const rgb=s=>rgba(s).slice(0,3);
  const luminance=c=>c.map(v=>v<=.04045?v/12.92:((v+.055)/1.055)**2.4).reduce((s,v,i)=>s+v*[.2126,.7152,.0722][i],0);
- const ratio=el=>{const css=getComputedStyle(el),f=luminance(rgb(css.color)),b=luminance(rgb(css.backgroundColor));return (Math.max(f,b)+.05)/(Math.min(f,b)+.05)};
+ // Composite the actual painted ancestors, including translucent hover/active
+ // fills, over both extreme video frames. An alpha channel is not black.
+ const ratio=el=>{
+   const stack=[];for(let e=el;e;e=e.parentElement)stack.unshift(getComputedStyle(e).backgroundColor);
+   return Math.min(...[0,1].map(base=>{
+     let bg=[base,base,base];for(const color of stack){const a=rgba(color);bg=bg.map((v,i)=>a[i]*a[3]+v*(1-a[3]));}
+     const f=luminance(rgb(getComputedStyle(el).color)),b=luminance(bg);return (Math.max(f,b)+.05)/(Math.min(f,b)+.05);
+   }));
+ };
  for(const uiTheme of ['paper','graphite','midnight','daylight']){
    await GXT.setSettings({uiTheme});await wait(180);
    check(uiTheme+' enabled toolbar button has readable ink on actual surface',()=>ratio(r.menuButton)>=4.5);
@@ -36,7 +45,11 @@ globalThis.dubCreations=[];GXT.dub={create(config){const record={config,starts:[
  r.host.hidden=true;
  check('hidden host stays hidden despite page CSS and strong shadow reset',()=>r.host.getClientRects().length===0);r.host.hidden=false;r.caption.hidden=true;pageStyle.remove();
  r.menuButton.focus();
- check('button keyboard focus remains visible',()=>getComputedStyle(r.menuButton).outlineStyle!=='none');
+ check('button keyboard focus remains visible',()=>getComputedStyle(r.menuButton).outlineStyle!=='none'||getComputedStyle(r.menuButton).boxShadow!=='none');
+ for(const uiVideoStyle of ['glass','solid','inherit']){
+   await GXT.setSettings({uiVideoStyle});await wait(120);
+   check(uiVideoStyle+' video setting repaints and synchronizes the open menu',()=>r.videoStyleSelect.value===uiVideoStyle&&ratio(r.menuButton)>=4.5&&getComputedStyle(r.toolbar).backdropFilter==='none');
+ }
  await GXT.setSettings({webVideoEnabled:false});await wait(180);
  check('disabling removes every overlay host and floating marker',()=>!document.querySelector('[data-gxt-web-video]')&&!document.querySelector('[data-gxt-web-video-dock]'));
  const passed=results.filter(x=>x.ok).length;document.querySelector('#summary').textContent=passed+'/'+results.length;console.log(`GXT-WEBVIS SUMMARY ${passed}/${results.length}`);

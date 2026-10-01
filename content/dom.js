@@ -174,6 +174,24 @@
     return el.closest('article');
   }
 
+  // React hydrates the permalink separately from the source node. Remember
+  // only unambiguous identities for an exact source+author+quote fingerprint;
+  // never derive a post identity from its position or the preceding card.
+  const knownIdentities = new Map();
+  const elementIdentities = new WeakMap();
+  const authorHandle = el => {
+    const author=getAuthor(el);
+    return author.match(/@[\w.]+/)?.[0]?.toLowerCase() || author;
+  };
+  function sourceFingerprint(el, extraction = extract(el), handle = authorHandle(el)) {
+    const article = getArticle(el);
+    const texts = article?.querySelectorAll(SEL.tweetText);
+    return JSON.stringify([el.matches(SEL.bio) ? 'bio' : el.matches(SEL.extraZones) ? 'extra' : 'tweet', handle,
+      extraction.text.replace(/\r\n?/g,'\n').replace(/\u00a0/g,' ').trim(),
+      extraction.placeholders.map(({node})=>node.getAttribute('href') || node.textContent),
+      texts?.[0]===el && texts.length>1 ? extract(texts[1]).text : '']);
+  }
+
   // A status permalink belongs to the post, while location.pathname and the
   // preceding conversation cell belong only to the current view. Quote cards
   // must be resolved before the enclosing article's own permalink.
@@ -182,7 +200,7 @@
     if (article) {
       for (let scope = el.parentElement; scope; scope = scope.parentElement) {
           const links = [...scope.querySelectorAll('a[href*="/status/"]')].filter(a=>{
-            if(a.closest(SEL.tweetText))return false;
+            if(a.closest(`${SEL.tweetText}, .gxt-box, .gxt-linkrow`))return false;
             // A quote's timestamp can be nearer to the outer text than the
             // outer header. Resolve the link's own card before using its ID.
             for(let owner=a;owner;owner=owner.parentElement){
@@ -194,13 +212,28 @@
           });
           const own = links.find(a => a.querySelector('time')) || links.find(a => !a.closest(SEL.tweetText));
           const id = own?.getAttribute('href')?.match(/\/status\/(\d+)(?:[/?#]|$)/)?.[1];
-          if (id) return `x:${id}`;
+          if (id) {
+            const fingerprint=sourceFingerprint(el), identity=`x:${id}`, previous=knownIdentities.get(fingerprint);
+            // null records ambiguity instead of guessing between equal replies.
+            knownIdentities.set(fingerprint, previous===undefined || previous===identity ? identity : null);
+            if(knownIdentities.size>4000)knownIdentities.delete(knownIdentities.keys().next().value);
+            elementIdentities.set(el,{identity,source:sourceFingerprint(el,undefined,''),author:authorHandle(el)});
+            return identity;
+          }
         if (scope === article) break;
       }
     }
+    // A split React commit can temporarily remove the *entire* header. The
+    // same unchanged source node still owns its resolved post ID. Do not fall
+    // back to an author-less cache key while the header is being reconstructed.
+    // A new permalink, changed source/links or different author wins instead.
+    const previous=elementIdentities.get(el),author=authorHandle(el);
+    if(previous && previous.source===sourceFingerprint(el,undefined,'') && (!author || author===previous.author))return previous.identity;
     // No reliable permalink (bios, extra zones, incomplete virtualized cards):
     // a content identity, never an index, parent context or current page URL.
-    const author=getAuthor(el);const handle=author.match(/@[\w.]+/)?.[0]||author;
+    const known=knownIdentities.get(sourceFingerprint(el));
+    if(known)return known;
+    const handle=author;
     const quoted=article?.querySelectorAll(SEL.tweetText);
     return JSON.stringify(['text',handle,quoted?.[0]===el&&quoted.length>1?(quoted[1].textContent||'').trim():'']);
   }
@@ -208,6 +241,11 @@
   function cacheSource(el, extraction = extract(el)) {
     return JSON.stringify([contentIdentity(el), extraction.text.replace(/\r\n?/g, '\n').replace(/\u00a0/g, ' ').trim(),
       extraction.placeholders.map(({node}) => node.getAttribute('href') || node.textContent)]);
+  }
+
+  function identityPending(el) {
+    return el.matches(SEL.tweetText) && !contentIdentity(el).startsWith('x:') &&
+      (!!getArticle(el)?.querySelector('time') || elementIdentities.has(el));
   }
 
   /**
@@ -219,6 +257,7 @@
   function getAuthor(el) {
     try {
       const article = getArticle(el);
+      if(!article)return '';
       let scope = el.parentElement;
       while (scope && scope !== article && !scope.querySelector(SEL.userName)) {
         scope = scope.parentElement;
@@ -326,5 +365,7 @@
     getContext,
     contentIdentity,
     cacheSource,
+    sourceFingerprint,
+    identityPending,
   };
 })();

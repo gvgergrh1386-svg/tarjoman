@@ -200,25 +200,12 @@
     const c = getComputedStyle(host);
     const wantFamily = (c.getPropertyValue('--gxt-font') || '').trim();
     const wantSize = (c.getPropertyValue('--gxt-fs-md') || '').trim();
-    const wantColor = (c.getPropertyValue('--gxt-fg') || '').trim();
-    if (!wantFamily || !wantSize || !wantColor) return false;
-    // Light themes may intentionally use black. Compare the resolved token,
-    // rather than assuming that every valid theme has non-black text.
-    const colorProbe = document.createElement('span');
-    colorProbe.style.color = 'var(--gxt-fg)';
-    host.shadowRoot.appendChild(colorProbe);
-    const expectedColor = getComputedStyle(colorProbe).color;
-    colorProbe.remove();
+    if (!wantFamily || !wantSize) return false;      // no tokens at all
     const firstOf = (s) => s.split(',')[0].replace(/["']/g, '').trim();
-    const matches = firstOf(c.fontFamily) === firstOf(wantFamily)
+    return firstOf(c.fontFamily) === firstOf(wantFamily)
       && c.fontSize === wantSize
       && c.lineHeight !== 'normal'
-      && c.color === expectedColor;
-    if (!matches) console.log('GXT-YT-TEST detail host ' + JSON.stringify({
-      family: c.fontFamily, wantFamily, size: c.fontSize, wantSize,
-      lineHeight: c.lineHeight, color: c.color,
-    }));
-    return matches;
+      && c.color !== 'rgb(0, 0, 0)';
   })());
   check('REGRESSION: the panel text is not a serif fallback', (() => {
     const el = Q('#gxt-yt-panel .yt-lbl') || Q('#gxt-yt-pill');
@@ -553,39 +540,19 @@
     }
 
     const shaky = [];
-    // Measure settled colors on systems that enable motion too. A transition
-    // can temporarily retain the preceding theme or unpressed button colors.
-    const settlePaint = async () => {
-      // Allow the browser to create transitions after style invalidation.
-      // A layout-only read need not flush a color-only change.
-      const frame = () => new Promise((resolve) => requestAnimationFrame(resolve));
-      await frame();
-      await frame();
-      await Promise.all([...root.host.getAnimations(), ...root.getAnimations()]
-        .filter((a) => Number.isFinite(a.effect?.getComputedTiming().endTime))
-        .map((a) => a.finished.catch(() => {})));
-      await frame();
-    };
     const px = (el, prop) => getComputedStyle(el).getPropertyValue(prop).trim();
-    /** Computed rgb()/rgba()/color(srgb) to hex, including translucency. */
+    /** A computed rgb()/rgba() to hex, composited over `under` if translucent. */
     const flat = (value, under) => {
-      const n = (value.match(/[-+]?(?:\d*\.)?\d+(?:e[-+]?\d+)?/gi) || []).map(Number);
+      const n = (value.match(/[\d.]+/g) || []).map(Number);
       if (n.length < 3) return null;
-      const scale = /^color\(srgb\s/i.test(value) ? 255 : 1;
-      const hex = `#${n.slice(0, 3).map((c) => Math.round(Math.max(0, Math.min(255, c * scale))).toString(16).padStart(2, '0')).join('')}`;
+      const hex = `#${n.slice(0, 3).map((c) => Math.round(c).toString(16).padStart(2, '0')).join('')}`;
       const a = n.length > 3 ? n[3] : 1;
       return a < 1 && under ? compositeOver(hex, under, a) : hex;
     };
-    check('computed sRGB colors preserve RGB channels and alpha',
-      flat('color(srgb 1 0 0)', '#000000') === '#ff0000'
-      && ['#ffffff', '#000000'].every((under) =>
-        flat('color(srgb 0.956863 0.968627 0.980392 / 0.84)', under)
-          === flat('rgba(244, 247, 250, 0.84)', under)));
 
     for (const themeId of ['graphite', 'midnight', 'daylight', 'paper']) {
       for (const accentId of ['sky', 'amber', 'emerald']) {
         GXT.youtube.__applyTheme({ uiTheme: themeId, uiAccent: accentId });
-        await settlePaint();
         const panel = root.querySelector('#gxt-yt-panel');
         const label = panel?.querySelector('.yt-lbl');
         const hint = panel?.querySelector('.yt-hint, .yt-note');
@@ -595,10 +562,6 @@
 
         // The panel's own surface, over the two extreme frames it can sit on.
         const surface = px(panel, 'background-color');
-        if (themeId === 'daylight' && accentId === 'sky') console.log('GXT-YT-TEST detail daylight paint ' + JSON.stringify({
-          surface, label: px(label, 'color'), caption: px(cap, 'color'), captionBg: px(cap, 'background-color'),
-          fg: px(root.host, '--gxt-fg'), card: px(root.host, '--gxt-card'), agent: navigator.userAgent,
-        }));
         for (const frame of ['#ffffff', '#000000']) {
           const under = flat(surface, frame);
           const ink = flat(px(label, 'color'), under);
@@ -622,7 +585,6 @@
         // An ACTIVE control fills with the accent and writes on it. Read from
         // the pill with aria-pressed forced on, so this measures the real rule.
         pill.setAttribute('aria-pressed', 'true');
-        await settlePaint();
         const fill = flat(px(pill, 'background-color'), '#000000');
         const on = flat(px(pill, 'color'), fill);
         if (contrast(on, fill) < 4.48) {

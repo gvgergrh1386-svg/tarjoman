@@ -126,14 +126,66 @@ test('cache: same-key concurrency, clear ordering, restart persistence', async()
 });
 
 async function workerEnvironment(initial={}, extras={}) {
-  const e=environment(initial,extras);e.load('background/service-worker.js','globalThis.auditHandlers = handlers;');await tick();return e;
+  const e=environment(initial,extras);e.load('background/service-worker.js','globalThis.auditHandlers = handlers; globalThis.auditMenus = { image: handleImageMenu, manga: handleMangaMenu };');await tick();return e;
 }
-test('worker: a late fallback must preserve a model the user selected meanwhile', async()=>{
+
+for (const [kind, handlerName] of [['image','TRANSLATE_IMAGE'],['manga','BRIDGE_MANGA']]) {
+  test(`worker: overlapping ${kind} menu requests retain unique begin/result ownership`,async()=>{
+    const e=await workerEnvironment(),messages=[],pending=[];
+    e.ctx.chrome.permissions={request:async()=>true};
+    e.ctx.chrome.scripting={executeScript:async()=>[{result:true}]};
+    e.ctx.chrome.tabs={sendMessage:async(tabId,message)=>{messages.push(message);}};
+    e.ctx.auditHandlers[handlerName]=async()=>{const done=deferred();pending.push(done);return done.promise;};
+    const src='https://image.example/reused.png',tab={id:12};
+    const first=e.ctx.auditMenus[kind]({srcUrl:src},tab);
+    while(pending.length<1)await tick();
+    const second=e.ctx.auditMenus[kind]({srcUrl:src},tab);
+    while(pending.length<2)await tick();
+    pending[1].resolve({ok:true,t:'new'});await second;
+    pending[0].resolve({ok:false,code:'OLD_ERROR'});await first;
+    const [a,b,newResult,oldResult]=messages;
+    assert.equal(typeof a.requestId,'string');assert.ok(a.requestId);assert.notEqual(a.requestId,b.requestId);
+    assert.equal(newResult.requestId,b.requestId);assert.equal(oldResult.requestId,a.requestId);
+    assert.ok(messages.every(message=>message.src===src));
+  });
+  test(`worker: ${kind} menu reports an unexpected handler failure to its waiting card`,async()=>{
+    const e=await workerEnvironment(),messages=[];
+    e.ctx.chrome.scripting={executeScript:async()=>[{result:true}]};
+    e.ctx.chrome.tabs={sendMessage:async(tabId,message)=>{messages.push(message);}};
+    e.ctx.auditHandlers[handlerName]=async()=>{throw Object.assign(new Error('Injected storage failure'),{code:'STORAGE'});};
+    await e.ctx.auditMenus[kind]({srcUrl:'data:image/png;base64,AA=='},{id:12});
+    assert.equal(messages.length,2);assert.equal(messages[1].requestId,messages[0].requestId);
+    assert.equal(messages[1].res.ok,false);assert.equal(messages[1].res.code,'STORAGE');
+  });
+}
+
+for (const [reason,code] of [['length','MAX_TOKENS'],['content_filter','BLOCKED']]) {
+  test(`OpenAI: partial content with ${reason} is a terminal failure`,async()=>{
+    let calls=0;
+    const e=environment({}, {fetch:async()=>{calls++;return new Response(JSON.stringify({choices:[{message:{content:'A plausible but incomplete translation'},finish_reason:reason}]}));}});
+    for(const file of ['shared/settings.js','background/abort.js','background/prompt.js','background/openai.js'])e.load(file);
+    await assert.rejects(e.ctx.GXT.openai.composeEnglish({baseUrl:'https://provider.example/v1',key:'synthetic',model:'selected',text:'متن'}),{code,retriable:false});
+    assert.equal(calls,1);
+  });
+  test(`worker: ${reason} output is not cached and a later complete summary can recover`,async()=>{
+    let calls=0;
+    const e=await workerEnvironment({settings:{provider:'openai',openaiBaseUrl:'https://provider.example/v1',openaiModel:'test'},openaiApiKey:'synthetic'},
+      {fetch:async()=>new Response(JSON.stringify({choices:[{message:{content:++calls===1?'incomplete':'A complete summary.'},finish_reason:calls===1?reason:'stop'}]}))});
+    const request={text:'A source paragraph.'};
+    const failed=await e.ctx.auditHandlers.TRANSLATE_SUMMARY(request);
+    assert.equal(failed.ok,false);assert.equal(failed.code,code);
+    assert.equal(Object.keys(e.state).filter(key=>key.startsWith('t:')).length,0);
+    const recovered=await e.ctx.auditHandlers.TRANSLATE_SUMMARY(request);
+    assert.equal(recovered.ok,true);assert.equal(recovered.t,'A complete summary.');
+    assert.equal((await e.ctx.auditHandlers.TRANSLATE_SUMMARY(request)).cached,true);assert.equal(calls,2);
+  });
+}
+test('worker: an unexpected Gemini model is rejected and never changes the saved selection', async()=>{
   const e=await workerEnvironment({apiKeys:['synthetic-test-key'],settings:{provider:'gemini',model:'model-a'}});
   const entered=deferred(),done=deferred();e.ctx.GXT.gemini.translateTexts=async()=>{entered.resolve();return done.promise;};
   const work=e.ctx.auditHandlers.TRANSLATE_TEXTS({texts:['Hello'],kind:'page'});await entered.promise;
   await e.ctx.GXT.setSettings({model:'model-b'});done.resolve({list:['سلام'],model:'fallback-a',softFallback:false});
-  const result=await work;assert.equal(result.ok,true);assert.equal((await e.ctx.GXT.getSettings()).model,'model-b');
+  const result=await work;assert.equal(result.failed?.code,'MODEL_MISMATCH');assert.equal((await e.ctx.GXT.getSettings()).model,'model-b');
 });
 test('worker: clearing translation cache prevents an older request repopulating it', async()=>{
   const e=await workerEnvironment({settings:{provider:'google'}});const entered=deferred(),done=deferred();
@@ -203,6 +255,56 @@ test('worker: file subtitles use the global provider independently of YouTube ov
   const file=await e.ctx.auditHandlers.TRANSLATE_TEXTS({texts:['File subtitle'],kind:'subtitle',source:'file'});
   const video=await e.ctx.auditHandlers.TRANSLATE_TEXTS({texts:['Video subtitle'],kind:'subtitle'});
   assert.equal(file.list[0],'موتور فایل');assert.equal(video.list[0],'موتور یوتیوب');
+});
+
+test('screen OCR: failed translation is not reported as successful source text', async()=>{
+  const e=await workerEnvironment({settings:{provider:'google',bridgeEnabled:true}});
+  e.ctx.GXT.bridge.ocr=async()=>({ok:true,boxes:[{text:'Source sentence'}]});
+  e.ctx.GXT.mt.translateTexts=async()=>{throw Object.assign(Error('SYNTHETIC_TRANSLATION_FAILURE'),{code:'BAD_KEY'});};
+  const result=await e.ctx.auditHandlers.OCR_TRANSLATE({image:'data:image/png;base64,AA=='});
+  assert.equal(result.ok,false);assert.equal(result.code,'BAD_KEY');assert.equal(result.text,'Source sentence');
+});
+
+test('screen OCR: empty boxes cannot shift translated text onto another box', async()=>{
+  const e=await workerEnvironment({settings:{provider:'google',bridgeEnabled:true}});
+  e.ctx.GXT.bridge.ocr=async()=>({ok:true,boxes:[null,{text:''},{text:'Source sentence',x:42}]});
+  e.ctx.GXT.mt.translateTexts=async()=>({list:['Translated sentence']});
+  const result=await e.ctx.auditHandlers.OCR_TRANSLATE({image:'data:image/png;base64,AA=='});
+  assert.equal(result.ok,true);assert.equal(result.boxes.length,1);assert.equal(result.boxes[0].x,42);assert.equal(result.boxes[0].fa,'Translated sentence');
+});
+
+test('screen port: disconnect cancels OCR and prevents translation or late delivery', async()=>{
+  const e=await workerEnvironment({settings:{provider:'google',bridgeEnabled:true}});
+  const started=deferred(),done=deferred(),listeners=[],disconnect=[],replies=[];let signal,translations=0;
+  e.ctx.GXT.bridge.ocr=async(s,options)=>{signal=options.signal;started.resolve();return done.promise;};
+  e.ctx.GXT.mt.translateTexts=async()=>{translations++;return {list:['obsolete']};};
+  const port={name:'gxt-screen-translation',sender:{id:'test-extension'},onMessage:{addListener:f=>listeners.push(f)},onDisconnect:{addListener:f=>disconnect.push(f)},postMessage:r=>replies.push(r),disconnect:()=>disconnect.forEach(f=>f())};
+  for(const f of e.events.connect)f(port);
+  assert.equal(listeners.length,1);
+  listeners[0]({image:'data:image/png;base64,AA=='});await started.promise;
+  assert.equal(signal.aborted,false);port.disconnect();assert.equal(signal.aborted,true);
+  done.resolve({ok:true,boxes:[{text:'Obsolete OCR'}]});await tick();await tick();
+  assert.equal(translations,0);assert.equal(replies.length,0);
+});
+
+test('screen port: foreign senders and invalid image schemes are rejected', async()=>{
+  const e=await workerEnvironment();let disconnected=0,called=0;const listeners=[],replies=[];
+  e.ctx.auditHandlers.OCR_TRANSLATE=async()=>{called++;return {ok:true};};
+  const port={name:'gxt-screen-translation',sender:{id:'another-extension'},disconnect:()=>disconnected++,onMessage:{addListener:f=>listeners.push(f)},onDisconnect:{addListener:()=>{}},postMessage:r=>replies.push(r)};
+  for(const f of e.events.connect)f(port);
+  assert.equal(disconnected,1);assert.equal(listeners.length,0);
+  port.sender.id='test-extension';for(const f of e.events.connect)f(port);
+  listeners[0]({image:'https://untrusted.example/image.png'});await tick();
+  assert.equal(replies[0].code,'BAD_REQUEST');assert.equal(called,0);
+});
+
+test('bridge OCR: caller cancellation aborts fetch and is distinct from timeout', async()=>{
+  const started=deferred();let requestSignal;
+  const e=environment({}, {fetch:async(url,options)=>new Promise((resolve,reject)=>{
+    requestSignal=options.signal;started.resolve();options.signal.addEventListener('abort',()=>reject(Object.assign(Error('cancelled'),{name:'AbortError'})),{once:true});
+  })});e.load('shared/settings.js');e.load('background/bridge.js');
+  const controller=new AbortController();const request=e.ctx.GXT.bridge.ocr({}, {image:'data:image/png;base64,AA==',signal:controller.signal});
+  await started.promise;controller.abort();assert.equal(requestSignal.aborted,true);assert.equal((await request).code,'CANCELLED');
 });
 
 (async()=>{

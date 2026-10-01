@@ -28,6 +28,8 @@
   let consecutiveFailures = 0;
   let reqSeq = 0;
   let pauseTimer = null;
+  let translationEpoch = 0;
+  const latestRequest = new Map();
 
   /** Session cache: exact provider, source and disambiguation context -> {t, sl}. Makes re-mounted
    *  (virtualized) tweets re-render instantly with no messaging. */
@@ -37,6 +39,10 @@
   /** @type {Map<string, object>} request id -> job */
   const pending = new Map();
   const activeJobs = new WeakMap();
+  const flights = new Map();
+  const batches = new Set();
+  const hydrationTimers = new WeakMap();
+  const observedSignatures = new WeakMap();
   let queue = [];
   let flushTimer = null;
 
@@ -44,7 +50,6 @@
     author: isBio ? '' : D.getAuthor(el), ctx: isBio ? '' : D.getContext(el),
   });
   const signatureFor = el => {
-    const metadata = metadataFor(el);
     return JSON.stringify([D.signature(el), D.contentIdentity(el)]);
   };
   const pageKey = (job) => {
@@ -52,17 +57,33 @@
   };
 
   function allowed(el) {
-    return settings.enabled && el.isConnected &&
+    return settings.enabled && el.isConnected && el.matches(D.candidatesFor(settings)) &&
       (!el.matches(D.SEL.bio) || settings.translateBios) &&
       (!el.matches(D.SEL.extraZones) || settings.xExtraZones);
   }
 
-  function cancelElement(el) {
+  function cancelElement(el, immediately = false) {
+    clearTimeout(hydrationTimers.get(el));hydrationTimers.delete(el);
     const job = activeJobs.get(el);
     if (job) {
       pending.delete(job.id);
       activeJobs.delete(el);
-      queue = queue.filter((item) => item.id !== job.id);
+      const flight=flights.get(job.cacheKey);
+      if(flight) {
+        flight.consumers.delete(job.id);
+        if(!flight.consumers.size) {
+          const retire=()=>{
+            if(flight.consumers.size)return;
+            if(flights.get(job.cacheKey)===flight)flights.delete(job.cacheKey);
+            flight.batch?.cancel(flight.id);
+          };
+          clearTimeout(flight.orphanTimer);
+          if(immediately || !flight.sent)retire();
+          else flight.orphanTimer=setTimeout(retire,2000);
+        }
+      }
+      queue=queue.filter(item=>item.id!==job.id || flight?.consumers.size);
+      if(!job.sent && !flight?.consumers.size && latestRequest.get(job.cacheKey)===job.id)latestRequest.delete(job.cacheKey);
     }
     io.unobserve(el);
     dwellIO.unobserve(el);
@@ -240,6 +261,15 @@
 
   const mutationObserver = new MutationObserver((records) => {
     for (const record of records) {
+      const target = record.target.nodeType === Node.ELEMENT_NODE ? record.target : record.target.parentElement;
+      if (target?.closest('.gxt-box, .gxt-linkrow')) continue;
+      if(record.type==='attributes'&&record.attributeName==='data-testid'&&target?.dataset.gxtSig!==undefined&&!target.matches(D.candidatesFor(settings))) {
+        cancelElement(target,true);R.removeUI(target);delete target.dataset.gxtSig;
+      }
+      // A header/permalink/quote can change without mutating tweetText. Scan
+      // its own article as well; never reclassify an adjacent timeline card.
+      const article = target?.closest('article');
+      if (article) pendingRoots.add(article);
       if (record.type === 'characterData') {
         const parent = record.target.parentElement;
         if (parent) pendingRoots.add(parent);
@@ -249,7 +279,9 @@
       // changes have no added ELEMENT_NODE and still invalidate a translation.
       if (record.target.nodeType === Node.ELEMENT_NODE) pendingRoots.add(record.target);
       for (const node of record.removedNodes || []) {
-        if (node.nodeType !== Node.ELEMENT_NODE) continue;
+        // React can move a card within one mutation batch. It still owns its
+        // translation and request; tearing it down would cause a false reload.
+        if (node.nodeType !== Node.ELEMENT_NODE || node.isConnected) continue;
         const removed = [node, ...node.querySelectorAll(`${D.SEL.candidates}, ${D.SEL.extraZones}`)];
         for (const el of removed) {
           if (!el.matches(`${D.SEL.candidates}, ${D.SEL.extraZones}`)) continue;
@@ -299,7 +331,12 @@
     const previousSig = el.dataset.gxtSig;
     const currentSig = signatureFor(el);
     if (previousSig !== undefined) {
-      if (previousSig === currentSig && !R.needsRepair(el)) return;
+      if (previousSig === currentSig && observedSignatures.get(el) === currentSig) {
+        // Repair presentation in place. Cancelling/restarting a request here
+        // turns a harmless React sibling update into a second loading cycle.
+        if(R.needsRepair(el))R.repairUI(el);
+        return;
+      }
       // In-place content change: drop stale UI and start over. Also clear the
       // "Show more" guard — a successful expand IS such a change (so the full
       // text now translates), and a virtualized node reused for another post
@@ -309,6 +346,10 @@
     }
     cancelElement(el);
     el.dataset.gxtSig = currentSig;
+    observedSignatures.set(el,currentSig);
+    // A remounted warm post needs no viewport/dwell timer or batch delay.
+    const extraction = D.extract(el);
+    if (pageCache.has(pageKey({el, extraction}))) { processElement(el); return; }
     // cancelElement above removed both observers and any old dwell timer.
     // Dwell mode only gates AUTO translation; manual links appear normally.
     if (settings.dwellMode && settings.mode === 'auto') dwellIO.observe(el);
@@ -320,6 +361,11 @@
   function processElement(el) {
     if (!allowed(el)) {
       delete el.dataset.gxtSig;
+      return;
+    }
+    if(D.identityPending(el)) {
+      clearTimeout(hydrationTimers.get(el));
+      hydrationTimers.set(el,setTimeout(()=>{hydrationTimers.delete(el);processElement(el);},300));
       return;
     }
     const isBio = el.matches(D.SEL.bio);
@@ -378,7 +424,8 @@
       return;
     }
     job.cacheKey = pageKey(job);
-    R.showLoading(job.el);
+    const cached=pageCache.get(job.cacheKey);
+    if(cached){R.showTranslation(job.el,cached.t,job.extraction,cached.sl||job.lang,viewOpts(job));return;}
     // Snapshot the element's content so a response that arrives after the
     // text changed in place ("Show more", Grok toggle) is not rendered onto
     // the new, different text.
@@ -386,8 +433,13 @@
     reqSeq += 1;
     const id = `r${reqSeq}`;
     job.id = id;
+    job.epoch = translationEpoch;
     pending.set(id, job);
     activeJobs.set(job.el, job);
+    const shared=flights.get(job.cacheKey);
+    if(shared) { clearTimeout(shared.orphanTimer); shared.consumers.set(id,job); if(shared.waiting)showPending(job); return; }
+    latestRequest.set(job.cacheKey, id);
+    flights.set(job.cacheKey,{id,owner:job,consumers:new Map([[id,job]]),sent:false});
     queue.push({
       id,
       text: job.extraction.text,
@@ -403,23 +455,131 @@
     }
   }
 
+  function showPending(job) {
+    if(activeJobs.get(job.el)!==job || !allowed(job.el) || signatureFor(job.el)!==job.sig)return;
+    R.showLoading(job.el, () => {
+      cancelElement(job.el,true);
+      R.showTranslateLink(job.el,()=>startTranslate(job,true),globalThis.GXT.i18n.t('content_main_linkLabel_1'));
+    });
+  }
+
   async function flush() {
     if (flushTimer) {
       clearTimeout(flushTimer);
       flushTimer = null;
     }
     if (!queue.length) return;
-    const items = queue.filter((item) => pending.has(item.id));
-    queue = [];
+    const queuedOwner=id=>[...flights.values()].find(flight=>flight.id===id&&flight.consumers.size)?.owner;
+    const items = queue.filter((item) => queuedOwner(item.id)).slice(0,20);
+    queue = queue.filter(item=>!items.includes(item)&&queuedOwner(item.id));
+    if(queue.length)flushTimer=setTimeout(()=>void flush(),settings.batchDelayMs);
     if (!items.length) return;
+    const snapshots = new Map(items.map(item => [item.id, queuedOwner(item.id)]));
+    const completed=new Set();
+    const deliver=(id,result,failedResponse)=>{
+      if(completed.has(id)||!snapshots.has(id))return;
+      completed.add(id);
+      const job=snapshots.get(id), delivered=[{id}], results={[id]:result};
+      if(settings.enabled && job.epoch===translationEpoch && latestRequest.get(job.cacheKey)===job.id && job.namespace===cacheNamespace(settings) && result?.ok && typeof result.t==='string' && result.t.trim()) {
+        pageCacheSet(job.cacheKey,{t:result.t,sl:result.sl||''});
+      }
+      if(latestRequest.get(job.cacheKey)===job.id)latestRequest.delete(job.cacheKey);
+      const flight=flights.get(job.cacheKey);
+      if(flight?.id===id) {
+        clearTimeout(flight.orphanTimer);flights.delete(job.cacheKey);
+        for(const follower of flight.consumers.values()) {
+          if(follower.id===id)continue;
+          delivered.push({id:follower.id});results[follower.id]=result;
+        }
+      }
+      handleResponse(delivered,failedResponse || {ok:true,results});
+    };
+    const progress=message=>{
+      if(message.t==='result') {deliver(message.id,message.result);return;}
+      const job=snapshots.get(message.id), flight=job&&flights.get(job.cacheKey);
+      if(flight?.id!==message.id || flight.waiting)return;
+      flight.waiting=true;
+      for(const consumer of flight.consumers.values())showPending(consumer);
+    };
+    const batch=createBatch(items,null,progress);
+    batches.add(batch);
+    for (const job of snapshots.values()) {
+      job.sent = true;
+      const flight=flights.get(job.cacheKey);
+      if(flight){flight.sent=true;flight.batch=batch;}
+    }
     let response = null;
     try {
-      response = await chrome.runtime.sendMessage({ type: 'TRANSLATE_BATCH', items });
+      response = await batch.run();
     } catch {
       response = null; // extension reloaded or worker unreachable
+    } finally { batches.delete(batch); batch.close(); }
+    // Keep useful results even if their original DOM nodes were virtualized
+    // away while the provider was responding. Rendering still checks identity.
+    for (const item of items) {
+      deliver(item.id,response?.results?.[item.id],response?.ok?null:response || {ok:false,code:'ERR'});
     }
-    handleResponse(items, response);
   }
+
+  // A port supplies cancellation, liveness and restart recovery. Source ids
+  // remain unchanged on reconnect, so the worker first checks its durable cache.
+  function createBatch(items, action = null, progress = null) {
+    const controller=new AbortController(), live=new Set(items.map(item=>item.id));
+    let port=null, finish=null, heartbeat=null, timer=null, wake=null;
+    const close=()=>{clearTimeout(heartbeat);clearTimeout(timer);try{port?.disconnect();}catch{}port=null;};
+    const stop=()=>{controller.abort();finish?.(null);wake?.();close();};
+    return {close,
+      cancel(id){live.delete(id);try{port?.postMessage({t:'cancel',id});}catch{}if(!live.size)stop();},
+      stop,
+      async run(){
+        let retries=0;
+        while(!controller.signal.aborted) {
+          const response=await new Promise(resolve=>{
+            let settled=false;
+            const done=value=>{if(settled)return;settled=true;finish=null;resolve(value);};
+            finish=done;
+            try {
+              port=chrome.runtime.connect({name:action?'gxt-x-action':'gxt-x-translation'});
+              port.onMessage.addListener(value=>{
+                if(settled || controller.signal.aborted)return;
+                if(value?.t==='pong')return;
+                if(progress && (value?.t==='pending'||value?.t==='result')) {
+                  if(!live.has(value.id))return;
+                  if(value.t==='result')live.delete(value.id);
+                  progress(value);
+                  if(!live.size)done({ok:true,results:{}});
+                  return;
+                }
+                done(value);
+              });
+              port.onDisconnect.addListener(()=>{void chrome.runtime.lastError;done(null);});
+              port.postMessage(action || {stream:!!progress,items:items.filter(item=>live.has(item.id))});
+              const pulse=()=>{try{port?.postMessage({t:'ping'});}catch{done(null);}if(!settled)heartbeat=setTimeout(pulse,15000);};
+              heartbeat=setTimeout(pulse,15000);
+            } catch(error) {
+              done(/context invalidated/i.test(String(error?.message)) || !chrome.runtime.id
+                ? {ok:false,code:'CONTEXT_INVALIDATED',error:globalThis.GXT.i18n.t('error.extensionReloaded')} : null);
+            }
+          });
+          close();
+          if(response || controller.signal.aborted)return response;
+          retries++;
+          await new Promise(resolve=>{wake=resolve;timer=setTimeout(resolve,Math.min(30000,1000*2**Math.min(retries,5))+Math.random()*500);});
+          wake=null;
+        }
+        return null;
+      }
+    };
+  }
+
+  globalThis.GXT.requestXAction = async (message, signal) => {
+    if(signal?.aborted)return {ok:false,code:'CANCELLED'};
+    const batch=createBatch([{id:'action'}],message), abort=()=>batch.stop();
+    signal?.addEventListener('abort',abort,{once:true});
+    batches.add(batch);
+    try { return await batch.run() || {ok:false,code:'CANCELLED'}; }
+    finally { signal?.removeEventListener('abort',abort);batches.delete(batch);batch.close(); }
+  };
 
   function friendlyError(result) {
     switch (result?.code) {
@@ -433,7 +593,7 @@
       case 'NETWORK':
         return globalThis.GXT.i18n.t("content_main_friendlyError_3");
       case 'BLOCKED':
-        return globalThis.GXT.i18n.t("content_main_friendlyError_2");
+        return result?.error || globalThis.GXT.i18n.t("content_main_friendlyError_2");
       default:
         return result?.error || globalThis.GXT.i18n.t("content_main_friendlyError_1");
     }
@@ -464,7 +624,6 @@
       const stale = signatureFor(job.el) !== job.sig;
       if (result?.ok && typeof result.t === 'string' && result.t.trim()) {
         consecutiveFailures = 0;
-        pageCacheSet(job.cacheKey, { t: result.t, sl: result.sl || '' });
         if (!stale && job.el.isConnected) {
           R.showTranslation(
             job.el,
@@ -475,7 +634,7 @@
           );
         }
       } else {
-        anyFailure = true;
+        anyFailure ||= ['RATE_LIMIT','NETWORK','TIMEOUT','SERVER'].includes(result?.code);
         if (!stale && job.el.isConnected) {
           R.showError(job.el, friendlyError(result), () => startTranslate(job, true), result?.detail);
         }
@@ -494,7 +653,7 @@
         R.showError(job.el, message, () => startTranslate(job, true), response?.detail);
       }
     }
-    if (failed) noteFailure();
+    if (failed && ['RATE_LIMIT','NETWORK','TIMEOUT','SERVER'].includes(response?.code)) noteFailure();
   }
 
   function noteFailure() {
@@ -590,6 +749,11 @@
    * in-flight work is dropped too, so nothing repaints afterwards.
    */
   function removeAllTranslations() {
+    translationEpoch += 1;
+    latestRequest.clear();
+    for(const batch of batches)batch.stop();
+    for(const flight of flights.values())clearTimeout(flight.orphanTimer);
+    flights.clear();
     queue = [];
     if (flushTimer) {
       clearTimeout(flushTimer);
@@ -696,10 +860,12 @@
       subtree: true,
       characterData: true,
       attributes: true,
-      attributeFilter: ['lang', 'href', 'alt', 'src'],
+      attributeFilter: ['lang', 'href', 'alt', 'src', 'data-testid'],
     });
     for (const el of document.querySelectorAll(D.candidatesFor(settings))) consider(el);
   }
 
   void init();
+  addEventListener('pagehide',()=>removeAllTranslations());
+  addEventListener('pageshow',event=>{if(event.persisted)rescanAll();});
 })();

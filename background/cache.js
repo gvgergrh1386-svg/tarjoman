@@ -31,29 +31,55 @@
   const inflight = new Map();
   const flightStats = { started: 0, shared: 0, bypassed: 0, expired: 0 };
 
-  function coalesce(key, produce, { generation: requestGeneration = generation } = {}) {
+  function coalesce(key, produce, { generation: requestGeneration = generation, signal } = {}) {
+    globalThis.GXT.abort?.check(signal);
     const now = Date.now();
     for (const [id, entry] of inflight) {
-      if (now - entry.started >= MAX_FLIGHT_AGE_MS) { inflight.delete(id); flightStats.expired += 1; }
+      // A healthy pending operation may be waiting for quota for hours. Age
+      // alone must never release its identity and start a duplicate request.
+      if (entry.settled || !entry.consumers.size) { inflight.delete(id); flightStats.expired += 1; }
     }
     const id = `${requestGeneration}:${key}`;
     const existing = inflight.get(id);
-    if (existing) { flightStats.shared += 1; return existing.promise; }
+    if (existing) { flightStats.shared += 1; return subscribe(existing, signal); }
     // Saturation or a clear during request preparation must not attach old
     // work to the new generation. Bypass sharing; the owner's cache-write
     // generation still prevents it restoring data that the user cleared.
     if (requestGeneration !== generation || inflight.size >= MAX_INFLIGHT) {
       flightStats.bypassed += 1;
-      return Promise.resolve().then(produce);
+      return globalThis.GXT.abort
+        ? globalThis.GXT.abort.wait(Promise.resolve().then(() => { globalThis.GXT.abort.check(signal); return produce(signal); }), signal)
+        : Promise.resolve().then(produce);
     }
-    const entry = { started: now, promise: null };
+    const entry = { started: now, promise: null, controller: new AbortController(), consumers: new Set(), settled: false, id };
     flightStats.started += 1;
-    entry.promise = Promise.resolve().then(produce).finally(() => {
+    entry.promise = Promise.resolve().then(() => {
+      globalThis.GXT.abort?.check(entry.controller.signal);
+      return produce(entry.controller.signal);
+    }).finally(() => {
+      entry.settled = true;
       // An expired or cleared operation may finish after a replacement.
       if (inflight.get(id) === entry) inflight.delete(id);
     });
     inflight.set(id, entry);
-    return entry.promise;
+    return subscribe(entry, signal);
+  }
+
+  // Cancellation belongs to a subscriber. A shared request is aborted only
+  // when its final subscriber leaves; another tab may still need the answer.
+  function subscribe(entry, signal) {
+    const consumer = {};
+    entry.consumers.add(consumer);
+    const release = () => {
+      entry.consumers.delete(consumer);
+      if (!entry.settled && !entry.consumers.size) {
+        if (inflight.get(entry.id) === entry) inflight.delete(entry.id);
+        entry.controller.abort();
+      }
+    };
+    signal?.addEventListener('abort', release, {once:true});
+    const promise = globalThis.GXT.abort ? globalThis.GXT.abort.wait(entry.promise, signal) : entry.promise;
+    return promise.finally(() => { signal?.removeEventListener('abort', release); release(); });
   }
 
   async function sha256Hex(str) {

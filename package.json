@@ -1,6 +1,6 @@
 {
   "name": "tarjoman",
-  "version": "3.7.7",
+  "version": "3.8.2",
   "private": true,
   "description": "Bilingual browser translation tools",
   "license": "MIT",
@@ -10,5 +10,7 @@
     "build": "python tools/build_release.py",
     "verify": "python tools/verify_release.py"
   },
-  "devDependencies": { "acorn": "8.18.0" }
+  "devDependencies": {
+    "acorn": "8.18.0"
+  }
 }

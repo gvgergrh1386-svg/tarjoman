@@ -94,11 +94,8 @@ function bumpStats(patch) {
 
 // ------------------------------------------------------ per-key usage (v2.5.5)
 //
-// The quota bar used to divide a fleet-wide call count by ONE key's cap, so a
-// dozen keys made "over quota" arithmetically certain while translation was
-// still working perfectly. Usage is therefore recorded against the key that
-// actually served each request, which is the only unit Google's daily quota
-// is expressed in.
+// Local calls are counted by key and model. Google's quota belongs to the
+// project, which may be shared by several keys and other clients.
 
 /** `{ day, keys: { [key]: {calls, exhausted, limit, lastAt} } }` */
 async function getKeyUsage(model) {
@@ -109,10 +106,13 @@ async function getKeyUsage(model) {
   // stale day must never carry yesterday's exhaustion into today, which would
   // show every key as dead until it happened to be tried again.
   if (stored.day !== dayKey) return { day: dayKey, keys: {}, models: {} };
+  const confirmed = records => Object.fromEntries(Object.entries(records || {}).map(([key, record]) =>
+    [key, {...record, limit:record.limitSource === 'provider' ? Number(record.limit) || 0 : 0}]));
+  const models = Object.fromEntries(Object.entries(stored.models || {}).map(([id, records]) => [id, confirmed(records)]));
   return {
     day: dayKey,
-    keys: model ? stored.models?.[model] || {} : stored.keys || {},
-    models: stored.models || {},
+    keys: model ? models[model] || {} : confirmed(stored.keys),
+    models,
   };
 }
 
@@ -127,10 +127,10 @@ function bumpKeyUsage(event) {
       const record = { ...GXTBG.emptyKeyUsage(), ...(usage.keys[event.key] || {}) };
       if (event.kind === 'exhausted') {
         record.exhausted = true;
-        // What Google reported is this key's REAL cap. Prefer it over the
-        // published table, and fall back to "it stopped here" — which is a
-        // measurement too, just a coarser one.
-        record.limit = Number(event.limit) > 0 ? Number(event.limit) : record.calls || record.limit;
+        // A missing numeric request cap stays unknown. Local calls at the
+        // time of exhaustion cannot measure a shared project's quota.
+        record.limit = Number(event.limit) > 0 ? Number(event.limit) : 0;
+        record.limitSource = record.limit ? 'provider' : '';
       } else {
         record.calls = (record.calls || 0) + 1;
       }
@@ -141,7 +141,8 @@ function bumpKeyUsage(event) {
         const perModel = { ...GXTBG.emptyKeyUsage(), ...(records[event.key] || {}) };
         if (event.kind === 'exhausted') {
           perModel.exhausted = true;
-          perModel.limit = Number(event.limit) > 0 ? Number(event.limit) : perModel.calls || perModel.limit;
+          perModel.limit = Number(event.limit) > 0 ? Number(event.limit) : 0;
+          perModel.limitSource = perModel.limit ? 'provider' : '';
         } else {
           perModel.calls = (perModel.calls || 0) + 1;
         }
@@ -208,9 +209,10 @@ async function getProviderCtx(settings, providerOverride) {
   const register = settings.register && settings.register !== 'auto' ? settings.register : '';
   const extra =
     (settings.glossary || '').trim() || (settings.customPrompt || '').trim() ||
-    hasOverride || hasTuning || register || settings.qualityMode || settings.targetLang !== 'fa' || settings.translationRegion === 'source'
+    hasOverride || hasTuning || register || settings.qualityMode || settings.geminiSafety || settings.targetLang !== 'fa' || settings.translationRegion === 'source'
       ? {
           targetLang:settings.targetLang || 'fa',
+          geminiSafety:settings.geminiSafety || '',
           translationRegion:settings.translationRegion || 'iran',
           glossary: settings.glossary,
           custom: settings.customPrompt,
@@ -231,8 +233,8 @@ async function getProviderCtx(settings, providerOverride) {
       isMT: true,
       provider,
       cacheId: GXTBG.cacheNamespace(effSettings),
-      translate: (group) => GXTBG.mt.translateBatch(group, { engine, targetLang:settings.targetLang || 'fa' }),
-      translateTexts: (texts) => GXTBG.mt.translateTexts(texts, { engine, targetLang:settings.targetLang || 'fa' }),
+      translate: (group, signal) => GXTBG.mt.translateBatch(group, { engine, targetLang:settings.targetLang || 'fa', signal }),
+      translateTexts: (texts, kind, context, signal) => GXTBG.mt.translateTexts(texts, { engine, targetLang:settings.targetLang || 'fa', signal }),
     };
   }
   if (provider === 'openai') {
@@ -251,15 +253,15 @@ async function getProviderCtx(settings, providerOverride) {
       credentialId: await GXTBG.cache.keyFor(key || '', 'pending-credential', '', 0),
       extra,
       cacheId: GXTBG.cacheNamespace(effSettings),
-      translate: (group) => GXTBG.openai.translateBatch(group, base),
-      translateTexts: (texts, kind, context) =>
-        GXTBG.openai.translateTexts(texts, { ...base, kind, context }),
-      reviewTexts: (texts, sources, kind) =>
-        GXTBG.openai.reviewTexts(texts, sources, { ...base, kind }),
+      translate: (group, signal) => GXTBG.openai.translateBatch(group, {...base, signal}),
+      translateTexts: (texts, kind, context, signal) =>
+        GXTBG.openai.translateTexts(texts, { ...base, kind, context, signal }),
+      reviewTexts: (texts, sources, kind, signal) =>
+        GXTBG.openai.reviewTexts(texts, sources, { ...base, kind, signal }),
       reviewText: (text, source) => GXTBG.openai.reviewText({ ...base, text, source }),
-      translateImage: (mime, data) => GXTBG.openai.translateImage({ ...base, mime, data }),
+      translateImage: (mime, data, signal) => GXTBG.openai.translateImage({ ...base, mime, data, signal }),
       summarize: (text) => GXTBG.openai.summarize({ ...base, text }),
-      composeEnglish: (text) => GXTBG.openai.composeEnglish({ ...base, text }),
+      composeEnglish: (text, signal) => GXTBG.openai.composeEnglish({ ...base, text, signal }),
       compressForDub: (text, budget) => GXTBG.openai.compressForDub({ ...base, text, budget }),
     };
     context.setExtra = (value) => {
@@ -278,15 +280,15 @@ async function getProviderCtx(settings, providerOverride) {
     keys,
     extra,
     cacheId: GXTBG.cacheNamespace(effSettings),
-    translate: (group) => GXTBG.gemini.translateBatch(group, base),
-    translateTexts: (texts, kind, context) =>
-      GXTBG.gemini.translateTexts(texts, { ...base, kind, context }),
-    reviewTexts: (texts, sources, kind) =>
-      GXTBG.gemini.reviewTexts(texts, sources, { ...base, kind }),
+    translate: (group, signal) => GXTBG.gemini.translateBatch(group, {...base, signal}),
+    translateTexts: (texts, kind, context, signal) =>
+      GXTBG.gemini.translateTexts(texts, { ...base, kind, context, signal }),
+    reviewTexts: (texts, sources, kind, signal) =>
+      GXTBG.gemini.reviewTexts(texts, sources, { ...base, kind, signal }),
     reviewText: (text, source) => GXTBG.gemini.reviewText({ ...base, text, source }),
-    translateImage: (mime, data) => GXTBG.gemini.translateImage({ ...base, mime, data }),
+    translateImage: (mime, data, signal) => GXTBG.gemini.translateImage({ ...base, mime, data, signal }),
     summarize: (text) => GXTBG.gemini.summarize({ ...base, text }),
-    composeEnglish: (text) => GXTBG.gemini.composeEnglish({ ...base, text }),
+    composeEnglish: (text, signal) => GXTBG.gemini.composeEnglish({ ...base, text, signal }),
     compressForDub: (text, budget) => GXTBG.gemini.compressForDub({ ...base, text, budget }),
   };
   context.setExtra = (value) => {
@@ -339,6 +341,10 @@ function errorDetail(error, settings) {
     apiStatus: error.apiStatus || '',
     quotaId: error.quotaId || '',
     retryAfterMs: error.retryAfterMs || 0,
+    keySummary: error.keySummary || null,
+    blockReason: error.blockReason || '',
+    finishReason: error.finishReason || '',
+    safetyRatings: error.safetyRatings || [],
     raw: scrub(error.raw || ''),
     attempts: (error.attempts || []).map((attempt) => ({
       ...attempt,
@@ -354,6 +360,11 @@ function errorDetail(error, settings) {
 // Compare semantic settings from the storage event itself, so there is no
 // asynchronous initialization window and visual-only changes keep sharing.
 let translationSettingsGeneration = 0;
+let xSettingsGeneration = 0;
+function xSettingsIdentity(raw) {
+  const settings=GXTBG.forScope({...GXTBG.DEFAULTS,...raw},'x');
+  return JSON.stringify([GXTBG.cacheNamespace(settings),settings.enabled,settings.openaiFallbackModel||'']);
+}
 function translationSettingsIdentity(raw) {
   const settings = { ...GXTBG.DEFAULTS, ...(raw || {}) };
   return JSON.stringify([GXTBG.cacheNamespace(settings), GXTBG.youtubeTranslationKey(settings),
@@ -363,7 +374,11 @@ function translationSettingsIdentity(raw) {
 chrome.storage.onChanged.addListener((changes, area) => {
   if (area !== 'local') return;
   const setting = changes[GXTBG.SETTINGS_KEY];
+  if((setting&&xSettingsIdentity(setting.oldValue)!==xSettingsIdentity(setting.newValue)) ||
+     (changes.memoryCorrections&&changes.memoryCorrections.oldValue!==changes.memoryCorrections.newValue) ||
+     [GXTBG.API_KEYS_KEY,GXTBG.OPENAI_KEY_KEY,'apiKey'].some(key=>key in changes))xSettingsGeneration++;
   if ((setting && translationSettingsIdentity(setting.oldValue) !== translationSettingsIdentity(setting.newValue))
+      || (changes.memoryCorrections&&changes.memoryCorrections.oldValue!==changes.memoryCorrections.newValue)
       || [GXTBG.API_KEYS_KEY, GXTBG.OPENAI_KEY_KEY, 'apiKey'].some(key => key in changes)) {
     translationSettingsGeneration += 1;
   }
@@ -378,53 +393,81 @@ function translationFlightKey(scope, payload, settings, ctx, epoch, memoryGenera
     GXTBG.prompt.PROMPT_VERSION, GXTBG.prompt.GENERIC_PROMPT_VERSION, GXTBG.subtitlePrompts.VERSION]), 'pending-request', '', 0);
 }
 
-/** A delayed fallback may update only the choice that started its request. */
-function persistFallback(settings, model) {
-  return GXTBG.setSettings0((current) => (
-    current.model === settings.model && current.provider === settings.provider
-      && current.ytProvider === settings.ytProvider
-      ? { model } : {}
-  ));
-}
-
 const stableTweetFlights = new Map();
 const stableTweetWriters = new Map();
 const tweetMetrics = { requests:0, cacheHits:0, shared:0, completed:0, totalMs:0 };
 
-async function translateStableTweets(items, settings, ctx, cacheGeneration, requestEpoch) {
+function subscribeTweet(entry, signal, onPending) {
+  GXTBG.abort.check(signal);
+  const consumer = {onPending};
+  entry.consumers.add(consumer);
+  if(entry.pending)onPending?.();
+  const release = () => {
+    entry.consumers.delete(consumer);
+    if (!entry.settled && !entry.consumers.size) {
+      entry.controller.abort();
+      if (stableTweetFlights.get(entry.flightKey) === entry) stableTweetFlights.delete(entry.flightKey);
+    }
+  };
+  signal?.addEventListener('abort',release,{once:true});
+  return GXTBG.abort.wait(entry.promise,signal).finally(()=>{signal?.removeEventListener('abort',release);release();});
+}
+
+async function translateStableTweets(items, settings, ctx, cacheGeneration, requestEpoch, signal, progress) {
   const startedAt = Date.now();tweetMetrics.requests += items.length;
   // Cache lookup precedes both memory selection and provider availability.
   // Memory and neighboring posts guide the first translation, never its identity.
   const keys = await Promise.all(items.map(it => GXTBG.cache.keyFor(
     JSON.stringify([it.contentId, String(it.text || '').replace(/\r\n?/g, '\n').replace(/\u00a0/g, ' ').trim()]),
     'x-content-1', GXTBG.cacheNamespace(settings), 0)));
+  GXTBG.abort.check(signal);
   const owners = [];
   const promises = items.map((item, index) => {
+    const ownerSignal=item._requestSignal || signal;
+    if(ownerSignal?.aborted)return Promise.resolve({ok:false,code:'CANCELLED'});
+    const subscribe=entry=>subscribeTweet(entry,ownerSignal,()=>progress?.({t:'pending',id:item.id})).catch(error=>{
+      if(error.code==='CANCELLED')return {ok:false,code:'CANCELLED'};
+      throw error;
+    }).then(result=>{
+      // Deliver each resolved item immediately. An unrelated slow provider
+      // request in the same batch must never hold a valid cache hit hostage.
+      if(!ownerSignal?.aborted)progress?.({t:'result',id:item.id,result});
+      return result;
+    });
     const cacheKey = keys[index];
     const flightKey = JSON.stringify([cacheGeneration, requestEpoch, cacheKey]);
     const current = stableTweetFlights.get(flightKey);
-    if (current && !item.force) {tweetMetrics.shared++;return current;}
+    if (current && !item.force) {tweetMetrics.shared++;return subscribe(current);}
     const writer = {}; stableTweetWriters.set(cacheKey, writer);
     let resolve;
     const promise = new Promise(r => { resolve = r; });
-    stableTweetFlights.set(flightKey, promise);
+    const entry = {promise,controller:new AbortController(),consumers:new Set(),settled:false,flightKey};
+    stableTweetFlights.set(flightKey, entry);
+    const accept=()=>!entry.controller.signal.aborted && stableTweetWriters.get(cacheKey)===writer && requestEpoch===xSettingsGeneration;
+    const settle=value=>{
+      if(entry.settled)return;
+      entry.settled=true;resolve(value);
+      if(stableTweetFlights.get(flightKey)===entry)stableTweetFlights.delete(flightKey);
+      if(stableTweetWriters.get(cacheKey)===writer)stableTweetWriters.delete(cacheKey);
+    };
     owners.push({ ...item, id: String(index), _stableKey: cacheKey, _force: item.force === true,
-      _accept: () => stableTweetWriters.get(cacheKey) === writer && requestEpoch === translationSettingsGeneration,
-      _replacement: () => {const p=stableTweetFlights.get(flightKey);return p!==promise?p:null;},
-      _resolve: value => {
-        resolve(value);
-        if (stableTweetFlights.get(flightKey) === promise) stableTweetFlights.delete(flightKey);
-        if (stableTweetWriters.get(cacheKey) === writer) stableTweetWriters.delete(cacheKey);
-      } });
-    return promise;
+      _signal:entry.controller.signal,
+      _pending:()=>{entry.pending=true;for(const consumer of entry.consumers)consumer.onPending?.();},
+      _accept: accept,
+      _settled:()=>entry.settled,
+      _publish:value=>{if(accept())settle(value);},
+      _replacement: () => {const next=stableTweetFlights.get(flightKey);return next!==entry?next?.promise:null;},
+      _resolve: settle });
+    return subscribe(entry);
   });
+  const joined=Promise.all(promises);joined.catch(()=>{});
   if (owners.length) {
     try {
       const hits = await GXTBG.cache.getMany(owners.filter(x => !x._force).map(x => x._stableKey));
       const misses = [];
       for (const item of owners) {
         const hit = hits[item._stableKey];
-        if (hit) {tweetMetrics.cacheHits++;item._resolve({ok:true,t:hit.t,sl:hit.sl,cached:true});}
+        if (hit && GXTBG.prompt.translationInvariant(item.text, hit.t, 'tweet')) {tweetMetrics.cacheHits++;item._resolve({ok:true,t:hit.t,sl:hit.sl,cached:true});}
         else misses.push(item);
       }
       if (owners.length > misses.length) void bumpStats({cacheHits:owners.length-misses.length});
@@ -432,6 +475,7 @@ async function translateStableTweets(items, settings, ctx, cacheGeneration, requ
         await attachMemory(ctx, misses.map(x => x.text));
         const result = await translateTweetRequest(misses, settings, ctx, cacheGeneration);
         for (const item of misses) {
+          if(item._settled())continue;
           let value=result.results[item.id];
           if(!item._accept()) {
             const replacement=item._replacement();
@@ -445,32 +489,35 @@ async function translateStableTweets(items, settings, ctx, cacheGeneration, requ
       for (const item of owners) item._resolve({ok:false,code:error.code||'ERR',error:scrub(error.message||error)});
     }
   }
-  const values = await Promise.all(promises);
+  const values = await joined;
   tweetMetrics.completed += items.length;tweetMetrics.totalMs += (Date.now()-startedAt)*items.length;
   return {ok:true,results:Object.fromEntries(items.map((item,i)=>[item.id,values[i]]))};
 }
 
-async function handleTranslateBatch({ items }) {
+async function handleTranslateBatch({ items }, signal, progress) {
+  if (typeof signal?.addEventListener !== 'function') signal=undefined;
+  GXTBG.abort.check(signal);
   const cacheGeneration = GXTBG.cache.generation();
   const requestEpoch = translationSettingsGeneration;
+  const xRequestEpoch = xSettingsGeneration;
   const memoryGeneration = GXTBG.memoryGeneration();
   const minute = Math.floor(Date.now() / 60000);
   if (!Array.isArray(items) || !items.length) return { ok: true, results: {} };
   const settings = GXTBG.forScope(await GXTBG.getSettings(),'x');
   const ctx = await getProviderCtx(settings);
   if (items.every(it => typeof it.contentId === 'string' && it.contentId.length <= 30000)) {
-    return translateStableTweets(items, settings, ctx, cacheGeneration, requestEpoch);
+    return GXTBG.abort.wait(translateStableTweets(items, settings, ctx, cacheGeneration, xRequestEpoch, signal, progress),signal);
   }
   if (!ctx.configured) return { ok: false, code: 'NO_KEY' };
   await attachMemory(ctx, items.map((item) => String(item?.text || '')));
 
   const canonical = items.map((it, i) => ({id: String(i), text: it.text, lang: it.lang || 'auto', author: it.author || '', ctx: it.ctx || ''}));
   const key = await translationFlightKey('tweet', canonical.map(({id, ...item}) => item), settings, ctx, requestEpoch, memoryGeneration, minute);
-  const result = await GXTBG.cache.coalesce(key, () => translateTweetRequest(canonical, settings, ctx, cacheGeneration), {generation: cacheGeneration});
+  const result = await GXTBG.cache.coalesce(key, sharedSignal => translateTweetRequest(canonical, settings, ctx, cacheGeneration, sharedSignal), {generation: cacheGeneration, signal});
   return { ...result, results: Object.fromEntries(items.map((it, i) => [it.id, {...result.results[String(i)]}])) };
 }
 
-async function translateTweetRequest(items, settings, ctx, cacheGeneration) {
+async function translateTweetRequest(items, settings, ctx, cacheGeneration, signal) {
 
   const results = {};
   // Identical short replies can mean different things under different quotes.
@@ -485,14 +532,15 @@ async function translateTweetRequest(items, settings, ctx, cacheGeneration) {
     const legacyKeys = await Promise.all([...new Set([it.ctx || '', ''])].map(context =>
       GXTBG.cache.keyFor(JSON.stringify([it.text,it.author||'',context]),it.lang||'auto',ctx.cacheId)));
     const legacy = await GXTBG.cache.getMany(legacyKeys);
-    const hit = legacyKeys.map(key => legacy[key]).find(Boolean);
+    const hit = legacyKeys.map(key => legacy[key]).find(value => value && GXTBG.prompt.translationInvariant(it.text, value.t, 'tweet'));
     if (hit) { hits[it._stableKey] = hit; await GXTBG.cache.setMany([[it._stableKey,hit]], {generation:cacheGeneration,accept:it._accept}); }
   }
   const misses = [];
   items.forEach((it, idx) => {
     const cached = it._force ? undefined : hits[keys[idx]];
-    if (cached !== undefined) {
+    if (cached !== undefined && GXTBG.prompt.translationInvariant(it.text, cached.t, 'tweet')) {
       results[it.id] = { ok: true, t: cached.t, sl: cached.sl || '', cached: true };
+      it._publish?.(results[it.id]);
     } else {
       misses.push(it);
     }
@@ -500,15 +548,23 @@ async function translateTweetRequest(items, settings, ctx, cacheGeneration) {
   const hitCount = items.length - misses.length;
   if (hitCount) void bumpStats({ cacheHits: hitCount });
 
+  // A loading indicator means actual translation work, not a cache lookup.
+  // This runs after the durable and legacy caches have both been checked.
+  for(const item of misses)item._pending?.();
+
   const groups = chunk(misses, Math.max(1, Math.min(20, settings.batchSize)));
   await Promise.all(
     groups.map(async (group) => {
+      const controller = new AbortController(), unlink=GXTBG.abort.link(signal,controller);
+      const checkOwners=()=>{if(group.every(item=>item._signal?.aborted))controller.abort();};
+      for(const item of group)item._signal?.addEventListener('abort',checkOwners,{once:true});
+      checkOwners();
       try {
+        GXTBG.abort.check(controller.signal);
         if (!ctx.configured) throw Object.assign(new Error(globalThis.GXT.i18n.t("background_service_worker_translateTweetRequest_2")),{code:'NO_KEY'});
-        const first = await ctx.translate(group);
+        const first = await GXTBG.abort.wait(ctx.translate(group,controller.signal),controller.signal);
         const map = first.map;
         const usedModel = first.model;
-        const softFallback = first.softFallback;
         let apiCalls = 1;
         // A model can return a syntactically valid batch while dropping one
         // protected token in one item. The shared parser rejects only that
@@ -518,7 +574,7 @@ async function translateTweetRequest(items, settings, ctx, cacheGeneration) {
           .filter(({ index }) => !map.get(index));
         if (holes.length) {
           try {
-            const retry = await ctx.translate(holes.map(({ item }) => item));
+            const retry = await GXTBG.abort.wait(ctx.translate(holes.map(({ item }) => item),controller.signal),controller.signal);
             apiCalls += 1;
             holes.forEach(({ index }, retryIndex) => {
               const value = retry.map.get(retryIndex);
@@ -537,7 +593,7 @@ async function translateTweetRequest(items, settings, ctx, cacheGeneration) {
               const reviewed = await ctx.reviewTexts(
                 candidates.map(({ value }) => value.t),
                 candidates.map(({ item }) => item.text),
-                'tweet'
+                'tweet', controller.signal
               );
               apiCalls += 1;
               candidates.forEach(({ index, value }, reviewIndex) => {
@@ -551,16 +607,9 @@ async function translateTweetRequest(items, settings, ctx, cacheGeneration) {
             }
           }
         }
-        // A hard Gemini fallback (the chosen model 404'd) is persisted so the
-        // popup reflects reality and future cache keys line up. A SOFT fallback
-        // (the chosen model timed out) is transient: keep the user's saved model
-        // and cache under it, so their choice is honored and re-probed later.
-        let cacheId = ctx.cacheId;
-        if (ctx.isGemini && usedModel && usedModel !== settings.model && !softFallback) {
-          await persistFallback(settings, usedModel);
-          cacheId = GXTBG.cacheNamespace({ ...settings, provider: 'gemini', model: usedModel })
-            + (ctx.memoryCacheSuffix || '');
-        }
+        const cacheId = ctx.cacheId;
+        if(ctx.isGemini && usedModel && usedModel!==settings.model)throw Object.assign(new Error(GXTBG.i18n.t('error.selectedModelChanged')),{code:'MODEL_MISMATCH'});
+        GXTBG.abort.check(controller.signal);
         const toStore = [];
         for (let gi = 0; gi < group.length; gi += 1) {
           const item = group[gi];
@@ -600,6 +649,10 @@ async function translateTweetRequest(items, settings, ctx, cacheGeneration) {
             detail,
           };
         }
+      } finally {
+        unlink();
+        for(const item of group)item._signal?.removeEventListener('abort',checkOwners);
+        for(const item of group)item._publish?.(results[item.id]);
       }
     })
   );
@@ -662,7 +715,8 @@ function learnFrom(sources, targets, generation) {
   }
 }
 
-async function handleTranslateTexts({ texts, kind, context, quality, source, captionKind }) {
+async function handleTranslateTexts({ texts, kind, context, quality, source, captionKind }, signal) {
+  GXTBG.abort.check(signal);
   const cacheGeneration = GXTBG.cache.generation();
   const memoryGeneration = GXTBG.memoryGeneration();
   const requestEpoch = translationSettingsGeneration;
@@ -710,18 +764,19 @@ async function handleTranslateTexts({ texts, kind, context, quality, source, cap
     ctx.isMT ? null : ctxLines,
   ]);
   const flightKey = await translationFlightKey('generic', [clean, tag, promptKind, source || '', quality === true, ctxLines], settings, ctx, requestEpoch, memoryGeneration, minute);
-  const result = await GXTBG.cache.coalesce(flightKey, () => translateTextsRequest({clean, kind, kindKey, ctxLines, tag, promptKind, youtubeScope, useQualityPass, settings, effSettings, ctx, cacheGeneration, memoryGeneration}), {generation: cacheGeneration});
+  GXTBG.abort.check(signal);
+  const result = await GXTBG.cache.coalesce(flightKey, sharedSignal => translateTextsRequest({clean, kind, kindKey, ctxLines, tag, promptKind, youtubeScope, useQualityPass, settings, effSettings, ctx, cacheGeneration, memoryGeneration, signal:sharedSignal}), {generation: cacheGeneration, signal});
   return {...result, ...(result.list ? {list:[...result.list]} : {})};
 }
 
-async function translateTextsRequest({clean, kind, kindKey, ctxLines, tag, promptKind, youtubeScope, useQualityPass, settings, effSettings, ctx, cacheGeneration, memoryGeneration}) {
+async function translateTextsRequest({clean, kind, kindKey, ctxLines, tag, promptKind, youtubeScope, useQualityPass, settings, effSettings, ctx, cacheGeneration, memoryGeneration, signal}) {
   const keys = await Promise.all(clean.map((t) => GXTBG.cache.keyFor(t, tag, ctx.cacheId, 0)));
   const hits = await GXTBG.cache.getMany(keys);
   const list = new Array(clean.length).fill(null);
   const missIdx = [];
   clean.forEach((t, i) => {
     const hit = hits[keys[i]];
-    if (hit !== undefined) list[i] = hit.t;
+    if (hit !== undefined && GXTBG.prompt.translationInvariant(t, hit.t, kindKey)) list[i] = hit.t;
     else missIdx.push(i);
   });
   const hitCount = clean.length - missIdx.length;
@@ -750,15 +805,16 @@ async function translateTextsRequest({clean, kind, kindKey, ctxLines, tag, promp
   let failed = null;
   const runGroups = async (groups) => {
     for (const group of groups) {
+      GXTBG.abort.check(signal);
       try {
         const translated = await ctx.translateTexts(
           group.map((i) => clean[i]),
           youtubeScope ? promptKind : kindKey,
-          ctxLines
+          ctxLines, signal
         );
+        GXTBG.abort.check(signal);
         let out = translated.list;
         const usedModel = translated.model;
-        const softFallback = translated.softFallback;
         let apiCalls = 1;
         if (useQualityPass) {
           const reviewRows = out
@@ -769,7 +825,7 @@ async function translateTextsRequest({clean, kind, kindKey, ctxLines, tag, promp
               const reviewed = await ctx.reviewTexts(
                 reviewRows.map(({ draft }) => draft),
                 reviewRows.map(({ i }) => clean[group[i]]),
-                kindKey
+                kindKey, signal
               );
               reviewRows.forEach(({ i }, reviewIndex) => {
                 const edited = reviewed.list[reviewIndex];
@@ -778,23 +834,13 @@ async function translateTextsRequest({clean, kind, kindKey, ctxLines, tag, promp
               apiCalls += 1;
             }
           } catch {
+            GXTBG.abort.check(signal);
             /* Keep the valid first pass when the optional editor is unavailable. */
           }
         }
-        // Hard Gemini fallback (chosen model 404'd): persist it (like the tweet
-        // path) so future requests skip the dead model, and rebase the cache
-        // keys so these results are found under the new model's namespace. A
-        // SOFT fallback (chosen model timed out) is transient — keep the user's
-        // model and cache under it (their choice is re-probed after a cooldown).
-        let writeCacheId = ctx.cacheId;
-        if (ctx.isGemini && usedModel && usedModel !== settings.model && !softFallback) {
-          await persistFallback(settings, usedModel);
-          writeCacheId = GXTBG.cacheNamespace({
-            ...settings,
-            provider: 'gemini',
-            model: usedModel,
-          }) + (ctx.memoryCacheSuffix || '');
-        }
+        GXTBG.abort.check(signal);
+        const writeCacheId = ctx.cacheId;
+        if(ctx.isGemini && usedModel && usedModel!==settings.model)throw Object.assign(new Error(GXTBG.i18n.t('error.selectedModelChanged')),{code:'MODEL_MISMATCH'});
         const toStore = [];
         for (let gi = 0; gi < group.length; gi += 1) {
           const t = out[gi];
@@ -803,6 +849,7 @@ async function translateTextsRequest({clean, kind, kindKey, ctxLines, tag, promp
             toStore.push([await GXTBG.cache.keyFor(clean[group[gi]], tag, writeCacheId, 0), { t }]);
           }
         }
+        GXTBG.abort.check(signal);
         await GXTBG.cache.setMany(toStore, { generation: cacheGeneration });
         if((youtubeScope ? settings.ytTargetLang : settings.targetLang || 'fa') === 'fa') learnFrom(group.map((i) => clean[i]), group.map((_, gi) => out[gi]), memoryGeneration);
         void bumpStats({
@@ -812,6 +859,7 @@ async function translateTextsRequest({clean, kind, kindKey, ctxLines, tag, promp
           [`items_${kindKey}`]: toStore.length,
         });
       } catch (error) {
+        GXTBG.abort.check(signal);
         if (error.dailyLimit) void noteLearnedDailyLimit(error.dailyLimit, settings.model);
         failed = {
           code: error.code || 'ERR',
@@ -1183,6 +1231,7 @@ chrome.permissions?.onRemoved?.addListener(() => { void registerWebVideo(); });
 async function handleImageMenu(info, tab) {
   const src = info.srcUrl || '';
   if (!src) return;
+  const requestId = crypto.randomUUID();
   if (/^https?:/i.test(src)) {
     // Fetching arbitrary images needs cross-origin host access. Ask for the
     // BROAD optional host permission ONCE — not per image host — so the user
@@ -1200,10 +1249,11 @@ async function handleImageMenu(info, tab) {
     return void notifyTab(tab, globalThis.GXT.i18n.t("background_service_worker_handleMangaMenu_1"));
   }
   await ensureInjected(tab.id);
-  await chrome.tabs.sendMessage(tab.id, { type: 'GXT_IMAGE_BEGIN' });
-  const res = await handlers.TRANSLATE_IMAGE({ url: src });
+  await chrome.tabs.sendMessage(tab.id, { type: 'GXT_IMAGE_BEGIN', src, requestId });
+  const res = await Promise.resolve().then(() => handlers.TRANSLATE_IMAGE({ url: src }))
+    .catch(error => ({ ok: false, code: error?.code || 'ERR', error: scrub(error?.message || error) }));
   try {
-    await chrome.tabs.sendMessage(tab.id, { type: 'GXT_IMAGE_RESULT', res });
+    await chrome.tabs.sendMessage(tab.id, { type: 'GXT_IMAGE_RESULT', src, requestId, res });
   } catch {
     /* tab navigated away */
   }
@@ -1245,6 +1295,7 @@ async function handleChapterMenu(tab) {
 async function handleMangaMenu(info, tab) {
   const src = info.srcUrl || '';
   if (!src) return;
+  const requestId = crypto.randomUUID();
   if (/^https?:/i.test(src)) {
     const granted = await chrome.permissions
       .request({ origins: IMAGE_HOST_ORIGINS })
@@ -1256,10 +1307,11 @@ async function handleMangaMenu(info, tab) {
   await ensureInjected(tab.id);
   // A local page takes several seconds, and a context menu gives no feedback
   // of its own — so the wait is visible in the page from the first moment.
-  await chrome.tabs.sendMessage(tab.id, { type: 'GXT_MANGA_BEGIN', src });
-  const res = await handlers.BRIDGE_MANGA({ url: src });
+  await chrome.tabs.sendMessage(tab.id, { type: 'GXT_MANGA_BEGIN', src, requestId });
+  const res = await Promise.resolve().then(() => handlers.BRIDGE_MANGA({ url: src }))
+    .catch(error => ({ ok: false, code: error?.code || 'ERR', error: scrub(error?.message || error) }));
   try {
-    await chrome.tabs.sendMessage(tab.id, { type: 'GXT_MANGA_RESULT', src, res });
+    await chrome.tabs.sendMessage(tab.id, { type: 'GXT_MANGA_RESULT', src, requestId, res });
   } catch {
     /* tab navigated away */
   }
@@ -1388,8 +1440,9 @@ const MAX_PAGE_BYTES = 24 * 1024 * 1024;
 const MAX_CHAPTER_BYTES = 192 * 1024 * 1024;
 
 /** Keep the deadline and size ceiling active through the image body read. */
-async function fetchImageBytes(url, maxBytes) {
+async function fetchImageBytes(url, maxBytes, signal) {
   const controller = new AbortController();
+  const unlink=GXTBG.abort.link(signal,controller);
   const timer = setTimeout(() => controller.abort(), 30000);
   let reader;
   const tooLarge = () => Object.assign(new Error(globalThis.GXT.i18n.t("background_service_worker_tooLarge_1")), { code: 'IMG_TOO_LARGE' });
@@ -1424,11 +1477,13 @@ async function fetchImageBytes(url, maxBytes) {
     if (!buffer.byteLength) throw Object.assign(new Error(globalThis.GXT.i18n.t("background_service_worker_fetchImageBytes_2")), { code: 'FETCH_IMG' });
     return { buffer, mime: response.headers?.get('Content-Type') || '' };
   } catch (error) {
+    GXTBG.abort.check(signal);
     if (controller.signal.aborted) {
       throw Object.assign(new Error(globalThis.GXT.i18n.t("background_service_worker_fetchImageBytes_1")), { code: 'TIMEOUT' });
     }
     throw error;
   } finally {
+    unlink();
     clearTimeout(timer);
     if (reader) {
       void reader.cancel().catch(() => {});
@@ -1439,7 +1494,8 @@ async function fetchImageBytes(url, maxBytes) {
 }
 
 /** Shared wrapper for the plain-text AI tools: provider gate + errors. */
-async function runAiTool(statKey, cacheTag, cacheKeySource, run, targetLang) {
+async function runAiTool(statKey, cacheTag, cacheKeySource, run, targetLang, signal) {
+  GXTBG.abort.check(signal);
   const cacheGeneration = GXTBG.cache.generation();
   const settings = GXTBG.forScope(await GXTBG.getSettings(),cacheTag==='compose'?'compose':cacheTag==='summary'?'summary':cacheTag==='image'?'image':'web');
   if(GXTBG.validTarget(targetLang)) settings.targetLang=targetLang;
@@ -1466,7 +1522,9 @@ async function runAiTool(statKey, cacheTag, cacheKeySource, run, targetLang) {
     }
   }
   try {
-    const { text } = await run(ctx, settings);
+    GXTBG.abort.check(signal);
+    const { text } = await GXTBG.abort.wait(run(ctx, settings, signal),signal);
+    GXTBG.abort.check(signal);
     if (cacheKey) await GXTBG.cache.setMany([[cacheKey, { t: text }]], { generation: cacheGeneration });
     void bumpStats({ apiCalls: 1, dayApiCalls: 1, translated: 1, [statKey]: 1 });
     return { ok: true, t: text };
@@ -1482,11 +1540,12 @@ async function runAiTool(statKey, cacheTag, cacheKeySource, run, targetLang) {
 }
 
 /** Fetch an image and translate every piece of foreign text in it. */
-async function handleTranslateImage({ url }) {
+async function handleTranslateImage({ url }, signal) {
+  if(typeof signal?.addEventListener!=='function')signal=undefined;
   return runAiTool('items_image', 'image', url, async (ctx) => {
     let image;
     try {
-      image = await fetchImageBytes(url, MAX_IMAGE_BYTES);
+      image = await fetchImageBytes(url, MAX_IMAGE_BYTES, signal);
     } catch (error) {
       if (error.code) throw error;
       const err = new Error(globalThis.GXT.i18n.t("background_service_worker_err_1"));
@@ -1495,8 +1554,8 @@ async function handleTranslateImage({ url }) {
     }
     const mime = /^image\//.test(image.mime) ? image.mime.split(';')[0] : 'image/jpeg';
     const data = bufToBase64(image.buffer);
-    return ctx.translateImage(mime, data);
-  });
+    return ctx.translateImage(mime, data, signal);
+  },undefined,signal);
 }
 
 // ------------------------------------------------------------------ router
@@ -1766,9 +1825,10 @@ const handlers = {
    * a cloud one. That ordering is the whole privacy story of this feature and
    * it is why OCR is not done in the cloud even though it would be easier.
    */
-  async OCR_TRANSLATE({ image }) {
+  async OCR_TRANSLATE({ image }, {signal} = {}) {
     if (!image) return { ok: false, code: 'EMPTY_INPUT', get error() { return globalThis.GXT.i18n.t("background_service_worker_handlers_41"); } };
     const settings = await GXTBG.getSettings();
+    GXTBG.abort.check(signal);
     if (!settings.bridgeEnabled) {
       return {
         ok: false,
@@ -1778,26 +1838,32 @@ const handlers = {
     }
     let read;
     try {
-      read = await GXTBG.bridge.ocr(settings, { image });
+      read = await GXTBG.bridge.ocr(settings, { image, signal });
     } catch (error) {
       return { ok: false, code: 'OFFLINE', get error() { return globalThis.GXT.i18n.t("background_service_worker_handlers_39"); }, detail: { raw: String(error.message || error) } };
     }
+    GXTBG.abort.check(signal);
     if (!read?.ok) {
       return { ok: false, code: read?.code || 'OCR_FAILED', error: read?.error || globalThis.GXT.i18n.t("background_service_worker_handlers_38"), hint: read?.hint };
     }
-    const lines = (read.boxes || []).map((b) => b.text).filter(Boolean);
+    const boxes = (Array.isArray(read.boxes) ? read.boxes : []).filter(b => typeof b?.text === 'string' && b.text.trim());
+    const lines = boxes.map(b => b.text);
     if (!lines.length) return { ok: true, text: '', translated: '', lines: 0, boxes: [] };
 
     // Reuse the ordinary generic pipeline: cache, memory, key rotation, the
     // holes retry — all of it applies here exactly as it does to a web page.
-    const result = await handleTranslateTexts({ texts: lines, kind: 'page' });
+    const result = await handleTranslateTexts({ texts: lines, kind: 'page' }, signal);
+    GXTBG.abort.check(signal);
+    if (!result.ok || (result.failed && !(result.list || []).some(t => t != null))) {
+      return {ok: false, ...(result.failed || result), text: lines.join('\n')};
+    }
     const translated = (result.list || []).map((t, i) => t || lines[i]);
     return {
       ok: true,
       text: lines.join('\n'),
       translated: translated.join('\n'),
       lines: lines.length,
-      boxes: (read.boxes || []).map((b, i) => ({ ...b, fa: translated[i] || '' })),
+      boxes: boxes.map((b, i) => ({ ...b, fa: translated[i] || '' })),
       failed: result.failed || null,
     };
   },
@@ -1886,7 +1952,7 @@ const handlers = {
     await chrome.scripting.executeScript({target:{tabId:sender.tab.id,frameIds:[sender.frameId || 0]},world:'MAIN',files:['content/yt-main.js']});
     return {ok:true};
   },
-  TRANSLATE_TEXTS: handleTranslateTexts,
+  TRANSLATE_TEXTS: message => handleTranslateTexts(message),
   TRANSLATE_WORKSHOP: translateWorkshop,
   CANCEL_WORKSHOP: cancelWorkshop,
   TRANSLATE_IMAGE: handleTranslateImage,
@@ -1902,11 +1968,12 @@ const handlers = {
   },
 
   /** Persian composer draft → natural English X post (v1.8). */
-  async TRANSLATE_COMPOSE({ text }) {
+  async TRANSLATE_COMPOSE({ text }, signal) {
+    if(typeof signal?.addEventListener!=='function')signal=undefined;
     const clean = String(text || '').trim();
     if (!clean) return { ok: false, code: 'EMPTY_INPUT', get error() { return globalThis.GXT.i18n.t("background_service_worker_handlers_12"); } };
     // No cache: drafts are one-off by nature.
-    return runAiTool('items_tweet', 'compose', null, (ctx) => ctx.composeEnglish(clean));
+    return runAiTool('items_tweet', 'compose', null, (ctx) => ctx.composeEnglish(clean,signal),undefined,signal);
   },
 
   /**
@@ -2099,7 +2166,9 @@ const handlers = {
    *  `rate` overrides the saved speaking rate for THIS call only — the dub
    *  builder uses it to make a line fit its time slot. It is folded into the
    *  cache key (via cfg) so a re-timed line never collides with the normal one. */
-  async TTS_SPEAK({ text, rate }) {
+  async TTS_SPEAK({ text, rate }, signal) {
+    if(typeof signal?.addEventListener!=='function')signal=undefined;
+    GXTBG.abort.check(signal);
     const cacheGeneration = GXTBG.audioCache.generation();
     const clean = String(text || '').trim();
     if (!clean) return { ok: false, code: 'EMPTY_INPUT', get error() { return globalThis.GXT.i18n.t("background_service_worker_handlers_6"); } };
@@ -2115,7 +2184,7 @@ const handlers = {
     if (hit) return { ok: true, ...hit, engine: cfg.engine, voice: cfg.voice, cached: true };
 
     try {
-      const opts = { ...cfg };
+      const opts = { ...cfg, signal };
       if (cfg.engine === 'gemini') opts.keys = await GXTBG.getApiKeys();
       if (cfg.engine === 'openai') {
         opts.baseUrl = settings.openaiBaseUrl;
@@ -2125,6 +2194,7 @@ const handlers = {
       // credential pair.
       if (cfg.engine === 'bridge') opts.settings = settings;
       const clip = await GXTBG.tts.speak(clean, opts);
+      GXTBG.abort.check(signal);
       await GXTBG.audioCache.put(cacheKey, { mime: clip.mime, data: clip.data }, { generation: cacheGeneration });
       // Speech rides the daily API budget only when it actually spends it.
       // Bing is keyless and the bridge is this machine — neither costs quota.
@@ -2299,19 +2369,12 @@ const handlers = {
       const keys = await GXTBG.getApiKeys();
       if (keys.length) keysInfo = await GXTBG.gemini.keySnapshot(keys, settings.model);
       const usage = await getKeyUsage(settings.model);
-      // A cap learned for THIS model, before any key has taught us its own,
-      // is still better than the published table — so it seeds every key that
-      // has no measurement of its own yet.
-      const learnedForModel =
-        stats.learnedDailyLimitModel === settings.model ? stats.learnedDailyLimit || 0 : 0;
-      const seeded = {};
-      for (const key of keys) {
-        const record = usage.keys[key] || GXTBG.emptyKeyUsage();
-        seeded[key] = record.limit ? record : { ...record, limit: learnedForModel };
-      }
+      // A cap reported for one credential must not seed unrelated projects.
+      // Old releases also inferred caps from local counts; getKeyUsage drops
+      // those unverified limits while preserving the counters.
       quota = GXTBG.quotaSummary({
         keys,
-        usage: seeded,
+        usage: usage.keys,
         model: settings.model,
         override: settings.dailyQuota || 0,
       });
@@ -2523,6 +2586,89 @@ chrome.runtime.onConnect.addListener((port) => {
   });
 
   port.onDisconnect.addListener(endSession);
+});
+
+// One port owns one page chunk. Disconnect (stop, navigation or closed tab)
+// releases its subscription; cache.coalesce keeps any other subscribers alive.
+chrome.runtime.onConnect.addListener(port=>{
+  if(port.name!=='gxt-x-action')return;
+  if(port.sender?.id!==chrome.runtime.id){port.disconnect();return;}
+  const controller=new AbortController();let started=false;
+  const reply=value=>{if(!controller.signal.aborted)try{port.postMessage(value);}catch{}};
+  port.onDisconnect.addListener(()=>controller.abort());
+  port.onMessage.addListener(message=>{
+    if(message?.t==='ping'){reply({t:'pong'});return;}
+    if(started)return;started=true;
+    const valid=['TRANSLATE_COMPOSE','TTS_SPEAK'].includes(message?.type)&&typeof message.text==='string'&&message.text.length<=30000 ||
+      message?.type==='TRANSLATE_IMAGE'&&typeof message.url==='string'&&message.url.length<=16000&&/^https:\/\/pbs\.twimg\.com\//i.test(message.url);
+    if(!valid){reply({ok:false,code:'BAD_REQUEST'});return;}
+    void Promise.resolve().then(()=>handlers[message.type](message,controller.signal)).then(reply,error=>reply({ok:false,code:error.code||'ERR',error:scrub(error.message||error)}));
+  });
+});
+
+chrome.runtime.onConnect.addListener(port => {
+  if (port.name !== 'gxt-x-translation') return;
+  if (port.sender?.id !== chrome.runtime.id) { port.disconnect(); return; }
+  const controller=new AbortController(), owners=new Map();
+  let started=false;
+  const reply=value=>{if(!controller.signal.aborted)try{port.postMessage(value);}catch{}};
+  port.onDisconnect.addListener(()=>{controller.abort();for(const owner of owners.values())owner.abort();});
+  port.onMessage.addListener(message=>{
+    if(message?.t==='ping'){reply({t:'pong'});return;}
+    if(message?.t==='cancel'){owners.get(message.id)?.abort();return;}
+    if(started)return;
+    started=true;
+    if(!Array.isArray(message?.items)||message.items.length>20||!message.items.length||
+       message.items.some(item=>!item||typeof item.id!=='string'||typeof item.text!=='string'||typeof item.contentId!=='string'||item.contentId.length>30000)||
+       message.items.reduce((n,item)=>n+item.text.length,0)>240000||new Set(message.items.map(item=>item.id)).size!==message.items.length) {
+      reply({ok:false,code:'BAD_REQUEST'});return;
+    }
+    const items=message.items.map(item=>{
+      const owner=new AbortController();owners.set(item.id,owner);
+      return {id:item.id,text:item.text,contentId:item.contentId,lang:item.lang,author:item.author,ctx:item.ctx,_requestSignal:owner.signal};
+    });
+    void handleTranslateBatch({items},controller.signal,message.stream===true?reply:undefined).then(reply,error=>reply({ok:false,code:error.code||'ERR',error:scrub(error.message||error)}));
+  });
+});
+
+chrome.runtime.onConnect.addListener(port => {
+  if (port.name !== 'gxt-page-translation') return;
+  if (port.sender?.id !== chrome.runtime.id) { port.disconnect(); return; }
+  const controller = new AbortController();
+  let started = false;
+  port.onDisconnect.addListener(() => controller.abort());
+  port.onMessage.addListener(message => {
+    if(message?.t==='ping'){try{port.postMessage({t:'pong'});}catch{}return;}
+    if (started) return;
+    started = true;
+    if (!Array.isArray(message?.texts) || message.texts.length > 40 ||
+        message.texts.some(t => typeof t !== 'string') || message.texts.join('').length > 240000) {
+      port.postMessage({ok:false, code:'BAD_REQUEST'});port.disconnect();return;
+    }
+    const reply = value => { if (!controller.signal.aborted) { try { port.postMessage(value); } catch {} } };
+    void handleTranslateTexts({texts:message.texts, kind:'page'}, controller.signal)
+      .then(reply, error => reply({ok:false, code:error.code || 'ERR', error:scrub(error.message || error)}));
+  });
+});
+
+chrome.runtime.onConnect.addListener(port => {
+  if (port.name !== 'gxt-screen-translation') return;
+  if (port.sender?.id !== chrome.runtime.id) { port.disconnect(); return; }
+  const controller = new AbortController();
+  let started = false;
+  port.onDisconnect.addListener(() => controller.abort());
+  const reply = value => { if (!controller.signal.aborted) { try { port.postMessage(value); } catch { /* disconnected */ } } };
+  port.onMessage.addListener(message => {
+    if (message?.t === 'ping') { reply({t: 'pong'}); return; }
+    if (started) return;
+    started = true;
+    if (typeof message?.image !== 'string' || message.image.length > 64 * 1024 * 1024 ||
+        !/^data:image\/(png|jpeg|webp);base64,/i.test(message.image)) {
+      reply({ok: false, code: 'BAD_REQUEST'}); port.disconnect(); return;
+    }
+    void handlers.OCR_TRANSLATE({image: message.image}, {signal: controller.signal})
+      .then(reply, error => reply({ok: false, code: error.code || 'ERR', error: scrub(error.message || error)}));
+  });
 });
 
 const EXTENSION_ONLY_MESSAGES = new Set([

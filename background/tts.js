@@ -43,10 +43,17 @@
   // ~1s to synthesize, and a full paragraph can take 25s. Two in flight keeps
   // a read-aloud responsive (chunk N+1 renders while chunk N plays) without
   // hammering an endpoint that is doing real work per request.
-  const limiter = { max: 2, active: 0, waiters: [], async run(fn) {
-    while (this.active >= this.max) await new Promise((r) => this.waiters.push(r));
+  const limiter = { max: 2, active: 0, waiters: [], async run(fn, signal) {
+    globalThis.GXT.abort.check(signal);
+    while (this.active >= this.max) {
+      let wake;
+      const queued = new Promise(resolve => {wake=resolve;this.waiters.push(wake);});
+      try { await globalThis.GXT.abort.wait(queued,signal); }
+      finally { const i=this.waiters.indexOf(wake);if(i>=0)this.waiters.splice(i,1); }
+    }
+    globalThis.GXT.abort.check(signal);
     this.active += 1;
-    try { return await fn(); } finally {
+    try { return await globalThis.GXT.abort.wait(fn(),signal); } finally {
       this.active -= 1;
       const next = this.waiters.shift();
       if (next) next();
@@ -69,15 +76,16 @@
     }
   }
 
-  const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
-
   async function fetchWithTimeout(url, opts = {}, consume) {
+    globalThis.GXT.abort.check(opts.signal);
     const controller = new AbortController();
+    const unlink=globalThis.GXT.abort.link(opts.signal,controller);
     const timer = setTimeout(() => controller.abort(), requestTimeoutMs);
     try {
       const response = await fetch(url, { ...opts, signal: controller.signal });
       return consume ? await consume(response) : response;
     } catch (error) {
+      globalThis.GXT.abort.check(opts.signal);
       const timedOut = controller.signal.aborted;
       if (!timedOut && error instanceof TtsError) throw error;
       throw new TtsError(
@@ -87,6 +95,7 @@
       );
     } finally {
       clearTimeout(timer);
+      unlink();
     }
   }
 
@@ -193,12 +202,13 @@
     );
   }
 
-  async function bingOnce(text, { voice, rate }, auth) {
+  async function bingOnce(text, { voice, rate, signal }, auth) {
     const url =
       `${BING_TTS_URL}?isVertical=1&&IG=${encodeURIComponent(auth.ig)}` +
       `&IID=${encodeURIComponent(auth.iid)}`;
     return fetchWithTimeout(url, {
       method: 'POST',
+      signal,
       headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
       body: new URLSearchParams({
         ssml: bingSsml(text, voice, rate),
@@ -277,7 +287,7 @@
     return bufToBase64(buffer);
   }
 
-  async function geminiSpeak(text, { voice, style, model, keys }) {
+  async function geminiSpeak(text, { voice, style, model, keys, signal }) {
     if (!keys || !keys.length) {
       throw new TtsError(globalThis.GXT.i18n.t("background_tts_geminiSpeak_1"), 'NO_KEY');
     }
@@ -287,6 +297,7 @@
       text,
       voice,
       style,
+      signal,
     });
     // Already a container format? Pass it through. Otherwise it is raw PCM.
     const isContainer = /audio\/(mpeg|mp3|wav|ogg|webm)/i.test(result.mime || '');
@@ -300,7 +311,7 @@
 
   // --------------------------------------------------------------- openai
 
-  async function openaiSpeak(text, { voice, rate, model, baseUrl, key }) {
+  async function openaiSpeak(text, { voice, rate, model, baseUrl, key, signal }) {
     const base = String(baseUrl || '').trim().replace(/\/+$/, '');
     if (!base) throw new TtsError(globalThis.GXT.i18n.t("background_tts_openaiSpeak_3"), 'NO_BASE_URL');
     if (!model) throw new TtsError(globalThis.GXT.i18n.t("background_tts_openaiSpeak_2"), 'NO_MODEL');
@@ -309,6 +320,7 @@
     if (key) headers.Authorization = `Bearer ${key}`;
     return fetchWithTimeout(`${base}/audio/speech`, {
       method: 'POST',
+      signal,
       headers,
       body: JSON.stringify({
         model,
@@ -380,6 +392,7 @@
    * @returns {Promise<{mime:string, data:string, engine:string, voice:string}>}
    */
   async function speak(text, opts) {
+    globalThis.GXT.abort.check(opts.signal);
     const clean = String(text || '').trim();
     if (!clean) throw new TtsError(globalThis.GXT.i18n.t("background_service_worker_handlers_6"), 'EMPTY_INPUT');
     const engine = ['gemini', 'openai', 'bridge'].includes(opts.engine) ? opts.engine : 'bing';
@@ -391,12 +404,15 @@
     let retries = 0;
     for (;;) {
       try {
-        const result = await limiter.run(() => run(clean, opts));
+        const result = await limiter.run(() => run(clean, opts),opts.signal);
         return { ...result, engine };
       } catch (error) {
-        if (error.retriable && retries < MAX_RETRIES) {
+        globalThis.GXT.abort.check(opts.signal);
+        // Gemini already owns its complete retry policy. Never wrap a terminal
+        // Gemini failure in another retry loop.
+        if (engine !== 'gemini' && error.retriable && retries < MAX_RETRIES) {
           retries += 1;
-          await sleep((error.retryAfterMs || 1000 * retries) + Math.random() * 250);
+          await globalThis.GXT.abort.sleep((error.retryAfterMs || 1000 * retries) + Math.random() * 250,opts.signal);
           continue;
         }
         throw error;

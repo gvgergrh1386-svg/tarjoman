@@ -125,11 +125,14 @@ test('batch size changes keep the model surrounding context independent',async()
  const e=await worker(),gate=deferred(),sizes=[];e.ctx.GXT.openai.translateBatch=async group=>{sizes.push(group.length);await gate.promise;return translated(group);};
  const a=send(e,[item('a'),item('b','second')]);await until(()=>sizes.length===1);await e.ctx.GXT.setSettings({batchSize:1});const b=send(e,[item('c'),item('d','second')]);await until(()=>sizes.length===3);gate.resolve();await Promise.all([a,b]);assert.deepEqual(sizes,[2,1,1]);
 });
-test('an expired old flight cannot remove its still-pending replacement',async()=>{
- let now=1000;class Clock extends Date{static now(){return now;}}
- const e=environment({}, {Date:Clock});e.load('background/cache.js');const c=e.ctx.GXT.cache,old=deferred(),fresh=deferred();
- const a=c.coalesce('same',()=>old.promise);await tick();now+=c._internal.MAX_FLIGHT_AGE_MS;const b=c.coalesce('same',()=>fresh.promise);await tick();old.resolve('old');await a;assert.equal(c._internal.inflightCount(),1);const duplicate=c.coalesce('same',()=>{throw Error('must join replacement')});fresh.resolve('new');assert.equal(await b,'new');assert.equal(await duplicate,'new');assert.equal(c._internal.inflightCount(),0);
+test('long-lived pending work keeps its identity until completion',async()=>{
+ const e=await worker(),gate=deferred();let calls=0;
+ const a=e.ctx.GXT.cache.coalesce('long-operation',async()=>{calls++;await gate.promise;return 'result';});
+ await tick();vm.runInContext('Date.now = () => 9999999999999',e.ctx);
+ const b=e.ctx.GXT.cache.coalesce('long-operation',async()=>{calls++;return 'duplicate';});await tick();
+ assert.equal(calls,1);gate.resolve();assert.equal(await a,'result');assert.equal(await b,'result');assert.equal(e.ctx.GXT.cache._internal.inflightCount(),0);
 });
+
 test('failed L2 read after clear cannot return a stale L1 hit',async()=>{
  const e=await worker();await e.ctx.GXT.cache.setMany([['t:hot',{t:'stale'}]]);const get=e.storage.get,entered=deferred(),fail=deferred();e.storage.get=async keys=>{if(Array.isArray(keys)&&keys.includes('t:missing')){entered.resolve();await fail.promise;throw Error('disk failed');}return get(keys);};
  const read=e.ctx.GXT.cache.getMany(['t:hot','t:missing']);await entered.promise;await e.ctx.GXT.cache.clearAll();fail.resolve();assert.equal(Object.keys(await read).length,0);

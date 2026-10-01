@@ -102,26 +102,32 @@
        its buttons lost their shadow, and the sp-4 paddings collapsed to
        nothing. */
     :host {
-      --gxt-bg: #0e1014; --gxt-bg-elev: #171a21; --gxt-bg-sunken: #0a0c10;
+      --gxt-bg: #101716; --gxt-bg-elev: #1a2321; --gxt-bg-sunken: #0c1211;
       --gxt-ui-dir: rtl; --gxt-content-dir: rtl; --gxt-caption-dir: rtl; --gxt-switch-sign: -1;
-      --gxt-card: #171a21; --gxt-card-alpha: 84%;
+      --gxt-card: #1a2321; --gxt-card-alpha: 100%;
+      --gxt-video-bg: rgba(18,20,22,.66); --gxt-video-solid-bg: #121416; --gxt-video-fg: #fff;
+      --gxt-video-line: rgba(255,255,255,.24); --gxt-video-radius: 999px;
+      --gxt-video-hover: rgba(255,255,255,.14); --gxt-video-active: rgba(255,255,255,.16);
+      --gxt-video-active-fg: #fff; --gxt-video-edge: none; --gxt-video-backdrop: none;
+      --gxt-video-focus: 0 0 0 2px #121416, 0 0 0 4px #fff;
       --gxt-fg: #e2e5e8; --gxt-fg-muted: #b7bdc6; --gxt-fg-faint: #98a0ad;
+      --gxt-heading-ink: var(--gxt-fg); --gxt-scrollbar-width: thin;
       --gxt-line: #232936; --gxt-line-strong: #3a4356;
-      --gxt-accent: #1d9bf0; --gxt-accent-brand: #1d9bf0;
-      --gxt-accent-solid: #177bbf; --gxt-accent-fg: #fff;
-      --gxt-accent-hover: #1469a5;
-      --gxt-accent-soft: rgba(29,155,240,.18); --gxt-accent-line: rgba(29,155,240,.45);
-      --gxt-accent-ink: #32a5f1; --gxt-accent-on-soft: #5cb8f5;
+      --gxt-accent: #56bfb0; --gxt-accent-brand: #0f766e;
+      --gxt-accent-solid: #0f766e; --gxt-accent-fg: #fff;
+      --gxt-accent-hover: #0d6760;
+      --gxt-accent-soft: rgba(86,191,176,.18); --gxt-accent-line: rgba(86,191,176,.45);
+      --gxt-accent-ink: #80d9ca; --gxt-accent-on-soft: #a0e6db;
       --gxt-ok: #3ddc9a; --gxt-warn: #e8c34a; --gxt-err: #f77289;
       --gxt-ok-edge: #12b981; --gxt-warn-edge: #d3a91f; --gxt-err-edge: #f43f5e;
       --gxt-ok-soft: rgba(18,185,129,.18); --gxt-warn-soft: rgba(211,169,31,.18);
       --gxt-err-soft: rgba(244,63,94,.18);
       --gxt-ok-on-soft: #3ddc9a; --gxt-warn-on-soft: #e8c34a; --gxt-err-on-soft: #f77289;
-      --gxt-elev-1: 0 2px 8px rgba(0,0,0,.25); --gxt-elev-2: 0 8px 24px rgba(0,0,0,.375);
-      --gxt-elev-3: 0 18px 44px rgba(0,0,0,.5);
+      --gxt-elev-1: 0 1px 3px rgba(0,0,0,.12); --gxt-elev-2: 0 4px 14px rgba(0,0,0,.18);
+      --gxt-elev-3: 0 10px 28px rgba(0,0,0,.24);
       --gxt-shadow: var(--gxt-elev-3); --gxt-shadow-sm: var(--gxt-elev-1);
-      --gxt-radius-sm: 9px; --gxt-radius-md: 13px; --gxt-radius-lg: 18px;
-      --gxt-radius-xl: 24px; --gxt-radius-pill: 9999px;
+      --gxt-radius-sm: 6px; --gxt-radius-md: 10px; --gxt-radius-lg: 12px;
+      --gxt-radius-xl: 16px; --gxt-radius-pill: 6px;
       --gxt-dur-1: 120ms; --gxt-dur-2: 180ms; --gxt-dur-3: 260ms;
       --gxt-ease: cubic-bezier(.2,0,0,1); --gxt-ease-emphasized: cubic-bezier(.2,.8,.25,1);
       --gxt-motion: var(--gxt-dur-2) var(--gxt-ease);
@@ -140,7 +146,7 @@
       --gxt-weight: 400; --gxt-weight-strong: 700; --gxt-switch-radius: 9999px; --gxt-switch-knob-radius: 50%;
       --gxt-sw-w: 46px; --gxt-sw-h: 27px; --gxt-sw-knob: 21px; --gxt-sw-travel: 19px;
       --gxt-cap-bg: rgba(8,8,8,.86); --gxt-cap-fg: #fff; --gxt-cap-fg-muted: #c9ced5;
-      --gxt-cap-line: rgba(29,155,240,.38);
+      --gxt-cap-line: rgba(86,191,176,.38);
       --gxt-cap-plain-bg: rgba(8,8,8,.78); --gxt-cap-plain-fg: #fff;
       --gxt-cap-plain-fg-muted: #e6e8ea;
       --gxt-font: "Vazirmatn", "Segoe UI", Tahoma, sans-serif;
@@ -150,36 +156,42 @@
     * { box-sizing: border-box; margin: 0; }
 
     /* ══════════════════════════════════════════════════════════ card ══ */
-    .card { position: fixed; z-index: 2147483647; max-width: min(460px, calc(100vw - 32px));
+    .card { position: fixed; z-index: 2147483647; width: 440px; max-width: min(480px, calc(100vw - 24px));
       background: var(--gxt-card); color: var(--gxt-fg);
-      border: 1px solid var(--gxt-panel-line, var(--gxt-line)); border-radius: var(--gxt-radius-lg);
+      border: 1px solid var(--gxt-panel-line, var(--gxt-line)); border-radius: var(--gxt-radius-md);
       box-shadow: var(--gxt-shadow);
       backdrop-filter: var(--gxt-backdrop, none); -webkit-backdrop-filter: var(--gxt-backdrop, none);
       font: var(--gxt-fs-md)/var(--gxt-lh) var(--gxt-font); font-weight: var(--gxt-weight, 400); overflow: hidden; }
     .card:focus { outline: none; }
     /* The head is the popup's card head and the player panel's head: same
        padding step, same accent wash, same 800 weight, same dot. */
-    .card-head { display: flex; align-items: center; gap: var(--gxt-sp-1);
-      padding: var(--gxt-sp-2) var(--gxt-sp-3);
+    .card-head { display: flex; flex-wrap: wrap; align-items: center; gap: var(--gxt-sp-1);
+      padding: var(--gxt-sp-3) var(--gxt-sp-3) var(--gxt-sp-2);
       border-bottom: 1px solid var(--gxt-line); direction: var(--gxt-ui-dir, rtl);
-      font-size: var(--gxt-fs-sm); font-weight: 800;
-      background: linear-gradient(180deg, var(--gxt-accent-soft), transparent);
+      font-size: var(--gxt-fs-sm); font-weight: var(--gxt-weight-strong, 700);
+      background: transparent;
       cursor: move; touch-action: none; user-select: none; }
     /* Feedback that the header IS the drag handle — the image card had no
        affordance at all before, so nobody discovered it could be moved. */
     .card-head:active { cursor: grabbing; }
-    .card-title { flex: 1; font-weight: 800; display: flex; align-items: center;
+    .card-title { flex: 1 0 100%; font-weight: var(--gxt-weight-strong, 700); display: flex; align-items: center;
       gap: var(--gxt-sp-2);
-      letter-spacing: -.01em; min-width: 0; line-height: var(--gxt-lh-tight); }
-    .card-title > span { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-    .card-title::before { content: ""; width: var(--gxt-dot); height: var(--gxt-dot);
-      border-radius: 50%; flex: none; background: var(--gxt-accent); }
+      padding-block-end: var(--gxt-sp-2); color: var(--gxt-heading-ink, var(--gxt-fg));
+      font-size: var(--gxt-fs-lg); min-width: 0; line-height: var(--gxt-lh-tight); }
+    .card-title > span { overflow-wrap: anywhere; }
+    .card-title::before { content: ""; width: 3px; height: 1.15em;
+      border-radius: 1px; flex: none; background: var(--gxt-accent); }
+    .card-head > .actions { flex: 1; min-width: 0; gap: var(--gxt-sp-1); }
+    .card-head > .btn:last-child { margin-inline-start: var(--gxt-sp-1); }
     /* RTL base direction is enforced (no unicode-bidi:plaintext — that let a
        paragraph starting with a Latin word render left-to-right). Latin runs
        still embed correctly inside the RTL text. */
-    .card-body { padding: var(--gxt-sp-3) var(--gxt-sp-4); direction: var(--gxt-content-dir, rtl); text-align: start;
+    .card-body { padding: var(--gxt-sp-4); direction: var(--gxt-content-dir, rtl); text-align: start;
       white-space: pre-wrap; overflow-wrap: break-word; max-height: 46vh;
-      overflow-y: auto; overscroll-behavior: contain; user-select: text; }
+      overflow-y: auto; overscroll-behavior: contain; user-select: text;
+      scrollbar-width: var(--gxt-scrollbar-width, thin); scrollbar-color: var(--gxt-line-strong) transparent; }
+    .card-body > .actions, .card-body > .gxt-linkrow { margin-block-start: var(--gxt-sp-3); }
+    .card-body > .note + .note { margin-block-start: var(--gxt-sp-2); }
     /* A themed scrollbar, so a card over a dark page does not get a bright
        native strip down its edge. Matches the player panel's. */
     .card-body::-webkit-scrollbar, .detail::-webkit-scrollbar { width: 10px; }
@@ -201,9 +213,9 @@
         border-color var(--gxt-motion), transform var(--gxt-dur-1) var(--gxt-ease); }
     .btn:hover:not(:disabled) { color: var(--gxt-fg); background: var(--gxt-accent-soft);
       border-color: var(--gxt-accent-line); }
-    .btn:active:not(:disabled) { transform: scale(.96); }
+    .btn:active:not(:disabled) { transform: translateY(1px); }
     .btn:focus-visible { outline: none; box-shadow: var(--gxt-focus-ring); }
-    .btn:disabled { opacity: .5; cursor: default; }
+    .btn:disabled { opacity: .65; cursor: default; }
     .btn.icon { padding: 0; min-width: var(--gxt-ctl-h-sm); font-size: var(--gxt-fs-sm); }
     .btn.accent { color: var(--gxt-accent-on-soft); border-color: var(--gxt-accent-line);
       background: var(--gxt-accent-soft); }
@@ -240,6 +252,11 @@
       white-space: pre-wrap; overflow-wrap: anywhere;
       max-height: 180px; overflow-y: auto; user-select: text; }
     .dots::after { content: "…"; }
+    .card-body.dots { min-height: 92px; color: var(--gxt-fg-muted); }
+    .card-body.dots::before { content: ""; display: block; width: 42%; height: 3px;
+      margin-block-end: var(--gxt-sp-3); background: var(--gxt-accent);
+      border-radius: 1px; animation: gxt-loading var(--gxt-dur-3) var(--gxt-ease) both; }
+    @keyframes gxt-loading { from { width: 12%; } }
 
     /* ═══════════════════════════════════════════════════════ callout ══
        A tinted advisory block with room for its own actions. The YouTube
@@ -248,9 +265,9 @@
        no such component at all and used a bare line of faded text. */
     .callout { display: flex; flex-direction: column; gap: var(--gxt-sp-2);
       padding: var(--gxt-sp-2) var(--gxt-sp-3); margin-top: var(--gxt-sp-2);
-      border-radius: var(--gxt-radius-md);
+      border-radius: var(--gxt-radius-sm);
       font-size: var(--gxt-fs-xs); line-height: var(--gxt-lh);
-      border: 1px solid var(--gxt-line-strong);
+      border: 1px solid var(--gxt-line); border-inline-start: 3px solid var(--gxt-line-strong);
       background: color-mix(in srgb, var(--gxt-fg) 6%, transparent);
       color: var(--gxt-fg); }
     .callout.warn { border-color: var(--gxt-warn-edge); background: var(--gxt-warn-soft);
@@ -269,6 +286,7 @@
     /* ══════════════════════════════════════════════════════ actions ══ */
     .actions { display: flex; align-items: center; gap: var(--gxt-sp-2); flex-wrap: wrap; }
     .actions.fill > .btn { flex: 1; }
+    .actions > .btn { max-width: 100%; }
     /**
      * A text button in a card BODY carries a visible edge — v3.2.5.
      *
@@ -291,7 +309,7 @@
        track, same framed edge, same emphasized easing. The manga progress bar
        was 'height:6px;border-radius:99px;background:#0003' in a style string,
        with no frame — so on a light theme it was an invisible groove. */
-    .meter { height: 8px; margin: var(--gxt-sp-2) 0 var(--gxt-sp-1);
+    .meter { height: 6px; margin: var(--gxt-sp-3) 0 var(--gxt-sp-2);
       border-radius: var(--gxt-radius-pill); background: var(--gxt-bg-sunken);
       border: 1px solid var(--gxt-line); overflow: hidden; }
     .meter > i { display: block; height: 100%; width: 0;
@@ -329,46 +347,49 @@
     /* ═════════════════════════════════════════════════════════ pill ══
        The floating control bar: one rounded surface, chip-shaped actions. */
     .pill { position: fixed; z-index: 2147483647;
-      bottom: var(--gxt-sp-5); left: var(--gxt-sp-5);
+      bottom: var(--gxt-sp-4); inset-inline-end: var(--gxt-sp-4);
       display: flex; align-items: center; gap: var(--gxt-sp-2); flex-wrap: wrap;
-      max-width: min(620px, calc(100vw - 40px));
+      max-width: min(620px, calc(100vw - 32px));
       background: var(--gxt-card); color: var(--gxt-fg);
-      border: 1px solid var(--gxt-panel-line, var(--gxt-line)); border-radius: var(--gxt-radius-lg);
-      padding: var(--gxt-sp-2) var(--gxt-sp-2) var(--gxt-sp-2) var(--gxt-sp-4);
+      border: 1px solid var(--gxt-panel-line, var(--gxt-line)); border-radius: var(--gxt-radius-md);
+      padding: var(--gxt-sp-2) var(--gxt-sp-3);
       backdrop-filter: var(--gxt-backdrop, none); -webkit-backdrop-filter: var(--gxt-backdrop, none);
       font: var(--gxt-fs-body)/var(--gxt-lh-tight) var(--gxt-font);
       box-shadow: var(--gxt-shadow); direction: var(--gxt-ui-dir, rtl);
       animation: gxt-pop var(--gxt-dur-3) var(--gxt-ease-emphasized); }
     @keyframes gxt-pop { from { opacity: 0; transform: translateY(10px); } }
-    .pill-label { font-weight: 800; white-space: nowrap; padding-inline-end: 2px;
+    .pill-label { font-weight: var(--gxt-weight-strong, 700); padding-inline-end: var(--gxt-sp-2);
       display: flex; align-items: center; gap: var(--gxt-sp-2);
       font-size: var(--gxt-fs-sm); }
-    .pill-label::before { content: ""; width: var(--gxt-dot); height: var(--gxt-dot);
-      border-radius: 50%; background: var(--gxt-accent); flex: none; }
-    .pill .btn { border-color: var(--gxt-line-strong); }
+    .pill-label::before { content: ""; width: 3px; height: 1.15em;
+      border-radius: 1px; background: var(--gxt-accent); flex: none; }
+    .pill .actions { padding-inline-start: var(--gxt-sp-2); border-inline-start: 1px solid var(--gxt-line); }
+    .pill .actions:empty { display: none; }
+    .pill .btn { border-color: var(--gxt-line); }
 
     /* ════════════════════════════════════════════════════════ toast ══ */
     .toast { position: fixed; z-index: 2147483647; bottom: var(--gxt-sp-6); left: 50%;
       transform: translateX(-50%); max-width: min(420px, calc(100vw - 40px));
       background: var(--gxt-card); color: var(--gxt-fg);
       backdrop-filter: var(--gxt-backdrop, none); -webkit-backdrop-filter: var(--gxt-backdrop, none);
-      border: 1px solid var(--gxt-line); border-radius: var(--gxt-radius-md);
-      padding: var(--gxt-sp-3) var(--gxt-sp-5);
+      border: 1px solid var(--gxt-line); border-inline-start: 3px solid var(--gxt-accent);
+      border-radius: var(--gxt-radius-md); padding: var(--gxt-sp-3) var(--gxt-sp-4);
       font: var(--gxt-fs-md)/var(--gxt-lh) var(--gxt-font); font-weight: var(--gxt-weight, 400); direction: var(--gxt-ui-dir, rtl);
-      text-align: center;
+      text-align: start; overflow-wrap: anywhere;
       box-shadow: var(--gxt-shadow); animation: gxt-pop var(--gxt-dur-3) var(--gxt-ease-emphasized); }
 
     /* ═════════════════════════════════════════════════════ selchip ══ */
     .selchip { position: fixed; z-index: 2147483647;
       display: inline-flex; align-items: center; gap: 2px;
-      background: var(--gxt-accent-solid); color: var(--gxt-accent-fg);
-      border-radius: var(--gxt-radius-pill); padding: 2px var(--gxt-sp-2);
+      background: var(--gxt-card); color: var(--gxt-fg);
+      border: 1px solid var(--gxt-line-strong);
+      border-radius: var(--gxt-radius-md); padding: 3px;
       font: var(--gxt-fs-xs)/var(--gxt-lh-tight) var(--gxt-font);
       font-weight: var(--gxt-weight-strong, 700); direction: var(--gxt-ui-dir, rtl);
-      box-shadow: 0 8px 24px var(--gxt-accent-soft), var(--gxt-shadow-sm); user-select: none;
+      box-shadow: var(--gxt-elev-2); user-select: none;
       animation: gxt-pop var(--gxt-dur-2) var(--gxt-ease);
       transition: transform var(--gxt-motion); }
-    .selchip:hover { transform: translateY(-1px); }
+    .selchip:hover { border-color: var(--gxt-accent); }
     /* Two actions in one pill (v2.5.1: translate + 🔊 read aloud), divided by a
        hairline rather than split into two chips, so the pair still reads as one
        control sitting under the selection.
@@ -376,17 +397,18 @@
        handler — operable with a mouse and with nothing else, and announced as
        plain text. Each one now clears the 24px target-size floor too. */
     .selchip-part { appearance: none; border: 0; background: none; color: inherit;
-      font: inherit; cursor: pointer; padding: 0 var(--gxt-sp-2); min-height: 24px;
+      font: inherit; cursor: pointer; padding: 0 var(--gxt-sp-3); min-height: var(--gxt-ctl-h-sm);
       display: inline-flex; align-items: center;
       border-radius: var(--gxt-radius-pill); }
     .selchip-part + .selchip-part {
       border-inline-start: 1px solid color-mix(in srgb, currentColor 35%, transparent); }
-    .selchip-part:hover { background: color-mix(in srgb, #000 18%, transparent); }
+    .selchip-part:first-child { color: var(--gxt-accent-ink); }
+    .selchip-part:hover { background: var(--gxt-accent-soft); }
     .selchip-part:focus-visible { outline: none; box-shadow: var(--gxt-focus-ring); }
 
     /* ══════════════════════════════════════════════ user preferences ══ */
     @media (prefers-reduced-motion: reduce) {
-      .pill, .toast, .selchip, .card { animation: none; }
+      .pill, .toast, .selchip, .card, .card-body.dots::before { animation: none; }
       .btn, .selchip, .selchip-part, .meter > i, .switch .track,
       .switch .track::before { transition: none; }
       .btn:active:not(:disabled) { transform: none; }
@@ -476,7 +498,8 @@
     + 'font-family: var(--gxt-font, "Vazirmatn", "Segoe UI", Tahoma, sans-serif);'
     + 'font-size: var(--gxt-fs-md, 13.5px);'
     + 'line-height: var(--gxt-lh, 1.75);'
-    + 'color: var(--gxt-fg, #e2e5e8);'
+    + 'color: var(--gxt-fg, #e2e5e8) !important;'
+    + 'color-scheme: var(--gxt-scheme, dark);'
     + 'direction: var(--gxt-ui-dir, rtl);'
     + 'text-align: start;'
     + '-webkit-font-smoothing: antialiased;';
@@ -487,6 +510,7 @@
   function themeHost(el, keep = HOST_BASE) {
     if (!el || !theme()) return;
     el.style.cssText = `${keep} ${theme().tokens(settings || {}, { inPage: true })}`;
+    el.dataset.gxtVideoStyle = settings?.uiVideoStyle || 'glass';
   }
 
   function applyTheme() {
@@ -514,6 +538,9 @@
     root = host.attachShadow({ mode: 'open' });
     applyTheme();
     const style = document.createElement('style');
+    // Dark Reader deliberately exempts self-themed (Stylus) sheets. Protect
+    // our light/dark palettes without changing the surrounding site's theme.
+    style.className = 'gxt-theme stylus';
     style.textContent = `${fontFaceCss()}\n${STYLE}`;
     root.appendChild(style);
     (document.body || document.documentElement).appendChild(host);
@@ -560,6 +587,7 @@
     el.style.cssText = keep;
     const shadow = el.attachShadow({ mode: 'open' });
     const style = document.createElement('style');
+    style.className = 'gxt-theme stylus';
     style.textContent = `${fontFaceCss()}\n${STYLE}\n${css}`;
     shadow.appendChild(style);
     const entry = { id, host: el, root: shadow, keep };
@@ -965,7 +993,10 @@
       });
       head.appendChild(copyBtn);
     }
-    head.appendChild(button('✕', () => instance.close(), 'icon'));
+    const closeButton=button('✕', () => instance.close(), 'icon');
+    globalThis.GXT.i18n.bind(closeButton,'ariaLabel',()=>globalThis.GXT.i18n.t('content_manga_finish_1'));
+    globalThis.GXT.i18n.bind(closeButton,'title',()=>globalThis.GXT.i18n.t('content_manga_finish_1'));
+    head.appendChild(closeButton);
     el.append(head, body);
     r.appendChild(el);
 
@@ -1119,6 +1150,10 @@
     if (d.quotaId) lines.push(`quota=${d.quotaId}`);
     if (d.retryAfterMs) lines.push(`retryAfter=${Math.round(d.retryAfterMs / 1000)}s`);
     if (d.raw) lines.push(`message=${clean(d.raw)}`);
+    if (d.keySummary) {
+      const k = d.keySummary;
+      lines.push(`keys: total=${k.total} inspected=${k.inspected} tried=${k.tried} skipped=${k.skipped} unvisited=${k.unvisited}`);
+    }
     for (const a of d.attempts || []) {
       if (a.code === 'COOLING' || a.code === 'INVALID') {
         const left = Math.max(0, Math.round(((a.coolUntil || 0) - Date.now()) / 1000));
@@ -1213,6 +1248,7 @@
     const session = speechSession;
     speechSession = null;
     session.cancelled = true;
+    session.controller.abort();
     try { session.source?.stop(); } catch { /* already ended */ }
     session.source = null;
     session.onState?.('idle');
@@ -1231,7 +1267,7 @@
    */
   function speak(text, { onState } = {}) {
     stopSpeech();
-    const session = { cancelled: false, source: null, onState };
+    const session = { cancelled: false, source: null, onState, controller:new AbortController() };
     speechSession = session;
     onState?.('loading');
 
@@ -1247,7 +1283,9 @@
       const pending = new Map();
       const fetchPart = (i) => {
         if (i >= parts.length || pending.has(i)) return;
-        pending.set(i, send({ type: 'TTS_SPEAK', text: parts[i] }));
+        const message={type:'TTS_SPEAK',text:parts[i]};
+        pending.set(i,globalThis.GXT.requestXAction
+          ? globalThis.GXT.requestXAction(message,session.controller.signal) : send(message));
       };
       fetchPart(0);
 
@@ -1284,12 +1322,15 @@
       if (speechSession === session) speechSession = null;
       onState?.('idle');
     })().catch(() => {
+      if(session.cancelled)return;
       if (speechSession === session) speechSession = null;
       onState?.('error', { get error() { return globalThis.GXT.i18n.t("content_ui_speak_1"); } });
-    });
+    }).finally(()=>session.controller.abort());
 
-    return { stop: stopSpeech };
+    return { stop: () => { if(speechSession===session)stopSpeech(); } };
   }
+
+  addEventListener('pagehide',stopSpeech);
 
   /**
    * A 🔊 button that reads whatever `getText()` returns at click time.

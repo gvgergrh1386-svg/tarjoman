@@ -82,15 +82,18 @@
       right: var(--gxt-sp-3);
       bottom: 7px;
       display: flex;
-      gap: 2px;
+      gap: 1px;
       align-items: center;
       direction: var(--gxt-ui-dir, rtl);
       pointer-events: auto;
       padding: 3px;
-      border: 1px solid var(--gxt-line);
-      border-radius: var(--gxt-radius-pill);
-      background: var(--gxt-card);
-      box-shadow: var(--gxt-elev-2);
+      border: 1px solid var(--gxt-video-line);
+      border-radius: var(--gxt-video-radius);
+      background: var(--gxt-video-bg);
+      color: var(--gxt-video-fg);
+      box-shadow: var(--gxt-video-edge);
+      backdrop-filter: var(--gxt-video-backdrop, none);
+      -webkit-backdrop-filter: var(--gxt-video-backdrop, none);
       /* Above the caption (59) — see .yt-cap-wrap. */
       z-index: 60;
       transition: opacity var(--gxt-dur-3) var(--gxt-ease);
@@ -122,14 +125,14 @@
       line-height: var(--gxt-lh-tight);
       white-space: nowrap;
       cursor: pointer;
-      box-shadow: var(--gxt-elev-2);
+      box-shadow: none;
       backdrop-filter: var(--gxt-backdrop, none);
       -webkit-backdrop-filter: var(--gxt-backdrop, none);
       transition: background var(--gxt-motion), border-color var(--gxt-motion),
         color var(--gxt-motion), transform var(--gxt-dur-1) var(--gxt-ease);
     }
     .yt-btn:hover:not(:disabled) { border-color: var(--gxt-accent); }
-    .yt-btn:active:not(:disabled) { transform: scale(.97); }
+    .yt-btn:active:not(:disabled) { transform: translateY(1px); }
     .yt-btn:focus-visible { outline: none; box-shadow: var(--gxt-focus-ring); }
     .yt-btn[aria-pressed="true"] {
       background: var(--gxt-accent-solid);
@@ -160,20 +163,28 @@
       padding: 0;
       border-color: transparent;
       background: transparent;
+      color: var(--gxt-video-fg);
       box-shadow: none;
       backdrop-filter: none;
       -webkit-backdrop-filter: none;
     }
     .yt-controls .yt-btn:hover:not(:disabled) {
-      border-color: var(--gxt-accent-line);
-      background: var(--gxt-accent-soft);
+      border-color: transparent;
+      background: var(--gxt-video-hover);
     }
+    .yt-controls .yt-btn:focus-visible { box-shadow: var(--gxt-video-focus); }
     .yt-controls .yt-btn::after {
       content: attr(data-glyph);
       font-size: var(--gxt-fs-md);
       font-weight: 900;
       line-height: 1;
     }
+    #gxt-yt-gear::after, #gxt-yt-dub::after {
+      content: ''; width: 20px; height: 20px; background: currentColor;
+      mask: var(--video-icon) center / contain no-repeat;
+    }
+    #gxt-yt-gear { --video-icon: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='black' stroke-width='1.8' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='m9 3-1 3-3 1-2 3 2 2-1 3 2 3 3-.2 2 2.2 3-1 1-3 3-1 2-3-2-2 1-3-2-3-3 .2L12 2z'/%3E%3Ccircle cx='11.5' cy='11.5' r='3.3'/%3E%3C/svg%3E"); }
+    #gxt-yt-dub { --video-icon: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='black' stroke-width='1.8' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='M4 9h4l5-4v14l-5-4H4zM17 8a6 6 0 0 1 0 8m3-11a10 10 0 0 1 0 14'/%3E%3C/svg%3E"); }
     .yt-controls .yt-btn .txt {
       position: absolute;
       width: 1px;
@@ -187,9 +198,14 @@
     }
     .yt-controls .yt-btn .dot {
       position: absolute;
-      top: 3px;
-      right: 3px;
+      bottom: 3px;
+      inset-inline-end: 3px;
+      width: 4px; height: 4px;
     }
+    .yt-controls .yt-btn + .yt-btn { border-inline-start-color: transparent; }
+    .yt-controls .yt-btn[aria-pressed="true"] {
+      color: var(--gxt-video-active-fg); background: var(--gxt-video-active);
+      border-color: transparent; }
 
     /* ═════════════════════════════════════════════ the settings sheet ══
        Structurally the popup's card: one elevated surface, a titled head,
@@ -200,7 +216,7 @@
          gear that summoned it rather than across the player from it. */
       right: var(--gxt-sp-3);
       bottom: 112px;
-      width: min(390px, calc(100% - var(--gxt-sp-5) * 2));
+      width: min(400px, calc(100% - var(--gxt-sp-4) * 2));
       /* Bounded by what is actually left above the controls, so the sheet can
          never be clipped by the top of the player on a short one (a Shorts
          player, or a small embedded window). */
@@ -216,7 +232,7 @@
       background: var(--gxt-card);
       color: var(--gxt-fg);
       border: 1px solid var(--gxt-panel-line, var(--gxt-line));
-      border-radius: var(--gxt-radius-lg);
+      border-radius: var(--gxt-radius-md);
       box-shadow: var(--gxt-elev-3);
       backdrop-filter: var(--gxt-backdrop, none);
       -webkit-backdrop-filter: var(--gxt-backdrop, none);
@@ -224,57 +240,41 @@
       animation: yt-rise var(--gxt-dur-3) var(--gxt-ease-emphasized);
     }
     @keyframes yt-rise {
-      from { opacity: 0; transform: translateY(8px) scale(.98); }
+      from { opacity: 0; transform: translateY(4px); }
       to { opacity: 1; transform: none; }
     }
     .yt-panel-head {
       display: flex;
       align-items: center;
       gap: var(--gxt-sp-2);
-      padding: 11px var(--gxt-sp-4);
+      padding: var(--gxt-sp-3) var(--gxt-sp-4);
       border-bottom: 1px solid var(--gxt-line);
-      background: linear-gradient(180deg, var(--gxt-accent-soft), transparent);
+      background: transparent;
       flex: none;
     }
     .yt-panel-head h2 {
       margin: 0;
       flex: 1;
-      font-size: var(--gxt-fs-md);
-      font-weight: 800;
-      letter-spacing: -.01em;
+      font-size: var(--gxt-fs-lg);
+      font-weight: var(--gxt-weight-strong, 700);
+      color: var(--gxt-heading-ink, var(--gxt-fg));
       display: flex; align-items: center; gap: var(--gxt-sp-2);
     }
     .yt-panel-head h2::before {
-      content: ""; width: var(--gxt-dot); height: var(--gxt-dot);
-      border-radius: 50%; flex: none;
+      content: ""; width: 3px; height: 1.15em;
+      border-radius: 1px; flex: none;
       background: var(--gxt-accent);
     }
     .yt-panel-body {
-      padding: var(--gxt-sp-3) var(--gxt-sp-4) var(--gxt-sp-4);
+      padding: 0 var(--gxt-sp-4) var(--gxt-sp-4);
       display: flex;
       flex-direction: column;
-      gap: var(--gxt-sp-3);
+      gap: var(--gxt-sp-2);
       overflow-y: auto;
       overscroll-behavior: contain;
-      /* Measured: this body is ~1180px of content in ~325px of space, and it
-         used to end at a hard edge with nothing to suggest more existed. The
-         mask fades the first and last few pixels ONLY while there is something
-         scrolled out of view in that direction — 'scroll-driven' via the
-         standard two-gradient trick, so no script is involved. */
-      mask-image: linear-gradient(
-        to bottom,
-        transparent 0,
-        #000 var(--gxt-sp-3),
-        #000 calc(100% - var(--gxt-sp-3)),
-        transparent 100%
-      );
-      -webkit-mask-image: linear-gradient(
-        to bottom,
-        transparent 0,
-        #000 var(--gxt-sp-3),
-        #000 calc(100% - var(--gxt-sp-3)),
-        transparent 100%
-      );
+      min-height: 0;
+      scrollbar-width: var(--gxt-scrollbar-width, thin);
+      scrollbar-color: var(--gxt-line-strong) transparent;
     }
     /* A slim, themed scrollbar — the default one is a bright native strip
        across a dark panel over video. */
@@ -286,40 +286,42 @@
 
     .yt-tabs {
       position: sticky;
-      top: calc(var(--gxt-sp-3) * -1);
+      top: 0;
       z-index: 3;
       display: grid;
       grid-template-columns: repeat(3, 1fr);
-      gap: var(--gxt-sp-1);
-      padding: var(--gxt-sp-1);
-      margin-bottom: var(--gxt-sp-3);
-      border: 1px solid var(--gxt-line);
-      border-radius: var(--gxt-radius-md);
-      background: var(--gxt-card);
-      box-shadow: var(--gxt-elev-1);
+      gap: var(--gxt-sp-2);
+      padding: 0;
+      margin: 0 calc(var(--gxt-sp-4) * -1) var(--gxt-sp-2);
+      padding-inline: var(--gxt-sp-4);
+      border: 0;
+      border-bottom: 1px solid var(--gxt-line);
+      background: var(--gxt-bg-elev);
     }
     .yt-tab {
-      min-height: 34px;
+      min-height: var(--gxt-ctl-h);
       border: 0;
-      border-radius: calc(var(--gxt-radius-md) - 3px);
+      border-bottom: 2px solid transparent;
+      border-radius: 0;
       background: transparent;
       color: var(--gxt-fg-muted);
       font: inherit;
       font-size: var(--gxt-fs-sm);
-      font-weight: 800;
+      font-weight: var(--gxt-weight-strong, 700);
       cursor: pointer;
       transition: background var(--gxt-motion), color var(--gxt-motion);
     }
     .yt-tab:hover { color: var(--gxt-fg); background: var(--gxt-accent-soft); }
     .yt-tab:focus-visible { outline: none; box-shadow: var(--gxt-focus-ring); }
     .yt-tab.active {
-      color: var(--gxt-accent-fg);
-      background: var(--gxt-accent-solid);
+      color: var(--gxt-accent-ink);
+      background: transparent;
+      border-bottom-color: var(--gxt-accent);
     }
     .yt-pane {
       display: flex;
       flex-direction: column;
-      gap: var(--gxt-sp-3);
+      gap: var(--gxt-sp-2);
       min-width: 0;
     }
     .yt-pane[hidden] { display: none; }
@@ -327,18 +329,20 @@
     .yt-dashboard {
       display: grid;
       grid-template-columns: repeat(2, minmax(0, 1fr));
-      gap: var(--gxt-sp-2);
+      gap: 0;
+      padding-block: var(--gxt-sp-2);
+      border-bottom: 1px solid var(--gxt-line);
     }
     .yt-state-card {
       display: flex;
       flex-direction: column;
       gap: 3px;
       min-width: 0;
-      padding: var(--gxt-sp-3);
-      border: 1px solid var(--gxt-line);
-      border-radius: var(--gxt-radius-md);
-      background: var(--gxt-accent-soft);
+      padding: var(--gxt-sp-1) var(--gxt-sp-3);
+      border: 0;
+      background: transparent;
     }
+    .yt-state-card + .yt-state-card { border-inline-start: 1px solid var(--gxt-line); }
     .yt-state-card strong { font-size: var(--gxt-fs-sm); color: var(--gxt-fg); }
     .yt-state-card span {
       color: var(--gxt-fg-muted);
@@ -348,13 +352,11 @@
 
     /* Group label — the popup's '.group-lbl', same role and same weight. */
     .yt-group {
-      font-size: var(--gxt-fs-2xs);
-      font-weight: 800;
-      color: var(--gxt-fg-faint);
-      letter-spacing: .04em;
-      padding-bottom: var(--gxt-sp-1);
-      border-bottom: 1px solid var(--gxt-line);
-      margin-top: var(--gxt-sp-2);
+      font-size: var(--gxt-fs-sm);
+      font-weight: var(--gxt-weight-strong, 700);
+      color: var(--gxt-heading-ink, var(--gxt-fg));
+      padding-block: var(--gxt-sp-2) var(--gxt-sp-1);
+      margin-top: var(--gxt-sp-1);
     }
     .yt-group:first-child { margin-top: 0; }
 
@@ -363,7 +365,9 @@
       align-items: center;
       gap: var(--gxt-sp-3);
       justify-content: space-between;
-      min-height: 28px;
+      min-height: var(--gxt-ctl-h-sm);
+      padding-block: var(--gxt-sp-1);
+      border-bottom: 1px solid var(--gxt-line);
     }
     .yt-lbl {
       flex: 1;
@@ -393,22 +397,27 @@
     .yt-status.ok { color: var(--gxt-ok); }
 
     /* ══════════════════════════════════════════════════════ controls ══ */
-    .yt-panel select {
+    .yt-panel select, .yt-panel input[type="text"], .yt-panel input[type="number"] {
       flex: none;
+      min-width: 0;
       max-width: 62%;
+      min-height: var(--gxt-ctl-h-sm);
       font: inherit;
       font-size: var(--gxt-fs-xs);
       color: var(--gxt-fg);
       background: var(--gxt-input-bg, var(--gxt-bg-sunken));
       border: 1px solid var(--gxt-input-line, var(--gxt-line-strong));
       border-radius: var(--gxt-radius-sm);
-      padding: 6px 8px;
-      cursor: pointer;
+      padding: var(--gxt-sp-1) var(--gxt-sp-2);
       direction: var(--gxt-ui-dir, rtl);
       transition: border-color var(--gxt-motion);
     }
-    .yt-panel select:hover { border-color: var(--gxt-accent); }
-    .yt-panel select:focus-visible { outline: none; box-shadow: var(--gxt-focus-ring); }
+    .yt-panel select { cursor: pointer; }
+    .yt-panel :is(select, input[type="text"], input[type="number"]):hover { border-color: var(--gxt-accent); }
+    .yt-panel :is(select, input[type="text"], input[type="number"]):focus-visible { outline: none; box-shadow: var(--gxt-focus-ring); }
+    .yt-panel input[dir="ltr"] { direction: ltr; text-align: left; }
+    .yt-field { display: grid; gap: var(--gxt-sp-1); color: var(--gxt-fg-muted); font-size: var(--gxt-fs-xs); }
+    .yt-field input[type="text"] { max-width: 100%; width: 100%; }
 
     /* The SAME switch as the popup — v3.2.5 makes that literally true.
        v3.2.0 rebuilt it from tokens for COLOUR but kept its own geometry
@@ -469,14 +478,14 @@
       color: var(--gxt-fg-muted);
       box-shadow: none;
       font-weight: 600;
-      min-height: 32px;
+      min-height: var(--gxt-ctl-h);
       font-size: var(--gxt-fs-xs);
     }
     .yt-btn.wide:hover { color: var(--gxt-fg); background: var(--gxt-accent-soft); }
     /* The gear's close button: quiet until reached. */
     .yt-btn.quiet {
       background: transparent; box-shadow: none; border-color: transparent;
-      color: var(--gxt-fg-muted); min-height: 28px; width: 28px;
+      color: var(--gxt-fg-muted); min-height: var(--gxt-ctl-h-sm); width: var(--gxt-ctl-h-sm);
     }
     .yt-btn.quiet:hover { color: var(--gxt-fg); background: var(--gxt-accent-soft); }
     /* The voice button on a video the caption engine cannot serve: discouraged,
@@ -531,10 +540,10 @@
     .yt-callout {
       display: flex; flex-direction: column; gap: var(--gxt-sp-2);
       padding: var(--gxt-sp-2) var(--gxt-sp-3);
-      border-radius: var(--gxt-radius-md);
+      border-radius: var(--gxt-radius-sm);
       font-size: var(--gxt-fs-xs);
       line-height: var(--gxt-lh);
-      border: 1px solid var(--gxt-warn-edge);
+      border: 1px solid var(--gxt-warn-edge); border-inline-start-width: 3px;
       background: var(--gxt-warn-soft);
       color: var(--gxt-warn-on-soft);
     }
@@ -612,13 +621,13 @@
          happens to be the same luminance as the scrim. */
       border: 1px solid var(--gxt-cap-line);
       box-shadow: var(--gxt-elev-1);
-      padding: .2em .7em;
-      border-radius: .5em;
+      padding: .25em .75em;
+      border-radius: .28em;
       text-align: center;
       direction: var(--gxt-ui-dir, rtl);
       unicode-bidi: plaintext;
       direction: var(--gxt-caption-dir, rtl);
-      line-height: 1.75;
+      line-height: 1.65;
       pointer-events: auto;
       cursor: grab;
       user-select: none;
@@ -670,13 +679,16 @@
     @media (prefers-reduced-motion: reduce) {
       .yt-panel { animation: none; }
       .yt-btn, .yt-switch .track, .yt-switch .track::before,
-      .yt-panel select, .yt-bulk .fill, .yt-cap,
+      .yt-panel select, .yt-panel input, .yt-bulk .fill, .yt-cap,
       .yt-range::-webkit-slider-thumb { transition: none; }
       .yt-btn:active { transform: none; }
       .yt-range:hover::-webkit-slider-thumb { transform: none; }
     }
     @media (prefers-reduced-transparency: reduce) {
-      .yt-btn, .yt-panel {
+      /* An explicit player choice wins; inherited surfaces follow the OS. */
+      :host([data-gxt-video-style="inherit"]) .yt-controls { background: var(--gxt-video-solid-bg, #121416); backdrop-filter: none; -webkit-backdrop-filter: none; }
+      :host([data-gxt-video-style="inherit"]) .yt-btn,
+      :host([data-gxt-video-style="inherit"]) .yt-panel {
         backdrop-filter: none; -webkit-backdrop-filter: none;
         background: var(--gxt-bg-elev);
       }
@@ -698,6 +710,11 @@
        control exists, state moves to the system Highlight pair, and focus
        becomes a real outline because forced colours never paint box-shadow. */
     @media (forced-colors: active) {
+      .yt-controls, .yt-panel { background: Canvas; backdrop-filter: none; -webkit-backdrop-filter: none; }
+      .yt-controls, .yt-controls .yt-btn { background: Canvas; color: CanvasText; border-color: ButtonBorder; }
+      .yt-controls .yt-btn[aria-pressed="true"] { background: Highlight; color: HighlightText; }
+      .yt-controls .yt-btn:focus-visible { outline: 2px solid Highlight; outline-offset: 2px; box-shadow: none; }
+      #gxt-yt-gear::after, #gxt-yt-dub::after { forced-color-adjust: none; background: currentColor; }
       .yt-btn, .yt-panel, .yt-panel select { border: 1px solid ButtonBorder; }
       .yt-btn[aria-pressed="true"] {
         background: Highlight; color: HighlightText; border-color: Highlight;

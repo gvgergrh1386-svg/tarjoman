@@ -2,40 +2,12 @@
 <html dir="rtl" lang="fa">
 <head>
   <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
   <title data-i18n="popup_popup_renderSheet_1">ترجمان</title>
   <link rel="stylesheet" href="popup.css">
 </head>
-<body>
-<!--
-  ══════════════════════════════════════════════════════════════════════════
-  ترجمان — popup shell, v2.9.5 «سازگاری»
-
-  WHAT CHANGED AND WHY
-  ────────────────────
-  Until v2.8 this window was four tabs of switches. Three structural problems
-  came out of the audit, and all three are fixed by the markup below:
-
-   1. THE PRIMARY ACTION WAS NOT IN THE PRIMARY SURFACE. A translation
-      extension's main job is "translate what I am looking at", and the only
-      ways to ask for it were a right-click menu and Alt+Shift+P. Clicking the
-      toolbar icon — the one affordance every user finds — offered settings and
-      nothing else. The «در این صفحه» card now leads the window.
-   2. THE TABS WERE NOT AN ORGANISING PRINCIPLE. «قابلیت‌ها» held YouTube, web
-      pages, X tools, the subtitle workshop, speech, the local bridge AND a
-      video-quality helper that is unrelated to translation — seven cards on
-      one 2000px scroll, while X's own settings sat on a different tab. The
-      shell is now a home list of named destinations, each one screen deep.
-   3. NOTHING WAS ANNOUNCED CORRECTLY. Roughly forty switches were unlabelled
-      checkboxes to a screen reader, the tablist had no aria-selected and no
-      arrow-key handling, and the appearance dialog did not trap focus. Every
-      row here is wired for that in one pass at startup (see `wireA11y` in
-      popup.js), so a new row cannot be added without its label.
-
-  Every control id from earlier versions is preserved verbatim: the handlers in
-  popup.js are the product of many bug-fix cycles and re-typing them would
-  re-introduce fixed defects. Only the containers moved.
-  ══════════════════════════════════════════════════════════════════════════
--->
+<body data-surface="popup">
+<!-- Tarjoman 3.8.2: quick translation and a shared settings workspace. -->
 
   <!-- ════════════════════════════════════════════════════════ app bar ══ -->
   <header class="appbar">
@@ -57,6 +29,11 @@
     </span>
   </header>
 
+  <nav class="shell-tabs" aria-label="بخش‌ها" data-i18n-aria-label="popup_popup_view_label_1">
+    <button class="shell-tab" type="button" data-goto="home" aria-current="page" data-i18n="popup.home">ترجمه</button>
+    <button class="shell-tab" type="button" data-goto="settings" data-i18n="popup.settings">تنظیم‌ها</button>
+  </nav>
+
   <!-- ═════════════════════════════════════════════════════════ search ══ -->
   <div class="searchbar">
     <svg class="search-ico" viewBox="0 0 24 24" aria-hidden="true"><path d="M10 4a6 6 0 1 0 3.5 10.9l4.3 4.3 1.4-1.4-4.3-4.3A6 6 0 0 0 10 4Zm0 2a4 4 0 1 1 0 8 4 4 0 0 1 0-8Z"/></svg>
@@ -69,13 +46,15 @@
   </div>
   <p class="sr-only" id="searchCount" role="status" aria-live="polite"></p>
 
+  <div class="workspace-layout">
+  <aside class="settings-rail" id="settingsRail" aria-label="تنظیم‌ها" data-i18n-aria-label="popup.settings" hidden></aside>
   <main id="views">
     <p class="empty-state hidden" id="noResults"><span data-i18n="popup_popup_noResults_1">چیزی با این عبارت پیدا نشد.</span></p>
 
     <!-- ══════════════════════════════════════════════════════════ HOME ══ -->
     <div class="view active" id="view-home" data-view="home" tabindex="-1">
 
-      <h2 class="view-label"><span data-i18n="popup_popup_view_label_1">بخش‌ها</span></h2>
+      <h2 class="view-label" data-i18n="popup.home">ترجمه</h2>
 
       <!-- ── the missing primary action ──────────────────────────────── -->
       <section class="card ctx" id="ctxCard" aria-labelledby="ctxCardTitle">
@@ -111,6 +90,7 @@
 
         <p class="note tip" id="ctxNote"></p>
 
+        <details class="site-options" id="sitePreferences"><summary data-i18n="popup.siteOptions">تنظیم‌های این سایت</summary><div class="site-options-body">
         <!-- v3.0.0 — per-site profile. The answer to "55 global switches":
              what people actually want is «on THIS site, behave this way». -->
         <div class="field-row spaced" id="siteProfileRow">
@@ -120,21 +100,41 @@
         <p class="row-help"><span data-i18n="popup_popup_row_help_2">فقط برای همین سایت ذخیره می‌شود. «مثل همه‌جا» یعنی از تنظیم کلی پیروی کند.</span></p>
         <select id="siteRegister"></select>
         <span id="siteStatus" class="status" role="status"></span>
+        </div></details>
       </section>
 
-<section class="card locale-card" aria-labelledby="localeHeading"><h2 id="localeHeading" data-i18n="language.heading"></h2><div class="locale-grid"><label class="locale-field"><span data-i18n="language.interface"></span><select id="uiLanguage"><option value="auto" data-i18n="language.auto"></option><option value="fa" data-i18n="content_render_LANG_NAMES_1"></option><option value="en" data-i18n="content_render_LANG_NAMES_34"></option></select></label><label class="locale-field"><span data-i18n="language.target"></span><input id="targetLang" type="text" dir="ltr" autocomplete="off"></label></div><details class="locale-details"><summary data-i18n="region.settings"></summary><div class="locale-grid"><label class="locale-field"><span data-i18n="region.locale"></span><select id="regionLocale"><option value="auto" data-i18n="region.auto"></option><option value="fa-IR" data-i18n="region.iran"></option><option value="en-US" data-i18n="region.us"></option><option value="en-GB" data-i18n="region.uk"></option></select></label><label class="locale-field"><span data-i18n="region.calendar"></span><select id="calendar"><option value="auto" data-i18n="region.auto"></option><option value="persian" data-i18n="region.persian"></option><option value="gregory" data-i18n="region.gregorian"></option></select></label><label class="locale-field"><span data-i18n="region.numbers"></span><select id="numberingSystem"><option value="auto" data-i18n="region.auto"></option><option value="arabext" data-i18n="region.persianDigits"></option><option value="latn" data-i18n="region.latinDigits"></option></select></label><label class="locale-field"><span data-i18n="region.clock"></span><select id="hourCycle"><option value="auto" data-i18n="region.auto"></option><option value="h12" data-i18n="region.12hour"></option><option value="h23" data-i18n="region.24hour"></option></select></label><label class="locale-field"><span data-i18n="region.week"></span><select id="weekStart"><option value="auto" data-i18n="region.auto"></option><option value="sat" data-i18n="region.saturday"></option><option value="sun" data-i18n="region.sunday"></option><option value="mon" data-i18n="region.monday"></option></select></label><label class="locale-field"><span data-i18n="region.timezone"></span><input id="timeZone" dir="ltr" data-i18n-placeholder="region.timezoneHint"></label></div></details><p class="hint" data-i18n="language.independent"></p><label class="locale-field"><span data-i18n="region.contentDates"></span><select id="translationRegion"><option value="iran" data-i18n="region.iranDates"></option><option value="source" data-i18n="region.sourceDates"></option></select></label><p class="hint" data-i18n="region.contentHint"></p><p id="localePreview" class="hint" dir="auto"></p><p id="localeStatus" role="status"></p></section>
 
-      <!-- ── first-run: shown only while no engine is usable ─────────── -->
-      <section class="card setup hidden" id="setupCard" aria-labelledby="setupTitle">
-        <div class="card-head"><h2 id="setupTitle"><span data-i18n="popup_popup_setupTitle_1">یک قدم تا شروع</span></h2></div>
-        <p class="note"><span data-i18n="popup_popup_note_1">ترجمان برای ترجمه به یک سرویس هوش مصنوعی وصل می‌شود. کلید رایگان Google AI Studio چند ثانیه‌ای گرفته می‌شود و برای استفادهٔ روزمره کافی است.</span></p>
-        <div class="row">
-          <button class="primary" id="setupGo" type="button"><span data-i18n="popup_popup_setupGo_1">تنظیم موتور ترجمه</span></button>
-          <a class="link" href="https://aistudio.google.com/apikey" target="_blank" rel="noopener"><span data-i18n="popup_popup_link_1">کلید رایگان بگیر ↗</span></a>
+
+      <section class="quick-engine" aria-labelledby="quickEngineLabel">
+        <div class="quick-engine-field"><label id="quickEngineLabel" for="quickProvider" data-i18n="popup.quickEngine">موتور فعال</label>
+          <select id="quickProvider" dir="ltr"><option value="gemini">Google Gemini</option><option value="openai">OpenAI compatible</option><option value="google">Google Translate</option><option value="bing">Microsoft Bing</option></select>
         </div>
-        <p class="note tip"><span data-i18n="popup_popup_note_2">اگر کلید نمی‌خواهی، در همان صفحه می‌توانی «Google Translate» یا «Bing» را انتخاب کنی — بدون کلید و بدون سقف، با کیفیت پایین‌تر.</span></p>
+        <button class="icon-btn" type="button" data-goto="engine" aria-label="موتور ترجمه" data-i18n-aria-label="content_youtube_togglePanel_72"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 7h10v2H4V7Zm14 0h2v2h-2V7ZM4 15h2v2H4v-2Zm6 0h10v2H10v-2ZM14 4h4v8h-4V4ZM6 12h4v8H6v-8Z"/></svg></button>
+        <span class="status" id="quickProviderStatus" role="status" aria-live="polite"></span>
       </section>
 
+      <section class="setup compact-setup hidden" id="setupCard" aria-labelledby="setupTitle">
+        <div class="setup-line"><h2 id="setupTitle" data-i18n="popup.setupBrief">موتور نیاز به راه‌اندازی دارد</h2><button class="text-button" id="setupGo" type="button" data-i18n="popup_popup_setupGo_1">تنظیم موتور ترجمه</button></div>
+        <details class="setup-help"><summary data-i18n="popup.setupHelp">راهنمای اتصال موتور</summary>
+          <p class="note" data-i18n="popup.setupGuide">برای Gemini کلید وارد کنید یا Google Translate و Bing را انتخاب کنید.</p>
+          <a class="link" href="https://aistudio.google.com/apikey" target="_blank" rel="noopener"><span data-i18n="popup_popup_link_1">کلید رایگان بگیر ↗</span></a>
+        </details>
+      </section>
+
+      <section class="workspace-shortcuts" aria-labelledby="workspaceTitle">
+        <div class="section-heading"><h2 id="workspaceTitle" data-i18n="popup.workspaces">فضاهای کار</h2><button class="text-button" type="button" data-goto="settings" data-i18n="popup.allSettings">همهٔ تنظیم‌ها</button></div>
+        <div class="workspace-grid">
+          <button class="workspace-link" type="button" data-goto="x"><span class="nav-ico" aria-hidden="true"><svg viewBox="0 0 24 24"><path d="M17.5 3h3.1l-6.8 7.8L21.8 21h-6.2l-4.9-6.4L5.1 21H2l7.3-8.3L2.4 3h6.4l4.4 5.8L17.5 3Zm-1.1 16.1h1.7L7.7 4.8H5.9l10.5 14.3Z"/></svg></span><span data-i18n="popup_popup_nav_title_1">ایکس (X)</span></button>
+          <button class="workspace-link" type="button" data-goto="youtube"><span class="nav-ico" aria-hidden="true"><svg viewBox="0 0 24 24"><path d="M21.6 7.2a2.5 2.5 0 0 0-1.8-1.8C18.2 5 12 5 12 5s-6.2 0-7.8.4A2.5 2.5 0 0 0 2.4 7.2 26 26 0 0 0 2 12a26 26 0 0 0 .4 4.8 2.5 2.5 0 0 0 1.8 1.8C5.8 19 12 19 12 19s6.2 0 7.8-.4a2.5 2.5 0 0 0 1.8-1.8A26 26 0 0 0 22 12a26 26 0 0 0-.4-4.8ZM10 15V9l5.2 3L10 15Z"/></svg></span><span data-i18n="popup_popup_refreshContext_2">یوتیوب</span></button>
+          <button class="workspace-link" type="button" data-goto="web"><span class="nav-ico" aria-hidden="true"><svg viewBox="0 0 24 24"><path d="M12 2a10 10 0 1 0 0 20 10 10 0 0 0 0-20Zm6.9 6h-2.9a15.6 15.6 0 0 0-1.3-3.6A8 8 0 0 1 18.9 8ZM12 4.1c.7 1 1.3 2.3 1.7 3.9h-3.4c.4-1.6 1-2.9 1.7-3.9ZM4.3 14a8 8 0 0 1 0-4h3.3a17.6 17.6 0 0 0 0 4H4.3Zm.8 2H8c.3 1.3.7 2.5 1.3 3.6A8 8 0 0 1 5.1 16Zm2.9-8H5.1a8 8 0 0 1 4.2-3.6A15.6 15.6 0 0 0 8 8Zm4 11.9c-.7-1-1.3-2.3-1.7-3.9h3.4c-.4 1.6-1 2.9-1.7 3.9ZM14.1 14H9.9a15.7 15.7 0 0 1 0-4h4.2a15.7 15.7 0 0 1 0 4Zm.6 5.6c.6-1.1 1-2.3 1.3-3.6h2.9a8 8 0 0 1-4.2 3.6Zm1.7-5.6a17.6 17.6 0 0 0 0-4h3.3a8 8 0 0 1 0 4h-3.3Z"/></svg></span><span data-i18n="popup_popup_sources_4">صفحه‌های وب</span></button>
+          <button class="workspace-link" type="button" data-open-workshop="1"><span class="nav-ico" aria-hidden="true"><svg viewBox="0 0 24 24"><path d="M4 4h16a2 2 0 0 1 2 2v12a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V6a2 2 0 0 1 2-2Zm0 2v12h16V6H4Zm2 8h6v2H6v-2Zm8 0h4v2h-4v-2ZM6 10h4v2H6v-2Zm6 0h6v2h-6v-2Z"/></svg></span><span data-i18n="popup_popup_nav_title_3">کارگاه زیرنویس</span></button>
+        </div>
+      </section>
+    </div>
+
+    <div class="view" id="view-settings" data-view="settings" tabindex="-1" hidden>
+      <h2 class="view-label" data-i18n="popup.settings">تنظیم‌ها</h2>
+      <p class="settings-intro" data-i18n="popup.settingsIntro">موتور، زبان و ابزارها را یک‌جا مدیریت کنید.</p>
       <!-- ── destinations ────────────────────────────────────────────── -->
       <nav class="nav-group" aria-label="تنظیم‌های ترجمه" data-i18n-aria-label="popup_popup_nav_group_aria_label_1">
         <h2 class="group-lbl"><span data-i18n="content_page_translate_maybeShowSelChip_3">ترجمه</span></h2>
@@ -210,6 +210,12 @@
 
       <nav class="nav-group" aria-label="تنظیم‌های عمومی" data-i18n-aria-label="popup_popup_nav_group_aria_label_3">
         <h2 class="group-lbl"><span data-i18n="popup_popup_group_lbl_1">تنظیم‌ها</span></h2>
+
+        <button class="nav-row" type="button" data-goto="locale" data-k="زبان منطقه تاریخ تقویم language region locale calendar">
+          <span class="nav-ico" aria-hidden="true"><svg viewBox="0 0 24 24"><path d="M12 2a10 10 0 1 0 0 20 10 10 0 0 0 0-20Zm6.9 6h-2.9a15.6 15.6 0 0 0-1.3-3.6A8 8 0 0 1 18.9 8ZM12 4.1c.7 1 1.3 2.3 1.7 3.9h-3.4c.4-1.6 1-2.9 1.7-3.9ZM4.3 14a8 8 0 0 1 0-4h3.3a17.6 17.6 0 0 0 0 4H4.3Zm.8 2H8c.3 1.3.7 2.5 1.3 3.6A8 8 0 0 1 5.1 16Zm2.9-8H5.1a8 8 0 0 1 4.2-3.6A15.6 15.6 0 0 0 8 8Zm4 11.9c-.7-1-1.3-2.3-1.7-3.9h3.4c-.4 1.6-1 2.9-1.7 3.9ZM14.1 14H9.9a15.7 15.7 0 0 1 0-4h4.2a15.7 15.7 0 0 1 0 4Zm.6 5.6c.6-1.1 1-2.3 1.3-3.6h2.9a8 8 0 0 1-4.2 3.6Zm1.7-5.6a17.6 17.6 0 0 0 0-4h3.3a8 8 0 0 1 0 4h-3.3Z"/></svg></span>
+          <span class="nav-main"><span class="nav-title" data-i18n="language.heading"></span><span class="nav-sub" id="sumLocale"></span></span>
+          <span class="nav-chev" aria-hidden="true"><svg viewBox="0 0 24 24"><path d="M15.4 7.4 14 6l-6 6 6 6 1.4-1.4-4.6-4.6 4.6-4.6Z"/></svg></span>
+        </button>
         <button class="nav-row" type="button" data-goto="custom" data-k="واژه‌نامه دستور شخصی پرامپت prompt">
           <span class="nav-ico" aria-hidden="true"><svg viewBox="0 0 24 24"><path d="M20.7 7.3 16.7 3.3a1 1 0 0 0-1.4 0l-2 2 5.4 5.4 2-2a1 1 0 0 0 0-1.4ZM3 17.2V21h3.8L17.4 10.4 13.6 6.6 3 17.2Z"/></svg></span>
           <span class="nav-main">
@@ -270,6 +276,11 @@
       </nav>
     </div>
 
+    <div class="view" id="view-locale" data-view="locale" tabindex="-1" hidden>
+      <h2 class="view-label" data-i18n="language.heading"></h2>
+      <section class="card locale-card" aria-labelledby="localeHeading"><h2 id="localeHeading" data-i18n="language.heading"></h2><div class="locale-grid"><label class="locale-field"><span data-i18n="language.interface"></span><select id="uiLanguage"><option value="auto" data-i18n="language.auto"></option><option value="fa" data-i18n="content_render_LANG_NAMES_1"></option><option value="en" data-i18n="content_render_LANG_NAMES_34"></option></select></label><label class="locale-field"><span data-i18n="language.target"></span><input id="targetLang" type="text" dir="ltr" autocomplete="off"></label></div><details class="locale-details"><summary data-i18n="region.settings"></summary><div class="locale-grid"><label class="locale-field"><span data-i18n="region.locale"></span><select id="regionLocale"><option value="auto" data-i18n="region.auto"></option><option value="fa-IR" data-i18n="region.iran"></option><option value="en-US" data-i18n="region.us"></option><option value="en-GB" data-i18n="region.uk"></option></select></label><label class="locale-field"><span data-i18n="region.calendar"></span><select id="calendar"><option value="auto" data-i18n="region.auto"></option><option value="persian" data-i18n="region.persian"></option><option value="gregory" data-i18n="region.gregorian"></option></select></label><label class="locale-field"><span data-i18n="region.numbers"></span><select id="numberingSystem"><option value="auto" data-i18n="region.auto"></option><option value="arabext" data-i18n="region.persianDigits"></option><option value="latn" data-i18n="region.latinDigits"></option></select></label><label class="locale-field"><span data-i18n="region.clock"></span><select id="hourCycle"><option value="auto" data-i18n="region.auto"></option><option value="h12" data-i18n="region.12hour"></option><option value="h23" data-i18n="region.24hour"></option></select></label><label class="locale-field"><span data-i18n="region.week"></span><select id="weekStart"><option value="auto" data-i18n="region.auto"></option><option value="sat" data-i18n="region.saturday"></option><option value="sun" data-i18n="region.sunday"></option><option value="mon" data-i18n="region.monday"></option></select></label><label class="locale-field"><span data-i18n="region.timezone"></span><input id="timeZone" dir="ltr" data-i18n-placeholder="region.timezoneHint"></label></div></details><p class="hint" data-i18n="language.independent"></p><label class="locale-field"><span data-i18n="region.contentDates"></span><select id="translationRegion"><option value="iran" data-i18n="region.iranDates"></option><option value="source" data-i18n="region.sourceDates"></option></select></label><p class="hint" data-i18n="region.contentHint"></p><p id="localePreview" class="hint" dir="auto"></p><p id="localeStatus" role="status"></p></section>
+    </div>
+
     <!-- ═══════════════════════════════════════════════ SECTION: engine ══ -->
     <div class="view" id="view-engine" data-view="engine" data-title="موتور ترجمه" tabindex="-1" hidden>
       <h2 class="view-label"><span data-i18n="content_youtube_togglePanel_72">موتور ترجمه</span></h2>
@@ -286,6 +297,7 @@
           <option value="google" data-i18n="popup_popup_option_3">Google Translate — رایگان و بی‌نهایت</option>
           <option value="bing" data-i18n="popup_popup_option_4">Microsoft Bing — رایگان و بی‌نهایت</option>
         </select>
+        <p id="providerStatus" class="status" role="status" aria-live="polite"></p>
 
         <div id="geminiSection" class="section">
           <div class="field-row">
@@ -310,6 +322,17 @@
             <select id="model"></select>
             <button id="refreshModels" class="icon-btn" type="button" title="بروزرسانی فهرست مدل‌ها" aria-label="بروزرسانی فهرست مدل‌ها" data-i18n-title="popup_popup_refreshModels_title_1" data-i18n-aria-label="popup_popup_refreshModels_title_1">⟳</button>
           </div>
+          <label class="field"><span data-i18n="gemini.safetyLabel">فیلتر محتوای قابل‌تنظیم جمنای</span>
+            <select id="geminiSafety">
+              <option value="" data-i18n="gemini.safetyDefault">پیش‌فرض سرویس</option>
+              <option value="BLOCK_ONLY_HIGH" data-i18n="gemini.safetyHigh">مسدودسازی احتمال بالا</option>
+              <option value="BLOCK_MEDIUM_AND_ABOVE" data-i18n="gemini.safetyMedium">مسدودسازی احتمال متوسط و بالا</option>
+              <option value="BLOCK_LOW_AND_ABOVE" data-i18n="gemini.safetyLow">مسدودسازی احتمال کم و بالاتر</option>
+              <option value="BLOCK_NONE" data-i18n="gemini.safetyNone">بدون مسدودسازی قابل‌تنظیم</option>
+              <option value="OFF" data-i18n="gemini.safetyOff">خاموش، در حد مجاز سرویس</option>
+            </select>
+          </label>
+          <p class="row-help" data-i18n="gemini.safetyHelp">محدودیت‌های اجباری سرویس همچنان برقرارند. مسدودسازی محتوا جداگانه گزارش می‌شود؛ مدل انتخابی خودکار عوض نمی‌شود.</p>
         </div>
 
         <div id="mtSection" class="section hidden">
@@ -946,6 +969,7 @@
           <button id="resetStats" class="ghost" type="button"><span data-i18n="popup_popup_message_15">صفر کردن آمار</span></button>
           <button id="clearCache" class="ghost" type="button"><span data-i18n="popup_popup_message_17">پاک‌کردن کش</span></button>
         </div>
+        <p id="statsStatus" class="status" role="status"></p>
         <p class="note tip"><span data-i18n="popup_popup_note_13">شمارش‌ها تقریبی‌اند: گوگل راهی برای خواندن سهمیهٔ باقی‌مانده نمی‌دهد و تلاش‌های دوباره کمی کمتر شمرده می‌شوند.</span></p>
       </section>
     </div>
@@ -1111,6 +1135,11 @@
     </div>
 
   </main>
+  </div>
+  <footer class="app-footer">
+    <button class="footer-link" id="openSettingsPage" type="button"><span data-i18n="popup.openSettings">بازکردن صفحهٔ تنظیم‌ها</span><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M14 3v2h3.6l-9.3 9.3 1.4 1.4L19 6.4V10h2V3h-7ZM5 5h5V3H3v18h18v-7h-2v5H5V5Z"/></svg></button>
+    <span class="footer-version" id="footerVersion" dir="ltr"></span>
+  </footer>
 
   <!-- ══════════════════════════════════════════════ appearance sheet ══ -->
   <div class="sheet hidden" id="sheet" role="dialog" aria-modal="true" aria-labelledby="sheetTitle">
@@ -1180,6 +1209,7 @@
   <script src="../shared/settings.js"></script>
   <script src="../shared/memory.js"></script>
   <script src="../shared/theme.js"></script>
+  <script src="workspace.js"></script>
   <script src="popup.js"></script>
 </body>
 </html>

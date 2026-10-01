@@ -35,7 +35,7 @@ test('parallel migration and setting writes keep both values',async()=>{
 test('manual selection and locale survive restart and backup round trip',async()=>{
   const {G,data}=environment();await G.setSettings({uiLanguage:'en',targetLang:'fa',regionLocale:'fa-IR',calendar:'persian',bridgeToken:'TEST_ONLY_TOKEN'});
   assert.equal((await environment(data,['fa']).G.getSettings()).uiLanguage,'en');
-  const backup=await G.exportBackup();assert.equal(backup.settings.localeVersion,1);assert.equal(backup.settings.bridgeToken,undefined);
+  const backup=await G.exportBackup();assert.equal(backup.settings.localeVersion,1);assert.equal(backup.settings.bridgeToken,undefined);assert.equal(Object.hasOwn(backup.settings,'memoryCorrections'),false,'derived memory identity is not a user preference');
   const dest=environment();await dest.G.importBackup(backup,{mode:'replace'});assert.equal((await dest.G.getSettings()).uiLanguage,'en');assert.equal((await dest.G.getSettings()).regionLocale,'fa-IR');
   const fresh=environment();const auto=await fresh.G.exportBackup();await dest.G.importBackup(auto,{mode:'replace'});assert.equal((await dest.G.getSettings()).uiLanguage,'auto');
 });

@@ -39,23 +39,60 @@
 
   const UI = () => globalThis.GXT.ui;
 
-  let overlay = null;
   let settings = null;
+  let active = null;
+  const outputKey = value => JSON.stringify([
+    globalThis.GXT.cacheNamespace(globalThis.GXT.forScope(value || {}, 'page')),
+    value?.openaiFallbackModel, value?.bridgeEnabled, value?.bridgePort,
+    value?.bridgeToken,
+  ]);
 
-  const send = (message) =>
+  function retire() {
+    const operation = active;
+    active = null;
+    operation?.controller.abort();
+    operation?.card?.close();
+  }
+
+  globalThis.GXT.onStorageChanged(({settings: next, apiKeyChanged}) => {
+    if (apiKeyChanged || (next && (!next.enabled || (settings && outputKey(settings) !== outputKey(next))))) retire();
+    if (next) { settings = next; UI()?.configure(globalThis.GXT.forScope(next, 'page')); }
+  });
+  addEventListener('pagehide', retire);
+
+  const send = (message, signal) =>
     new Promise((resolve) => {
+      let port, pulse, settled = false;
+      const finish = response => {
+        if (settled) return;
+        settled = true;
+        clearInterval(pulse);
+        signal?.removeEventListener('abort', cancelled);
+        port?.onMessage.removeListener(received);
+        port?.onDisconnect.removeListener(disconnected);
+        try { port?.disconnect(); } catch { /* context already gone */ }
+        resolve(response);
+      };
+      const cancelled = () => finish({ok: false, code: 'CANCELLED'});
+      const received = response => { if (response?.t !== 'pong') finish(response); };
+      const disconnected = () => { void chrome.runtime.lastError; finish(null); };
+      if (signal?.aborted) return cancelled();
+      signal?.addEventListener('abort', cancelled, {once: true});
       try {
-        chrome.runtime.sendMessage(message, (reply) => {
-          void chrome.runtime.lastError;
-          resolve(reply || null);
-        });
+        port = chrome.runtime.connect({name: 'gxt-screen-translation'});
+        port.onMessage.addListener(received);
+        port.onDisconnect.addListener(disconnected);
+        port.postMessage(message);
+        if (!settled) pulse = setInterval(() => {
+          try { port.postMessage({t: 'ping'}); } catch { finish(null); }
+        }, 15000);
       } catch {
-        resolve(null);
+        finish(null);
       }
     });
 
   /** Grab exactly one frame of a screen the user chooses, then let it go. */
-  async function grabFrame() {
+  async function grabFrame(signal) {
     let stream;
     try {
       stream = await navigator.mediaDevices.getDisplayMedia({
@@ -73,6 +110,7 @@
     let timer;
     const cleanup = [];
     try {
+      if (signal?.aborted) return null;
       const video = document.createElement('video');
       video.srcObject = stream;
       video.muted = true;
@@ -92,10 +130,16 @@
       });
       await Promise.race([
         Promise.all([video.play(), frameReady]),
+        new Promise(resolve => {
+          const aborted = () => resolve();
+          signal?.addEventListener('abort', aborted, {once: true});
+          cleanup.push(() => signal?.removeEventListener('abort', aborted));
+        }),
         new Promise((_, reject) => {
           timer = setTimeout(() => reject(new Error(globalThis.GXT.i18n.t("content_screen_grabFrame_1"))), 12000);
         }),
       ]);
+      if (signal?.aborted) return null;
       const canvas = document.createElement('canvas');
       canvas.width = video.videoWidth;
       canvas.height = video.videoHeight;
@@ -141,15 +185,16 @@
     .hint { position: fixed; top: var(--gxt-sp-5); left: 50%;
             transform: translateX(-50%);
             display: flex; align-items: center; gap: var(--gxt-sp-2);
+            max-width: calc(100vw - var(--gxt-sp-4) * 2); box-sizing: border-box;
             background: var(--gxt-card); color: var(--gxt-fg);
             border: 1px solid var(--gxt-line);
-            border-radius: var(--gxt-radius-pill);
+            border-radius: var(--gxt-radius-md);
             padding: var(--gxt-sp-2) var(--gxt-sp-4);
             font-size: var(--gxt-fs-sm); font-weight: 700;
             line-height: var(--gxt-lh-tight);
-            box-shadow: var(--gxt-elev-2); direction: rtl; }
-    .hint::before { content: ""; width: var(--gxt-dot); height: var(--gxt-dot);
-            border-radius: 50%; background: var(--gxt-accent); flex: none; }
+            box-shadow: var(--gxt-elev-2); direction: var(--gxt-ui-dir, rtl); }
+    .hint::before { content: ""; width: 3px; height: 1.2em;
+            border-radius: 1px; background: var(--gxt-accent); flex: none; }
     .hint kbd { font: inherit; font-size: var(--gxt-fs-xs);
             border: 1px solid var(--gxt-line-strong);
             border-radius: var(--gxt-radius-sm);
@@ -161,13 +206,14 @@
   `;
 
   /** Full-screen picker over the frozen frame. Resolves to a cropped canvas. */
-  function pickRegion(frame) {
+  function pickRegion(frame, signal) {
     return new Promise((resolve) => {
+      if (signal?.aborted) return resolve(null);
       const mounted = UI()?.layer?.({ id: 'screen', css: PICKER_CSS });
       const root = mounted?.root;
       // No shared layer (a page where content/ui.js did not load): the feature
       // must still work, so fall back to a bare picker rather than refuse.
-      if (!root) return void resolve(fallbackPick(frame));
+      if (!root) return void resolve(fallbackPick(frame, signal));
       const wrap = document.createElement('div');
       wrap.className = 'wrap';
       globalThis.GXT.i18n.bind(wrap, "innerHTML", () => ('<img alt="">'
@@ -181,11 +227,16 @@
       img.src = frame.toDataURL('image/png');
 
       let start = null;
+      let settled = false;
       const finish = (rect) => {
+        if (settled) return;
+        settled = true;
         UI()?.dropSurface?.('screen');
         document.removeEventListener('keydown', onKey, true);
+        signal?.removeEventListener('abort', onAbort);
         resolve(rect);
       };
+      const onAbort = () => finish(null);
       const onKey = (event) => {
         if (event.key === 'Escape') {
           event.stopPropagation();
@@ -193,6 +244,7 @@
         }
       };
       document.addEventListener('keydown', onKey, true);
+      signal?.addEventListener('abort', onAbort, {once: true});
 
       wrap.addEventListener('pointerdown', (event) => {
         start = { x: event.clientX, y: event.clientY };
@@ -239,8 +291,9 @@
    * exists to survive one extension update, not to be maintained as a second
    * design.
    */
-  function fallbackPick(frame) {
+  function fallbackPick(frame, signal) {
     return new Promise((resolve) => {
+      if (signal?.aborted) return resolve(null);
       const host = document.createElement('div');
       host.setAttribute('data-gxt-screen', '');
       host.style.cssText =
@@ -268,17 +321,23 @@
       document.documentElement.appendChild(host);
 
       let start = null;
+      let settled = false;
       const done = (rect) => {
+        if (settled) return;
+        settled = true;
         host.remove();
         document.removeEventListener('keydown', onKey, true);
+        signal?.removeEventListener('abort', onAbort);
         resolve(rect);
       };
+      const onAbort = () => done(null);
       const onKey = (event) => {
         if (event.key !== 'Escape') return;
         event.stopPropagation();
         done(null);
       };
       document.addEventListener('keydown', onKey, true);
+      signal?.addEventListener('abort', onAbort, {once: true});
       wrap.addEventListener('pointerdown', (event) => {
         start = { x: event.clientX, y: event.clientY };
         veil.style.display = 'none';
@@ -345,45 +404,57 @@
 
   /** The whole flow, from the toolbar/menu/hotkey to Persian on screen. */
   async function translateScreenRegion() {
-    settings = settings || (await globalThis.GXT?.getSettings?.());
-    UI().configure(settings);
+    retire();
+    const operation = {controller: new AbortController(), card: null};
+    active = operation;
+    const current = () => active === operation && !operation.controller.signal.aborted;
+    const latest = await globalThis.GXT.getSettings();
+    if (!current()) return;
+    settings = latest;
+    if (!settings.enabled) { retire(); return; }
+    UI().configure(globalThis.GXT.forScope(settings, 'page'));
     let frame;
     try {
-      frame = await grabFrame();
+      frame = await grabFrame(operation.controller.signal);
     } catch (error) {
-      UI().toast(globalThis.GXT.i18n.t("content_screen_translateScreenRegion_5", {v0:(error.message || error)}));
+      if (current()) UI().toast(globalThis.GXT.i18n.t("content_screen_translateScreenRegion_5", {v0:(error.message || error)}));
       return;
     }
-    if (!frame) return; // user cancelled the picker
+    if (!frame || !current()) return;
 
-    const crop = await pickRegion(frame);
-    if (!crop) return; // user cancelled the selection
+    const crop = await pickRegion(frame, operation.controller.signal);
+    if (!crop || !current()) return;
 
     const card = UI().card({
       get title() { return globalThis.GXT.i18n.t("content_screen_card_2"); },
-      get body() { return globalThis.GXT.i18n.t("content_screen_card_1"); },
-      dots: true,
       speak: true,
+      onClose: () => { if (active === operation) retire(); },
     });
+    operation.card = card;
+    card.body.textContent = globalThis.GXT.i18n.t('content_screen_card_1');
+    card.body.classList.add('dots');
     const data = crop.toDataURL('image/png');
-    const res = await send({ type: 'OCR_TRANSLATE', image: data });
-    if (!card.isOpen()) return;
+    const res = await send({ type: 'OCR_TRANSLATE', image: data }, operation.controller.signal);
+    if (!current() || !card.isOpen()) return;
+    card.body.classList.remove('dots');
 
     if (!res?.ok) {
-      card.error(
-        res?.error || globalThis.GXT.i18n.t("content_screen_translateScreenRegion_4"),
-        res?.code === 'NO_OCR'
-          ? globalThis.GXT.i18n.t("content_screen_translateScreenRegion_3")
-          : res?.detail
-      );
+      UI().showFailure(card.body, {...res, error: res?.error || globalThis.GXT.i18n.t('content_screen_translateScreenRegion_4')});
       return;
     }
     if (!res.text) {
-      card.setText(globalThis.GXT.i18n.t("content_screen_translateScreenRegion_2"));
+      card.body.textContent = globalThis.GXT.i18n.t('content_screen_translateScreenRegion_2');
       return;
     }
-    card.setText(res.translated || res.text);
-    card.setSubtitle?.(globalThis.GXT.i18n.t("content_screen_translateScreenRegion_1", {v0:(res.lines || 0)}));
+    card.body.textContent = res.translated || res.text;
+    if (res.failed) {
+      const warning = document.createElement('div');
+      warning.className = 'err';
+      warning.textContent = UI().friendly(res.failed);
+      card.body.appendChild(warning);
+    }
+    card.settle();
+    card.clamp();
   }
 
   chrome.runtime.onMessage.addListener((message) => {

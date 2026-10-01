@@ -55,10 +55,15 @@
     max: 8,
     active: 0,
     waiters: [],
-    async run(fn) {
+    async run(fn, signal) {
+      globalThis.GXT.abort?.check(signal);
       while (this.active >= this.max) {
-        await new Promise((resolve) => this.waiters.push(resolve));
+        let wake;
+        const queued = new Promise(resolve => { wake = resolve; this.waiters.push(wake); });
+        try { await (signal ? globalThis.GXT.abort.wait(queued, signal) : queued); }
+        finally { const index = this.waiters.indexOf(wake); if (index >= 0) this.waiters.splice(index, 1); }
       }
+      globalThis.GXT.abort?.check(signal);
       this.active += 1;
       try {
         return await fn();
@@ -92,6 +97,7 @@
   /** fetch bounded by an abort timeout; throws a classified MTError on
    *  network failure or timeout so a stall can't wedge the limiter. */
   async function fetchWithTimeout(url, opts = {}, consume) {
+    globalThis.GXT.abort?.check(opts.signal);
     const controller = new AbortController();
     const unlinkAbort = globalThis.GXT.abort?.link(opts.signal, controller);
     const timer = setTimeout(() => controller.abort(), requestTimeoutMs);
@@ -302,7 +308,7 @@
    * the group is marked failed and the user gets a retry (matches gemini/openai).
    * @returns {Promise<{map: Map<number,{t:string,sl:string}>, model: string}>}
    */
-  async function translateBatch(items, { engine, targetLang = TARGET }) {
+  async function translateBatch(items, { engine, targetLang = TARGET, signal }) {
     const map = new Map();
     // allSettled, not all: `all` rejects on the FIRST failure while its
     // siblings keep running, and their later rejections surface as unhandled
@@ -310,8 +316,9 @@
     const settled = await Promise.allSettled(
       items.map((item, i) =>
         limiter.run(async () => {
-          map.set(i, await translateOne(engine, item.text, targetLang));
-        })
+          globalThis.GXT.abort?.check(signal);
+          map.set(i, await translateOne(engine, item.text, targetLang, signal));
+        }, signal)
       )
     );
     const failure = settled.find((r) => r.status === 'rejected');
@@ -332,7 +339,7 @@
         limiter.run(async () => {
           const { t } = await translateOne(engine, text, targetLang, signal);
           return t;
-        })
+        }, signal)
       )
     );
     const list = settled.map((r) => (r.status === 'fulfilled' ? r.value : null));

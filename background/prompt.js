@@ -246,7 +246,7 @@ Before answering, silently verify meaning, negation/modality, names/numbers, eve
     + 'paraphrase merely for variety. Preserve every name, number, date, emoji, '
     + 'URL, @/#/$ token, ⟦n⟧ token, line break and <gN> tag. If the draft is '
     + 'already faithful and natural, keep it unchanged. Read the whole batch for '
-    + 'consistency. Return JSON {"t":["0⟫final",...]} with every original index '
+    + 'consistency. Return JSON {"t":[{"i":0,"t":"final"}]} with every original index '
     + 'exactly once and nothing else.';
 
   /** OpenAPI-style schema for Gemini structured output. */
@@ -717,6 +717,15 @@ Before answering, silently verify meaning, negation/modality, names/numbers, eve
     const src = String(source);
     const dst = String(target || '');
     if (!dst.trim()) return false;
+    // IDs belong to the response envelope. A model that mutates an old
+    // inline separator must be retried, never accepted as positional prose.
+    const protocolPrefix = /(?:^|\n)\s*[0-9۰-۹٠-٩]{1,4}\s*(?:⟫|⇔|↔|⟺|⟷)/;
+    if (protocolPrefix.test(dst) && !protocolPrefix.test(src)) return false;
+    // Preserve genuine rates, including rates written out in the source.
+    // An invented percentage/per-mille quantity is a fidelity failure, not
+    // formatting to strip from an otherwise trusted/cached translation.
+    const rate = /(?:[%٪‰‱]\s*[0-9۰-۹٠-٩]+|[0-9۰-۹٠-٩]+(?:[.,٫][0-9۰-۹٠-٩]+)?\s*[%٪‰‱])/;
+    if (rate.test(dst) && !rate.test(src) && !/percent|per cent|per mille|درصد|بالمئة|yüzde|prozent|pour cent|por ciento|百分|パーセント|퍼센트/i.test(src)) return false;
     if (!sameMatches(src, dst, PROTECTED_TOKEN_RE)) return false;
     if (EMOJI_RE && !sameMatches(src, dst, EMOJI_RE)) return false;
     if ((src.match(/\n/g) || []).length !== (dst.match(/\n/g) || []).length) return false;
@@ -742,7 +751,12 @@ Before answering, silently verify meaning, negation/modality, names/numbers, eve
     const arr = Array.isArray(data?.r) ? data.r : Array.isArray(data) ? data : null;
     if (!arr) throw parseError(globalThis.GXT.i18n.t('error.responseShape'), false);
     const out = new Map();
+    const seen = new Set();
     for (const entry of arr) {
+      if (!Number.isInteger(entry?.i) || entry.i < 0 || (Array.isArray(sources) && entry.i >= sources.length) || seen.has(entry.i)) {
+        throw parseError(globalThis.GXT.i18n.t('error.responseShape'), true);
+      }
+      seen.add(entry.i);
       if (
         entry && Number.isInteger(entry.i) && typeof entry.t === 'string'
         && (!Array.isArray(sources) || translationInvariant(sources[entry.i], entry.t, 'tweet'))
@@ -771,11 +785,11 @@ Before answering, silently verify meaning, negation/modality, names/numbers, eve
   // inline-formatting tags <g1>…</g1> and opaque ⟦n⟧ element tokens that the
   // model must preserve, so whole sentences (with their links/bold spans)
   // translate as one unit instead of fragment-by-fragment.
-  const GENERIC_PROMPT_VERSION = 7;
+  const GENERIC_PROMPT_VERSION = 8;
 
   const GENERIC_SCHEMA = {
     type: 'object',
-    properties: { t: { type: 'array', items: { type: 'string' } } },
+    properties: { t: { type: 'array', items: { type: 'object', properties: {i:{type:'integer'},t:{type:'string'}}, required:['i','t'] } } },
     required: ['t'],
   };
 
@@ -795,13 +809,13 @@ Before answering, silently verify meaning, negation/modality, names/numbers, eve
     // one for every kind); the glossary/custom block is still appended.
     const override = overrideOr(extra, 'generic', null);
     if (override) return override + extrasBlock(extra, sources);
-    if(extra?.targetLang && extra.targetLang !== 'fa') return inTarget(EN_FIDELITY,extra) + '\nEach input string begins with N⟫. Keep the same Western-digit prefix, exactly one output per input. Preserve paragraph boundaries and all formatting. Output JSON only: {"t":["0⟫translation",...]}. ' + (kind === 'subtitle' ? inTarget('Use natural spoken English; keep each cue concise without omitting meaning.',extra) : KIND_NOTES[kind] || '') + extrasBlock(extra,sources);
+    if(extra?.targetLang && extra.targetLang !== 'fa') return inTarget(EN_FIDELITY,extra) + '\nInput items have separate i (identity) and text fields. Return exactly one object per input, with unchanged i and translated text in t. Never include an ID or control marker inside t. Preserve paragraph boundaries and all formatting. Output JSON only: {"t":[{"i":0,"t":"translation"}]}. ' + (kind === 'subtitle' ? inTarget('Use natural spoken English; keep each cue concise without omitting meaning.',extra) : KIND_NOTES[kind] || '') + extrasBlock(extra,sources);
     const lines = [
       'You are a senior Iranian-Persian translator. Return exact meaning in fluent Persian that reads as original writing, never a word-for-word calque.',
       '- Priority: preserve claims, negation, modality, agent, numbers, names, humor and register; then rebuild in natural Persian word order. Add no explanation and omit no information.',
       '- Keep established proper names/titles/products, code, URLs, emails, @handles, #tags and identifiers in their established form. Use Persian digits except inside protected technical text. Use correct ZWNJ, Persian ک/ی and punctuation.',
       '- Items are consecutive parts of ONE document: read them all and any "context" first; context is evidence only, never output. Resolve pronouns/ellipsis and keep terminology consistent across items.',
-      '- Every input item starts with "N⟫". Return each translation with the SAME "N⟫" prefix, N kept in the Western digits given (never localized) — exactly one output per input, never merge or split items. Keep line breaks inside items. Already-Persian items: return unchanged (with prefix).',
+      '- Each input item has separate i (identity) and text fields. Return exactly one object per input with the SAME integer i and translated text in t; never merge or split items. IDs are metadata: never include them or any separator in t. Keep line breaks inside items. Already-Persian text: return unchanged.',
       extra?.translationRegion === 'source' ? '- Keep source dates, calendar, times and time zones unchanged.' : `- Today: ${now.gregorian} = ${now.jalali}، Tehran ${now.tehranTime}. Convert an explicit timezone to Tehran (keep original in parentheses); use Jalali only when certain, never guess.`,
     ];
     if (kind === 'page') {
@@ -811,7 +825,7 @@ Before answering, silently verify meaning, negation/modality, names/numbers, eve
     }
     if (KIND_NOTES[kind]) lines.push(`- ${KIND_NOTES[kind]}`);
     lines.push(
-      'Input: JSON {"context":[preceding source lines — for understanding ONLY, never translate or output them],"items":[prefixed strings]}. Output: JSON {"t":[prefixed Persian strings]} — nothing else.'
+      'Input: JSON {"context":[preceding source lines — evidence ONLY],"items":[{"i":0,"text":"source"}]}. Output: JSON {"t":[{"i":0,"t":"translation"}]} — nothing else.'
     );
     lines.push('Silently check fidelity, fluency, register, protected tokens and item alignment before returning JSON only.');
     return lines.join('\n') + extrasBlock(extra, sources);
@@ -821,7 +835,7 @@ Before answering, silently verify meaning, negation/modality, names/numbers, eve
   function buildGenericPayload(texts, context) {
     // Index-prefixing costs ~2 tokens per item but makes alignment
     // self-healing: results land by index, not by array position.
-    const payload = { items: texts.map((t, i) => `${i}⟫${t}`) };
+    const payload = { items: texts.map((text, i) => ({i, text})) };
     if (Array.isArray(context) && context.length) payload.context = context;
     return payload;
   }
@@ -855,8 +869,6 @@ Before answering, silently verify meaning, negation/modality, names/numbers, eve
   /** A prefix at the start of an embedded line = several items merged into
    *  one array entry; used to split them back apart. */
   const GENERIC_MERGED_RE = /\n(?=\s*[0-9۰-۹٠-٩]{1,4}\s*⟫)/;
-  /** Line-leading protocol tokens that must never reach the user. */
-  const GENERIC_RESIDUE_RE = /(^|\n)\s*[0-9۰-۹٠-٩]{1,4}\s*⟫\s*/g;
 
   const asciiDigits = (str) =>
     str
@@ -866,9 +878,9 @@ Before answering, silently verify meaning, negation/modality, names/numbers, eve
   /**
    * @returns {(string|null)[]} length expectedCount; null = the model dropped
    * this item (caller retries just the holes once, then falls back to the
-   * original text). Alignment is by index prefix, so a merged or dropped
-   * item can no longer misalign everything after it. Throws (retriable)
-   * only when the whole response is unusable.
+   * original text). Structured IDs provide alignment. The old inline-ID
+   * format remains readable for existing custom prompts. Ambiguous identities
+   * are rejected; an unusable response can be retried.
    */
   function parseGenericTranslations(raw, expectedCount, sources, kind) {
     let s = String(raw || '').trim();
@@ -882,6 +894,18 @@ Before answering, silently verify meaning, negation/modality, names/numbers, eve
       throw parseError(globalThis.GXT.i18n.t('error.parse'), true);
     }
     const arrRaw = Array.isArray(data?.t) ? data.t : Array.isArray(data) ? data : null;
+    if (arrRaw?.length && arrRaw.every(entry => entry && typeof entry === 'object')) {
+      const result = new Array(expectedCount).fill(null), seen = new Set();
+      for (const row of arrRaw) {
+        if (!Number.isInteger(row.i) || row.i < 0 || row.i >= expectedCount || seen.has(row.i) || typeof row.t !== 'string') {
+          throw parseError(globalThis.GXT.i18n.t('error.responseShape'), true);
+        }
+        seen.add(row.i);
+        if (row.t.trim() && (!Array.isArray(sources) || translationInvariant(sources[row.i], row.t, kind || 'page'))) result[row.i] = row.t;
+      }
+      if (!result.some(Boolean)) throw parseError(globalThis.GXT.i18n.t('error.empty'), true);
+      return result;
+    }
     if (!arrRaw || !arrRaw.every((entry) => typeof entry === 'string')) {
       throw parseError(globalThis.GXT.i18n.t('error.responseShape'), true);
     }
@@ -893,10 +917,13 @@ Before answering, silently verify meaning, negation/modality, names/numbers, eve
     }
     const out = new Array(expectedCount).fill(null);
     const unprefixed = [];
+    const seen = new Set();
     for (let pos = 0; pos < arr.length; pos += 1) {
       const match = GENERIC_INDEX_RE.exec(arr[pos]);
       if (match) {
         const idx = parseInt(asciiDigits(match[1]), 10);
+        if (idx < 0 || idx >= expectedCount || seen.has(idx)) throw parseError(globalThis.GXT.i18n.t('error.responseShape'), true);
+        seen.add(idx);
         if (idx >= 0 && idx < expectedCount && out[idx] == null) {
           out[idx] = arr[pos].slice(match[0].length).trim() || null;
           continue;
@@ -906,23 +933,16 @@ Before answering, silently verify meaning, negation/modality, names/numbers, eve
     }
     // Fallback for models that drop the prefix: positional alignment is only
     // trustworthy when the model returned exactly one item per input.
-    if (unprefixed.length && arr.length === expectedCount) {
+    if (unprefixed.length && !seen.size && arr.length === expectedCount) {
       for (const pos of unprefixed) {
         if (out[pos] == null) {
-          // Still strip a prefix if one is present — an out-of-range or
-          // duplicate index lands here, and its "N⟫" must not leak into the
-          // displayed translation.
-          const m = GENERIC_INDEX_RE.exec(arr[pos]);
-          out[pos] = (m ? arr[pos].slice(m[0].length) : arr[pos]).trim() || null;
+          out[pos] = arr[pos].trim() || null;
         }
       }
     }
-    // Last line of defense: scrub any residual line-leading "N⟫" token so the
-    // protocol can never surface in user-facing text.
+    // Validate against the source. Never delete a genuine source symbol or
+    // quantity to make an invalid response look like a valid translation.
     for (let i = 0; i < expectedCount; i += 1) {
-      if (typeof out[i] === 'string' && out[i].includes('⟫')) {
-        out[i] = out[i].replace(GENERIC_RESIDUE_RE, '$1').trim() || null;
-      }
       if (
         typeof out[i] === 'string' && Array.isArray(sources)
         && !translationInvariant(sources[i], out[i], kind || 'page')
@@ -1119,7 +1139,7 @@ RULES
   const inTarget = (text,extra) => text.replace(/English/g,globalThis.GXT.targetName(extra?.targetLang || 'en'));
   function reviewSystem(extra, batch = false) {
     const base = extra?.targetLang && extra.targetLang !== 'fa'
-      ? inTarget(EN_SYSTEMS.review,extra) + (batch ? ' Input items contain original and persian (the existing field name for the draft). Return JSON {"t":["0⟫final",...]}, keeping each Western-digit index exactly once.' : '')
+      ? inTarget(EN_SYSTEMS.review,extra) + (batch ? ' Input items contain original and persian (the existing field name for the draft). Return JSON {"t":[{"i":0,"t":"final"}]}, keeping each integer index exactly once in i, never in the translated text t.' : '')
       : batch ? REVIEW_BATCH_PROMPT : REVIEW_PROMPT;
     return overrideOr(extra,'review',base);
   }

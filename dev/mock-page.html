@@ -359,13 +359,13 @@
             // Phase 5 (v2.5.1): the manga hand-off replaces the page in place.
             const img = q('#mangaimg');
             const src = img.currentSrc || img.src;
-            globalThis.GXT_SHIM_DISPATCH({ type: 'GXT_MANGA_BEGIN', src });
+            globalThis.GXT_SHIM_DISPATCH({ type: 'GXT_MANGA_BEGIN', src, requestId: 'manga-hand-off' });
             check('v2.5.1: the manga card opens while the local pipeline runs', () =>
               [...(shadow()?.querySelectorAll('.card-head') || [])]
                 .some((h) => h.textContent.includes('MangaTranslator')));
             const translated = 'data:image/png;base64,iVBORw0KGgo=';
             globalThis.GXT_SHIM_DISPATCH({
-              type: 'GXT_MANGA_RESULT', src,
+              type: 'GXT_MANGA_RESULT', src, requestId: 'manga-hand-off',
               res: { ok: true, dataUrl: translated, file: 'C:\\out\\page_fa\\page.png', failedPages: 0 },
             });
             check('v2.5.1: the translated page replaces the one being read', () =>

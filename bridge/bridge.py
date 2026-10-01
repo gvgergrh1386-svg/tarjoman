@@ -66,7 +66,7 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 from urllib.parse import parse_qs, urlparse
 
-VERSION = "3.7.7"
+VERSION = "3.8.2"
 DEFAULT_PORT = 8765
 HERE = Path(__file__).resolve().parent
 
@@ -97,8 +97,8 @@ JOBS_DIR = HERE / "jobs"
 
 # The two sibling projects this bridge exists to reach. Located rather than
 # hard-required: the bridge is useful with neither of them installed.
-MANGA_DIR = Path(os.environ.get("TARJOMAN_MANGA_DIR", str(HERE / "integrations" / "MangaTranslator"))).expanduser()
-ANIME_DIR = Path(os.environ.get("TARJOMAN_ANIME_DIR", str(HERE / "integrations" / "AnimeStudio"))).expanduser()
+MANGA_DIR = Path(os.environ.get("TARJOMAN_MANGA_DIR", 'D:\\برنامه\\MangaTranslator')).expanduser()
+ANIME_DIR = Path(os.environ.get("TARJOMAN_ANIME_DIR", 'D:\\VS\\anime')).expanduser()
 
 # A request from anywhere but an extension is refused outright. A browser
 # cannot be persuaded to forge this header, which makes it a real boundary

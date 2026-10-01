@@ -65,6 +65,9 @@
   const faNum = (n) => globalThis.GXT.i18n ? globalThis.GXT.i18n.number(n) : Number(n || 0).toLocaleString('fa-IR');
 
   let settings = null;
+  const outputKey = (value) => JSON.stringify([
+    globalThis.GXT.cacheNamespace(value || {}), value?.openaiFallbackModel || '',
+  ]);
 
   const send = async (message) => {
     try {
@@ -368,14 +371,18 @@
   // ------------------------------------------------- image result card (v1.8)
 
   let imageBody = null;
-  function onImageBegin() {
+  let imageRequestId = null;
+  function onImageBegin(requestId) {
+    if (typeof requestId !== 'string' || !requestId) return;
+    imageRequestId = requestId;
     imageBody = openCard(null, globalThis.GXT.i18n.t("content_composer_ensureImageButton_2"));
     globalThis.GXT.i18n.bind(imageBody, "textContent", () => (globalThis.GXT.i18n.t("content_composer_ensureImageButton_1")));
     imageBody.classList.add('dots');
   }
 
-  function onImageResult(res) {
-    if (!card || !imageBody || !imageBody.isConnected) return;
+  function onImageResult(requestId, res) {
+    if (!requestId || requestId !== imageRequestId || !card || !imageBody?.isConnected) return;
+    imageRequestId = null;
     imageBody.classList.remove('dots');
     if (res?.ok) {
       imageBody.textContent = res.t;
@@ -393,10 +400,25 @@
   // the page being read, not a file path in a toast. So the translated image
   // replaces the one on screen, and the original is one click away.
 
-  /** @type {Map<HTMLImageElement, {src: string, srcset: string, sources: Array<{el: HTMLSourceElement, srcset: string}>}>} */
-  const mangaOriginals = new Map();
+  // The page may discard images without telling us; a restore point must not
+  // keep a detached image (and its data URL) alive for the life of the tab.
+  const mangaOriginals = new WeakMap();
   let mangaBody = null;
-  let mangaTarget = null;
+  let mangaRequest = null;
+
+  function imageState(img) {
+    const picture = img.parentElement?.tagName === 'PICTURE' ? img.parentElement : null;
+    return JSON.stringify([
+      img.getAttribute('src'), img.getAttribute('srcset'), img.getAttribute('sizes'),
+      picture ? Array.from(picture.querySelectorAll('source')).map(source =>
+        [source.getAttribute('srcset'), source.getAttribute('media'), source.getAttribute('type')]) : [],
+    ]);
+  }
+
+  function restoreAttribute(el, name, value) {
+    if (value === null) el.removeAttribute(name);
+    else el.setAttribute(name, value);
+  }
 
   /** The <img> the context menu was invoked on.
    *  `currentSrc` first: with a srcset the element's `src` is not what is
@@ -424,16 +446,22 @@
    *  needed to put it back. A responsive image ignores `src` while `srcset`
    *  still points at the original, so every source is neutralised too. */
   function swapImage(img, dataUrl) {
-    if (!img) return false;
+    if (!img?.isConnected) return false;
+    const previous = mangaOriginals.get(img);
+    if (previous && previous.ownedState !== imageState(img)) {
+      mangaOriginals.delete(img);
+      delete img.dataset.gxtManga;
+      return false;
+    }
     if (!mangaOriginals.has(img)) {
       const picture = img.parentElement?.tagName === 'PICTURE' ? img.parentElement : null;
       mangaOriginals.set(img, {
-        src: img.getAttribute('src') || '',
-        srcset: img.getAttribute('srcset') || '',
+        src: img.getAttribute('src'),
+        srcset: img.getAttribute('srcset'),
         sources: picture
           ? Array.from(picture.querySelectorAll('source')).map((el) => ({
               el,
-              srcset: el.getAttribute('srcset') || '',
+              srcset: el.getAttribute('srcset'),
             }))
           : [],
       });
@@ -443,28 +471,37 @@
     img.removeAttribute('srcset');
     img.src = dataUrl;
     img.dataset.gxtManga = '1';
+    saved.ownedState = imageState(img);
     return true;
   }
 
   function restoreImage(img) {
     const saved = mangaOriginals.get(img);
-    if (!saved) return;
-    for (const source of saved.sources) source.el.setAttribute('srcset', source.srcset);
-    if (saved.srcset) img.setAttribute('srcset', saved.srcset);
-    if (saved.src) img.setAttribute('src', saved.src);
+    if (!saved) return false;
+    const owned = img.isConnected && saved.ownedState === imageState(img);
+    if (owned) {
+      for (const source of saved.sources) restoreAttribute(source.el, 'srcset', source.srcset);
+      restoreAttribute(img, 'srcset', saved.srcset);
+      restoreAttribute(img, 'src', saved.src);
+    }
     delete img.dataset.gxtManga;
     mangaOriginals.delete(img);
+    return owned;
   }
 
-  function onMangaBegin(src) {
-    mangaTarget = findImageBySrc(src);
-    mangaBody = openCard(rectOfElement(mangaTarget), globalThis.GXT.i18n.t("content_page_translate_onMangaBegin_2"));
+  function onMangaBegin(src, requestId) {
+    if (typeof requestId !== 'string' || !requestId) return;
+    const target = findImageBySrc(src);
+    mangaRequest = { requestId, src, target, state: target ? imageState(target) : null };
+    mangaBody = openCard(rectOfElement(target), globalThis.GXT.i18n.t("content_page_translate_onMangaBegin_2"));
     globalThis.GXT.i18n.bind(mangaBody, "textContent", () => (globalThis.GXT.i18n.t("content_page_translate_onMangaBegin_1")));
     mangaBody.classList.add('dots');
   }
 
-  function onMangaResult(src, res) {
-    if (!card || !mangaBody || !mangaBody.isConnected) return;
+  function onMangaResult(src, requestId, res) {
+    const request = mangaRequest;
+    if (!requestId || requestId !== request?.requestId || src !== request.src || !card || !mangaBody?.isConnected) return;
+    mangaRequest = null;
     mangaBody.classList.remove('dots');
     if (!res?.ok) {
       showFailureInCard(mangaBody, res);
@@ -474,7 +511,9 @@
     // The element may have been re-created while the pipeline ran (lazy
     // loaders swap images constantly), so look again rather than trust the
     // one found at the start.
-    const img = mangaTarget?.isConnected ? mangaTarget : findImageBySrc(src);
+    const img = request.target?.isConnected
+      ? (imageState(request.target) === request.state && (request.target.currentSrc || request.target.src) === src ? request.target : null)
+      : findImageBySrc(src);
     const swapped = res.dataUrl ? swapImage(img, res.dataUrl) : false;
 
     const line = document.createElement('div');
@@ -507,7 +546,14 @@
     const row = document.createElement('div');
     row.className = 'gxt-linkrow';
     if (swapped) {
+      let ownedState = imageState(img);
       const toggle = button(globalThis.GXT.i18n.t("content_manga_actions_2"), () => {
+        if (!img.isConnected || imageState(img) !== ownedState) {
+          mangaOriginals.delete(img);
+          delete img.dataset.gxtManga;
+          toggle.disabled = true;
+          return;
+        }
         if (mangaOriginals.has(img)) {
           restoreImage(img);
           globalThis.GXT.i18n.bind(toggle, "textContent", () => (globalThis.GXT.i18n.t("content_page_translate_toggle_1")));
@@ -515,6 +561,7 @@
           swapImage(img, res.dataUrl);
           globalThis.GXT.i18n.bind(toggle, "textContent", () => (globalThis.GXT.i18n.t("content_manga_actions_2")));
         }
+        ownedState = imageState(img);
       });
       row.appendChild(toggle);
     }
@@ -569,6 +616,53 @@
   let pillActions = null;
   /** Options snapshot taken when a page run starts. */
   let run = null;
+  const pageRequests = new Set();
+
+  function requestPageTexts(texts) {
+    return new Promise(resolve => {
+      let port, settled = false;
+      const finish = value => {
+        if (settled) return;
+        settled = true;
+        pageRequests.delete(cancel);
+        try { port?.disconnect(); } catch { /* context already gone */ }
+        resolve(value);
+      };
+      const cancel = () => finish({ok:false, code:'CANCELLED'});
+      pageRequests.add(cancel);
+      try {
+        port = chrome.runtime.connect({name:'gxt-page-translation'});
+        port.onMessage.addListener(finish);
+        port.onDisconnect.addListener(() => finish({ok:false, code:'CANCELLED'}));
+        port.postMessage({texts, kind:'page'});
+      } catch { finish({ok:false, code:'ERR'}); }
+    });
+  }
+
+  function cancelPageRequests() {
+    for (const cancel of [...pageRequests]) cancel();
+  }
+
+  function stopPage() {
+    cancelRequested = true;
+    pageGeneration += 1;
+    cancelPageRequests();
+    if (dynamicOn) teardownDynamic();
+    pageState = translatedSomething() ? 'done' : 'idle';
+    pillShow(globalThis.GXT.i18n.t('content_page_translate_runPageInner_4'), [
+      button(globalThis.GXT.i18n.t('content_page_translate_runPageInner_3'), reRunPage, 'accent'),
+      button(globalThis.GXT.i18n.t('content_page_translate_dynamicPill_1'), restorePage),
+      button('✕', pillHide),
+    ]);
+  }
+
+  window.addEventListener('pagehide', () => {
+    cancelRequested = true;
+    pageGeneration += 1;
+    cancelPageRequests();
+    if (dynamicOn) teardownDynamic();
+    pageState = translatedSomething() ? 'done' : 'idle';
+  });
 
   /** Has this run actually changed anything on the page? Drives whether the
    *  menu item / shortcut means "translate" or "restore". */
@@ -1168,8 +1262,8 @@
         if (generation !== pageGeneration || cancelRequested || aborted || next >= chunks.length) return;
         const chunkTexts = chunks[next];
         next += 1;
-        const res = await send({ type: 'TRANSLATE_TEXTS', texts: chunkTexts, kind: 'page' });
-        if (generation !== pageGeneration) return;
+        const res = await requestPageTexts(chunkTexts);
+        if (generation !== pageGeneration || cancelRequested) return;
         if (!res?.ok) {
           failure = res || { code: 'ERR' };
           aborted = true;
@@ -1321,7 +1415,7 @@
     uniques.sort((a, b) => score(a) - score(b));
 
     let doneCount = 0;
-    const cancelBtn = () => [button(globalThis.GXT.i18n.t("content_page_translate_cancelBtn_1"), () => (cancelRequested = true))];
+    const cancelBtn = () => [button(globalThis.GXT.i18n.t("content_page_translate_cancelBtn_1"), stopPage)];
     pillShow(globalThis.GXT.i18n.t("content_page_translate_runPageInner_6", {v0:(faNum(0)), v1:(faNum(uniques.length))}), cancelBtn());
 
     const { map, failure } = await translateUnique(uniques, (n) => {
@@ -1416,6 +1510,7 @@
   /** Shared teardown for the observers/timers (stop + restore paths). */
   function teardownDynamic() {
     pageGeneration += 1;
+    cancelPageRequests();
     dynamicOn = false;
     dynInFlight = false;
     for (const unit of dynClaims) seenUnits.delete(unit);
@@ -1578,6 +1673,7 @@
 
   function restorePage() {
     pageGeneration += 1;
+    cancelPageRequests();
     cancelRequested = true;
     if (dynamicOn) teardownDynamic();
     for (const [node, original] of restoreMap) {
@@ -1716,7 +1812,7 @@
   function togglePage() {
     if (!IS_TOP && !settings?.pageFrames) return; // frames only when opted in
     if (pageState === 'running') {
-      cancelRequested = true;
+      stopPage();
       return;
     }
     if (dynamicOn) {
@@ -1739,17 +1835,17 @@
     else if (message?.type === 'GXT_SUMMARY') {
       if (IS_TOP) void summarize(message.fallbackText);
     } else if (message?.type === 'GXT_IMAGE_BEGIN') {
-      if (IS_TOP) onImageBegin();
+      if (IS_TOP) onImageBegin(message.requestId);
     } else if (message?.type === 'GXT_IMAGE_RESULT') {
-      if (IS_TOP) onImageResult(message.res);
+      if (IS_TOP) onImageResult(message.requestId, message.res);
     } else if (message?.type === 'GXT_READ') {
       if (IS_TOP) readSelection(message.fallbackText, !!message.toggle);
     } else if (message?.type === 'GXT_READ_PAGE') {
       if (IS_TOP) void readAloud(extractMainText(), { get label() { return globalThis.GXT.i18n.t("content_page_translate_message_1"); } });
     } else if (message?.type === 'GXT_MANGA_BEGIN') {
-      if (IS_TOP) onMangaBegin(message.src);
+      if (IS_TOP) onMangaBegin(message.src, message.requestId);
     } else if (message?.type === 'GXT_MANGA_RESULT') {
-      if (IS_TOP) onMangaResult(message.src, message.res);
+      if (IS_TOP) onMangaResult(message.src, message.requestId, message.res);
     } else if (message?.type === 'GXT_TOAST') {
       if (IS_TOP) toast(message.text);
     }
@@ -1819,23 +1915,25 @@
 
       settings = forThisSite(await globalThis.GXT?.getSettings?.());
       UI().configure(settings); // the shared layer needs the theme + opacity choice
-      globalThis.GXT?.onStorageChanged?.(({ settings: next }) => {
-        if (!next) return;
+      globalThis.GXT?.onStorageChanged?.(({ settings: next, apiKeyChanged }) => {
+        if (!next && !apiKeyChanged) return;
         const wasEnabled = settings?.enabled;
         const previous = settings;
-        settings = forThisSite(next);
-        if (previous?.targetLang !== settings.targetLang) {
+        if (next) settings = forThisSite(next);
+        const outputChanged = outputKey(previous) !== outputKey(settings) || apiKeyChanged;
+        if (outputChanged) {
           restorePage();
           doneTexts.clear();
         }
-        if (['targetLang','imageTargetLang','summaryTargetLang'].some(key=>previous?.[key] !== settings[key])) closeCard();
+        if (outputChanged || (wasEnabled && !settings.enabled) ||
+            ['imageTargetLang','summaryTargetLang','mangaTargetLang'].some(key=>previous?.[key] !== settings[key])) closeCard();
         UI().configure(settings); // live theme/accent/opacity change re-skins open UI
         // Master switch OFF: stop spending quota at once. Text already on the
         // page is left as-is (translating it was an explicit user action) —
         // «بازگرداندن» is one click away in the pill.
         if (wasEnabled && !settings.enabled) {
           if (dynamicOn) stopDynamic();
-          if (pageState === 'running') cancelRequested = true;
+          if (pageState === 'running') stopPage();
           hideSelChip();
         }
       });

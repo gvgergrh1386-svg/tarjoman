@@ -43,6 +43,8 @@
     provider: 'gemini',
     /** Google's newest free-tier workhorse (released 2026-07-21). */
     model: 'gemini-3.6-flash',
+    /** Empty inherits the service default; explicit thresholds never retry a block. */
+    geminiSafety: '',
     openaiBaseUrl: '',
     openaiModel: '',
     /** Bundled font id, 'x-default' (X's own font), or '_custom' + customFont. */
@@ -173,13 +175,15 @@
     /** Theme preset: auto | graphite | midnight | daylight | paper. */
     uiTheme: 'auto',
     /** Accent color id: sky | violet | emerald | rose | amber | cyan. */
-    uiAccent: 'sky',
+    uiAccent: 'emerald',
     /** Spacing scale: comfortable | compact. */
     uiDensity: 'comfortable',
     /** Surface treatment: glass | solid. */
-    uiSurface: 'glass',
-    /** v3.7.5 composition presets + independent semantic-token overrides.
-     * Null inherits the legacy geometry/surface; old settings retain their look. */
+    uiSurface: 'solid',
+    /** Floating controls on YouTube and other players: glass | solid | inherit. */
+    uiVideoStyle: 'glass',
+    /** Composition presets + independent semantic-token overrides.
+     * Null inherits the current system geometry; explicit user values survive. */
     uiPreset: 'custom',
     uiRadius: null,
     uiShadow: null,
@@ -193,7 +197,7 @@
     uiWeight: 400,
     uiMotion: 'auto',
     uiMotionSpeed: 1,
-    uiButtonShape: 'pill',
+    uiButtonShape: 'rounded',
     uiSwitchShape: 'pill',
     uiInputStyle: 'filled',
     uiPanelStyle: 'bordered',
@@ -272,8 +276,8 @@
     ttsVoiceBing: 'fa-IR-DilaraNeural',
     ttsVoiceGemini: 'Kore',
     ttsVoiceOpenai: 'alloy',
-    /** Gemini speech model. Preview models get renamed often, so this is a
-     *  plain editable value with a fallback chain behind it. */
+    /** Gemini speech model. The explicit choice is preserved even if a
+     *  preview model is renamed or becomes unavailable. */
     ttsModelGemini: 'gemini-3.1-flash-tts-preview',
     /** OpenAI-compatible speech model id — free text, because vendors rename
      *  and deprecate these constantly (gpt-4o-mini-tts was deprecated in
@@ -495,10 +499,8 @@
   ]);
 
   /**
-   * Tried in order when the configured Gemini model is unavailable (404) or
-   * unresponsive (timeout). The newest Flash sits first; flash-lite is the
-   * fast, high-quota recovery target when a heavier model stalls. Older but
-   * broadly-available models stay in the chain as last resorts.
+   * Legacy model-list export retained for compatibility. Requests never walk
+   * this list automatically; the user selects another model explicitly.
    */
   const FALLBACK_MODELS = Object.freeze([
     'gemini-3.6-flash',
@@ -593,62 +595,10 @@
     return { text, speech };
   }
 
-  /**
-   * Known Google free-tier daily request limits (RPD), per model, so the
-   * usage bar can be drawn automatically with no user input. These are
-   * published defaults that Google adjusts over time; whenever the API
-   * returns a real "daily quota exceeded" error we parse the true number
-   * out of it and that learned value takes precedence (see service-worker).
-   */
-  const MODEL_DAILY_LIMITS = Object.freeze({
-    'gemini-3.6-flash': 1500,
-    'gemini-3.5-flash-lite': 1500,
-    'gemini-3.5-flash': 1500,
-    'gemini-3-flash': 1500,
-    'gemini-flash-latest': 1500,
-    'gemini-3.1-flash-lite': 1500,
-    'gemini-2.5-flash': 250,
-    'gemini-2.5-flash-lite': 1000,
-    'gemini-2.5-pro': 50,
-    'gemini-3.1-pro': 100,
-  });
-
-  /** Best-effort free-tier RPD for a model id (0 = unknown). PER PROJECT — see
-   *  quotaSummary, which is where that distinction actually bites. */
-  function defaultDailyLimit(model) {
-    if (!model) return 0;
-    if (MODEL_DAILY_LIMITS[model]) return MODEL_DAILY_LIMITS[model];
-    if (/pro/i.test(model)) return 100;
-    if (/lite/i.test(model)) return 1000;
-    if (/flash/i.test(model)) return 1500;
-    return 0;
-  }
-
-  // ------------------------------------------------------- quota (v2.5.5)
-  //
-  // WHAT WENT WRONG, because the shape of the fix follows directly from it:
-  //
-  // The usage bar divided a FLEET-WIDE numerator by a SINGLE-KEY denominator.
-  // `dayApiCalls` counted every Gemini request made today across every key,
-  // while the denominator was `defaultDailyLimit(model)` — the cap Google
-  // applies to ONE project. With a dozen keys that bar is arithmetically
-  // guaranteed to read "over quota" long before anything is exhausted: 1800
-  // calls against a 1500 ceiling, painted red, while translation carries on
-  // perfectly because eleven keys still have room.
-  //
-  // So the unit of accounting is now THE KEY, not the profile:
-  //
-  //  * usage is recorded per key, at the moment that key serves a request;
-  //  * a key's cap is MEASURED where possible — when Google answers a daily
-  //    quota 429 it is telling us exactly what that key's ceiling was, and
-  //    that beats any table shipped in this file;
-  //  * "exhausted" is ground truth, never a guess: it means Google refused
-  //    that key for the day and the extension parked it until the reset.
-  //
-  // Which leaves one honest unknown: keys belonging to the SAME Google
-  // project share a single quota, and nothing the client can see reveals the
-  // grouping. So the fleet ceiling is an upper bound, reported as such, and
-  // narrowed by measurement as keys actually hit their limits.
+  // No public table can establish a user's project/tier quota. Only a
+  // provider-reported request cap or an explicit user estimate is displayed.
+  const MODEL_DAILY_LIMITS = Object.freeze({});
+  function defaultDailyLimit() { return 0; }
 
   /** Per-key state after a day of use. `limit` is 0 until measured. */
   const emptyKeyUsage = () => ({ calls: 0, exhausted: false, limit: 0, lastAt: 0 });
@@ -662,8 +612,8 @@
    * @param {{keys?: string[], usage?: object, model?: string, override?: number}} input
    *   `keys`     the configured API keys, in order
    *   `usage`    `{ [key]: {calls, exhausted, limit} }` recorded today
-   *   `model`    the active model id, for the published per-project cap
-   *   `override` the user's manual daily cap, PER KEY, 0 = automatic
+   *   `model`    the active model id for local usage and provider reports
+   *   `override` the user's manual estimate for each key's project, 0 = unknown
    * @returns {{
    *   perKey: Array<{key, calls, limit, exhausted, pct, measured}>,
    *   used: number, limit: number, pct: number,
@@ -679,9 +629,8 @@
     const perKey = keys.map((key) => {
       const record = { ...emptyKeyUsage(), ...(usage[key] || {}) };
       const calls = Math.max(0, Number(record.calls) || 0);
-      // A cap the API itself taught us about THIS key wins over the table:
-      // a paid project, a different tier or a model we guessed wrong about
-      // are all invisible from here and all reported truthfully by a 429.
+      // Only a provider-reported request cap or the user's estimate is known.
+      // getKeyUsage discards old releases' inferred values before this step.
       const measured = Number(record.limit) > 0 ? Number(record.limit) : 0;
       const limit = manual || measured || published;
       return {
@@ -697,7 +646,7 @@
     });
 
     const used = perKey.reduce((sum, entry) => sum + entry.calls, 0);
-    const limit = perKey.reduce((sum, entry) => sum + entry.limit, 0);
+    const limit = perKey.length === 1 ? perKey[0].limit : 0;
     const exhaustedCount = perKey.filter((entry) => entry.exhausted).length;
     const measuredKeys = perKey.filter((entry) => entry.measured).length;
     const keyCount = keys.length;
@@ -727,7 +676,8 @@
       // Two or more keys MIGHT sit in one Google project and share one quota,
       // which no client-side signal can reveal. Said out loud rather than
       // quietly pretending the ceiling is exact.
-      sharedProjectRisk: keyCount > 1 && measuredKeys < keyCount,
+      sharedProjectRisk: keyCount > 1,
+      model, scope: 'project', usageSource: 'local',
     };
   }
 
@@ -796,10 +746,8 @@
   ]);
 
   /**
-   * Fallback chain for speech ONLY. The text chain must never be used here:
-   * a text model rejects `responseModalities: ["AUDIO"]` outright, so falling
-   * into it would turn a recoverable "model renamed" 404 into a hard error.
-   * Preview model ids are renamed often — this is the safety net for that.
+   * Legacy speech-model list. Retained for callers displaying choices;
+   * synthesis never switches away from the user's selected model.
    */
   const TTS_FALLBACK_MODELS = Object.freeze([
     'gemini-3.1-flash-tts-preview',
@@ -906,9 +854,15 @@
     return result;
   }
 
+  let memoryCorrections = '';
   async function getSettings() {
-    const raw = await storage().get(SETTINGS_KEY);
+    const raw = await storage().get([SETTINGS_KEY,'memoryCorrections']);
     const result = normalizeSettings(raw[SETTINGS_KEY]);
+    // Older installations can already contain pinned corrections. Derive
+    // their identity before the first edit, so removing a legacy correction
+    // cannot reuse a translation produced with that correction.
+    memoryCorrections=typeof raw.memoryCorrections==='string' ? raw.memoryCorrections : await memoryCorrectionHash(await getMemory());
+    result.memoryCorrections=memoryCorrections;
     globalThis.GXT.i18n?.configure(result);
     return result;
   }
@@ -946,6 +900,7 @@
   function isSettingValue(name, value) {
     if (!Object.hasOwn(DEFAULTS, name)) return false;
     const choices = {
+      geminiSafety:['','BLOCK_LOW_AND_ABOVE','BLOCK_MEDIUM_AND_ABOVE','BLOCK_ONLY_HIGH','BLOCK_NONE','OFF'],
       translationRegion:['iran','source'],
       uiLanguage:['auto','fa','en'], regionLocale:['auto','fa-IR','en-US','en-GB'],
       calendar:['auto','persian','gregory'], numberingSystem:['auto','arabext','latn'],
@@ -971,6 +926,9 @@
   }
 
   function setSettings(patch) {
+    // This identity is derived from memory, not a writable preference. A
+    // caller may safely round-trip a complete getSettings() snapshot.
+    if(patch&&Object.hasOwn(patch,'memoryCorrections')){patch={...patch};delete patch.memoryCorrections;}
     if (useWorkerMutations()) return requestSettingsMutation({ type: 'SETTINGS_PATCH', patch });
     return setSettings0(() => patch);
   }
@@ -990,7 +948,8 @@
       .then(async () => {
         const current = await getSettings();
         const patch = (await compute(current)) || {};
-        await storage().set({ [SETTINGS_KEY]: replace ? patch : { ...current, ...patch } });
+        const next=replace ? {...patch} : {...current,...patch};delete next.memoryCorrections;
+        await storage().set({ [SETTINGS_KEY]: next });
       });
       // One failed write (quota, closing context) must not wedge the queue for
       // every write after it.
@@ -1031,6 +990,14 @@
   let memoryQueue = Promise.resolve();
   let memoryGeneration = 0;
 
+  async function memoryCorrectionHash(memory) {
+    const pinned=Object.entries(memory.terms).filter(([,entry])=>entry.pinned).sort(([a],[b])=>a<b?-1:a>b?1:0)
+      .map(([key,entry])=>[key,entry.s,entry.t]);
+    if(!pinned.length)return '';
+    const hash=await crypto.subtle.digest('SHA-256',new TextEncoder().encode(JSON.stringify(pinned)));
+    return [...new Uint8Array(hash)].map(n=>n.toString(16).padStart(2,'0')).join('');
+  }
+
   function updateMemory(compute, { generation } = {}) {
     const result = memoryQueue
       .then(async () => {
@@ -1038,7 +1005,10 @@
         if (generation !== undefined && generation !== memoryGeneration) return current;
         const next = (await compute(current)) || current;
         next.count = Object.keys(next.terms).length;
-        await storage().set({ [MEMORY_KEY]: next });
+        // Manual corrections change output. Automatically learned terms must
+        // never invalidate already translated pinned posts on every new batch.
+        const policy=await memoryCorrectionHash(next);
+        await storage().set({ [MEMORY_KEY]: next, memoryCorrections:policy });
         return next;
       });
     // Repair the queue without converting a failed user operation into success.
@@ -1130,10 +1100,33 @@
         ? settings.modelTuning
         : {};
     const entry = (modelId && map[modelId]) || {};
-    const level = THINKING_LEVELS.includes(entry.thinkingLevel) ? entry.thinkingLevel : null;
+    const levels = settings?.provider === 'openai' ? THINKING_LEVELS : geminiThinkingCapabilities(modelId).levels;
+    const level = levels.includes(entry.thinkingLevel) ? entry.thinkingLevel : null;
     const t = entry.temperature;
     const temperature = typeof t === 'number' && Number.isFinite(t) && t >= 0 && t <= 2 ? t : null;
     return { thinkingLevel: level, temperature };
+  }
+
+  // generateContent capabilities, verified 2026-09-23 against Google's model
+  // and thinking documentation. Unknown models use the service default until
+  // their capabilities are reviewed; a name containing "flash" is not proof.
+  const GEMINI_THINKING = Object.freeze({
+    'gemini-3.8-flash': ['low','medium','high'],
+    'gemini-3.7-flash': ['low','medium','high'],
+    'gemini-3.6-flash': ['minimal','low','medium','high'],
+    'gemini-3.5-flash': ['minimal','low','medium','high'],
+    'gemini-3.5-flash-lite': ['minimal','low','medium','high'],
+    'gemini-3.1-flash-lite': ['minimal','low','medium','high'],
+    'gemini-3.1-pro': ['low','medium','high'],
+    'gemini-3-flash': ['minimal','low','medium','high'],
+    'gemini-3-pro': ['low','high'],
+  });
+  function geminiThinkingCapabilities(model) {
+    const id = String(model || '').replace(/^models\//, '').toLowerCase();
+    const base = id.replace(/-(?:preview|latest)(?:-\d[\d-]*)?$/, '').replace(/-\d{3}$/, '');
+    const levels = GEMINI_THINKING[base];
+    return {known:!!levels || /^gemini-2\.5-(?:pro|flash|flash-lite)$/.test(base),
+      levels:levels ? [...levels] : [], mode:levels ? 'level' : /^gemini-2\.5-/.test(base) ? 'budget' : 'default'};
   }
 
   /**
@@ -1161,6 +1154,9 @@
       settings.register && settings.register !== 'auto' ? `r${settings.register}` : '',
       settings.qualityMode ? 'q2' : '',
     ];
+    if(settings.provider==='gemini' && settings.geminiSafety)parts.push(`safety:${settings.geminiSafety}`);
+    if(settings.memoryEnabled===false)parts.push('memory:off');
+    else if(settings.memoryCorrections)parts.push(`corrections:${settings.memoryCorrections}`);
     if (!parts.some(Boolean)) return '';
     const s = parts.join('\u0001');
     let h = 5381;
@@ -1331,6 +1327,7 @@
     // setting this build has never heard of is simply not mentioned.
     const changed = {};
     for (const [name, value] of Object.entries(settings)) {
+      if (name === 'memoryCorrections') continue; // Derived from memory, never imported as a preference.
       if (name === 'localeVersion') { changed[name] = 1; continue; }
       if (name === 'bridgeToken' && !includeKeys) continue;
       if (JSON.stringify(value) !== JSON.stringify(DEFAULTS[name])) changed[name] = value;
@@ -1441,10 +1438,15 @@
     chrome.storage.onChanged.addListener((changes, area) => {
       if (area !== 'local') return;
       const settingsChange = changes[SETTINGS_KEY];
+      if(changes.memoryCorrections)memoryCorrections=changes.memoryCorrections.newValue || '';
+      if(changes.memoryCorrections&&!settingsChange) {
+        void getSettings().then(settings=>callback({settings,apiKeyChanged:false})).catch(()=>{});
+        return;
+      }
       if(settingsChange) globalThis.GXT.i18n?.configure(normalizeSettings(settingsChange.newValue));
       callback({
         settings: settingsChange
-          ? normalizeSettings(settingsChange.newValue)
+          ? {...normalizeSettings(settingsChange.newValue),memoryCorrections}
           : undefined,
         apiKeyChanged:
           API_KEYS_KEY in changes ||
@@ -1510,6 +1512,7 @@
     THINKING_LEVELS,
     activeModelId,
     resolveModelTuning,
+    geminiThinkingCapabilities,
     pacificDayAndReset,
     onStorageChanged,
     // ─────────────────────────────────────────────────────────── v3.0.0

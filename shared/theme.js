@@ -1,5 +1,5 @@
 /**
- * Design-token module — v3.2.5 «نما».
+ * Tarjoman 3.8.2 — shared visual language for every extension surface.
  *
  * The single source of truth for every pixel the extension draws: the popup,
  * the translation box on X, the page/selection cards, the YouTube panel and
@@ -150,22 +150,22 @@
       get label() { return globalThis.GXT.i18n.t("shared_theme_THEMES_10"); },
       get note() { return globalThis.GXT.i18n.t("shared_theme_THEMES_9"); },
       scheme: 'light dark',
-      swatch: ['#0e1014', '#ffffff'],
+      swatch: ['#101716', '#ffffff'],
     },
     {
       id: 'graphite',
       get label() { return globalThis.GXT.i18n.t("shared_theme_THEMES_8"); },
       get note() { return globalThis.GXT.i18n.t("shared_theme_THEMES_7"); },
       scheme: 'dark',
-      swatch: ['#0e1014', '#171a21'],
+      swatch: ['#101716', '#1a2321'],
       vars: {
-        bg: '#0e1014',
-        'bg-elev': '#171a21',
-        'bg-sunken': '#0a0c10',
-        line: '#232936',
-        'line-strong': '#3a4356',
+        bg: '#101716',
+        'bg-elev': '#1a2321',
+        'bg-sunken': '#0c1211',
+        line: '#2b3935',
+        'line-strong': '#53665e',
       },
-      tint: '#7d8798',
+      tint: '#81968e',
       toward: '#ffffff',
       shadowRgb: '0,0,0',
       shadowAlpha: 0.5,
@@ -193,15 +193,15 @@
       get label() { return globalThis.GXT.i18n.t("shared_theme_THEMES_4"); },
       get note() { return globalThis.GXT.i18n.t("shared_theme_THEMES_3"); },
       scheme: 'light',
-      swatch: ['#ffffff', '#f2f5f8'],
+      swatch: ['#f3f5f3', '#ffffff'],
       vars: {
-        bg: '#ffffff',
-        'bg-elev': '#f4f7fa',
-        'bg-sunken': '#eef2f7',
-        line: '#dbe2ea',
-        'line-strong': '#b9c4d0',
+        bg: '#f3f5f3',
+        'bg-elev': '#ffffff',
+        'bg-sunken': '#eaf0ed',
+        line: '#d3ddd7',
+        'line-strong': '#8b9f93',
       },
-      tint: '#5b6b7a',
+      tint: '#56695e',
       toward: '#000000',
       shadowRgb: '15,20,25',
       shadowAlpha: 0.14,
@@ -231,7 +231,7 @@
   const ACCENTS = Object.freeze([
     { id: 'sky', get label() { return globalThis.GXT.i18n.t("shared_theme_ACCENTS_6"); }, color: '#1d9bf0' },
     { id: 'violet', get label() { return globalThis.GXT.i18n.t("shared_theme_ACCENTS_5"); }, color: '#7c5cf5' },
-    { id: 'emerald', get label() { return globalThis.GXT.i18n.t("shared_theme_ACCENTS_4"); }, color: '#0e9f6e' },
+    { id: 'emerald', get label() { return globalThis.GXT.i18n.t("shared_theme_ACCENTS_4"); }, color: '#0f766e' },
     { id: 'rose', get label() { return globalThis.GXT.i18n.t("shared_theme_ACCENTS_3"); }, color: '#e11d63' },
     { id: 'amber', get label() { return globalThis.GXT.i18n.t("shared_theme_ACCENTS_2"); }, color: '#d97706' },
     { id: 'cyan', get label() { return globalThis.GXT.i18n.t("shared_theme_ACCENTS_1"); }, color: '#0891b2' },
@@ -321,10 +321,10 @@
   // Legacy theme IDs remain meaningful; selecting a preset writes concrete
   // settings, so individual controls are editable without a hidden override.
   const APPEARANCE_DEFAULTS = Object.freeze({
-    uiTheme: 'auto', uiAccent: 'sky', uiDensity: 'comfortable', uiSurface: 'glass',
+    uiTheme: 'auto', uiAccent: 'emerald', uiDensity: 'comfortable', uiSurface: 'solid', uiVideoStyle: 'glass',
     uiPreset: 'custom', uiRadius: null, uiShadow: null, uiOpacity: null, uiBlur: null,
     uiScale: 1, uiTextScale: 1, uiTitleScale: 1, uiSpacingScale: 1, uiControlScale: 1,
-    uiWeight: 400, uiMotion: 'auto', uiMotionSpeed: 1, uiButtonShape: 'pill',
+    uiWeight: 400, uiMotion: 'auto', uiMotionSpeed: 1, uiButtonShape: 'rounded',
     uiSwitchShape: 'pill', uiInputStyle: 'filled', uiPanelStyle: 'bordered', uiScrollbar: 'thin',
     uiCustomAccent: '', uiSecondaryColor: '', uiSuccessColor: '', uiWarningColor: '',
     uiErrorColor: '', uiBackground: '', uiCardColor: '', showHints: false, cardOpaque: false,
@@ -346,6 +346,9 @@
     { id: 'color', get label() { return globalThis.GXT.i18n.t("shared_theme_PRESETS_2"); }, get note() { return globalThis.GXT.i18n.t("shared_theme_PRESETS_1"); }, settings: {uiTheme:'graphite',uiAccent:'violet',uiSecondaryColor:'#e11d63',uiRadius:16,uiShadow:1.1,uiTitleScale:1.2,uiPanelStyle:'accent',uiSpacingScale:1.08} },
   ].map(p => Object.freeze({...p, settings:Object.freeze(p.settings)})));
   const APPEARANCE_KEYS = Object.freeze([...Object.keys(APPEARANCE_DEFAULTS), 'videoSafeUi']);
+  const VIDEO_STYLES = Object.freeze(['glass', 'solid', 'inherit'].map(id => Object.freeze({
+    id, get label() { return globalThis.GXT.i18n.t('ui.video.style.' + id); },
+  })));
   const resetSettings = () => ({...APPEARANCE_DEFAULTS});
   const presetSettings = id => ({...APPEARANCE_DEFAULTS, ...(PRESETS.find(p => p.id===id)?.settings || {}), uiPreset:PRESETS.some(p=>p.id===id)?id:'custom'});
   const settingsKey = settings => JSON.stringify(APPEARANCE_KEYS.map(k => settings?.[k] ?? APPEARANCE_DEFAULTS[k] ?? (k==='videoSafeUi' ? true : null)));
@@ -379,7 +382,8 @@
    * dev/uicheck.html re-measures this whole matrix on every run, so the claim
    * cannot rot into a comment.
    */
-  const CAP_ALPHA = 0.86;
+  // 3.8.2 graphite: 88% retains >=11.14:1 over both white and black frames.
+  const CAP_ALPHA = 0.88;
 
   /** Status hues, before contrast is enforced against the live background. */
   const STATUS = Object.freeze({
@@ -418,13 +422,13 @@
       if (background) { theme.vars.bg = safe(background); theme.vars['bg-sunken'] = theme.vars.bg; }
       if (card) theme.vars['bg-elev'] = safe(card);
     }
-    const chosenAccent = byId(ACCENTS, settings?.uiAccent, 0);
+    const chosenAccent = byId(ACCENTS, settings?.uiAccent, 2);
     const customAccent = color(settings?.uiCustomAccent);
     return {
       theme,
       accent: customAccent ? { ...chosenAccent, color:customAccent } : chosenAccent,
       density: byId(DENSITIES, settings?.uiDensity, 1),
-      surface: byId(SURFACES, settings?.uiSurface, 0),
+      surface: byId(SURFACES, settings?.uiSurface, 1),
       dark,
     };
   }
@@ -639,6 +643,12 @@
    *   DEEPEST background, so a busy page can never bleed through a translation.
    */
   function tokens(settings, opts = {}) {
+    // Video menus share the neutral dock surface. "Follow app theme" keeps
+    // the reading palette; explicit player styles own their transparency.
+    if (opts.videoPanel && settings?.uiVideoStyle !== 'inherit') {
+      settings = {...settings, uiTheme:'graphite', uiSurface:settings?.uiVideoStyle==='solid'?'solid':'glass',
+        uiOpacity:84, cardOpaque:false, uiBackground:'', uiCardColor:'', uiBlur:number(settings?.uiBlur,16,0,28)};
+    }
     const { theme, accent, density, surface, dark } = resolve(settings);
     const opaque = !!(opts.inPage && settings?.cardOpaque);
     /**
@@ -728,6 +738,26 @@
       put('card', 'color-mix(in srgb, var(--gxt-bg-elev) var(--gxt-card-alpha), transparent)');
     }
 
+    // Player docks sit beside native controls on unpredictable footage. Their
+    // neutral glass is independent of reading-card opacity. White glyphs stay
+    // above AA over white footage, including the hover/pressed overlays.
+    // Blur is explicitly optional and keeps the existing video safety choice.
+    const videoStyle = byId(VIDEO_STYLES, settings?.uiVideoStyle, 0).id;
+    const videoGlass = videoStyle === 'glass';
+    const videoInherit = videoStyle === 'inherit';
+    put('video-bg', videoInherit ? 'var(--gxt-card)' : videoGlass ? 'rgba(18, 20, 22, .66)' : '#121416');
+    put('video-solid-bg', videoInherit ? 'var(--gxt-bg-elev)' : '#121416');
+    put('video-fg', videoInherit ? 'var(--gxt-fg)' : '#ffffff');
+    put('video-line', videoInherit ? 'var(--gxt-line-strong)' : 'rgba(255, 255, 255, .24)');
+    put('video-hover', videoInherit ? 'var(--gxt-accent-soft)' : 'rgba(255, 255, 255, .08)');
+    put('video-active', videoInherit ? 'var(--gxt-accent-solid)' : 'rgba(255, 255, 255, .10)');
+    put('video-active-fg', videoInherit ? 'var(--gxt-accent-fg)' : '#ffffff');
+    put('video-radius', videoGlass ? '999px' : 'var(--gxt-radius-md)');
+    put('video-edge', videoGlass ? 'inset 0 1px 0 rgba(255, 255, 255, .14)' : 'none');
+    const videoBlur = number(settings?.uiBlur,16,0,28);
+    put('video-backdrop', videoGlass && !videoSafe && videoBlur > 0 ? `blur(${px(videoBlur)}) saturate(1.15)` : 'none');
+    put('video-focus', videoInherit ? 'var(--gxt-focus-ring)' : '0 0 0 2px #121416, 0 0 0 4px #ffffff');
+
     // ── the subtitle scrim ────────────────────────────────────────────
     //
     // Its own alpha, and therefore its own ink. Reusing `--gxt-fg` would derive
@@ -794,17 +824,18 @@
     put('err-soft', `color-mix(in srgb, ${p.errEdge} ${softPct}%, transparent)`);
 
     // ── shape ─────────────────────────────────────────────────────────
-    const radius = number(settings?.uiRadius,13,0,26);
-    put('radius-sm', px(radius*9/13));
+    const radius = number(settings?.uiRadius,10,0,26);
+    put('radius-sm', px(radius*0.6));
     put('radius-md', px(radius));
-    put('radius-lg', px(radius*18/13));
-    put('radius-xl', px(radius*24/13));
-    put('radius-pill', settings?.uiButtonShape==='square'?'2px':settings?.uiButtonShape==='rounded'?'var(--gxt-radius-sm)':'9999px');
+    put('radius-lg', px(radius*1.2));
+    put('radius-xl', px(radius*1.6));
+    const buttonShape=settings?.uiButtonShape || APPEARANCE_DEFAULTS.uiButtonShape;
+    put('radius-pill', buttonShape==='square'?'2px':buttonShape==='rounded'?'var(--gxt-radius-sm)':'9999px');
     put('switch-radius',settings?.uiSwitchShape==='square'?'4px':'9999px');
     put('switch-knob-radius',settings?.uiSwitchShape==='square'?'2px':'50%');
 
     // ── elevation (one shadow colour per theme, three heights) ─────────
-    const strength=number(settings?.uiShadow,1,0,1.5);
+    const strength=number(settings?.uiShadow,0.55,0,1.5);
     const sh = (y, blur, alpha) => strength===0?'none':
       `0 ${y}px ${blur}px rgba(${theme.shadowRgb}, ${Math.min(1,theme.shadowAlpha * alpha * strength).toFixed(3)})`;
     put('elev-1', sh(2, 8, 0.5));
@@ -826,9 +857,9 @@
     try {systemReduce=!!globalThis.matchMedia?.('(prefers-reduced-motion: reduce)')?.matches;} catch {}
     const reduced=settings?.uiMotion==='reduce'||systemReduce;
     const speed=number(settings?.uiMotionSpeed,1,0.5,2);
-    put('dur-1', `${reduced?0:Math.round(120/speed)}ms`);
-    put('dur-2', `${reduced?0:Math.round(180/speed)}ms`);
-    put('dur-3', `${reduced?0:Math.round(260/speed)}ms`);
+    put('dur-1', `${reduced?0:Math.round(100/speed)}ms`);
+    put('dur-2', `${reduced?0:Math.round(160/speed)}ms`);
+    put('dur-3', `${reduced?0:Math.round(220/speed)}ms`);
     put('ease', 'cubic-bezier(.2, 0, 0, 1)');
     put('ease-emphasized', 'cubic-bezier(.2, .8, .25, 1)');
     put('motion', 'var(--gxt-dur-2) var(--gxt-ease)');
@@ -838,12 +869,23 @@
     put('fs-title', 'var(--gxt-fs-sm)');
     put('fs-small', 'var(--gxt-fs-xs)');
 
-    put('ui-dir',globalThis.GXT.i18n?.direction(settings) || 'rtl');
-    put('switch-sign',globalThis.GXT.i18n?.direction(settings) === 'ltr' ? 1 : -1);
+    const uiDirection=globalThis.GXT.i18n?.direction(settings?.uiLanguage===undefined?undefined:settings) || 'rtl';
+    put('ui-dir',uiDirection);
+    put('switch-sign',uiDirection === 'ltr' ? 1 : -1);
     put('content-dir',globalThis.GXT.targetDirection(settings?.targetLang || 'fa'));
     put('caption-dir',globalThis.GXT.targetDirection(settings?.ytTargetLang || 'fa'));
     put('scheme', dark ? 'dark' : 'light');
     put('font', '"Vazirmatn", "Segoe UI", Tahoma, sans-serif');
+    // Component contracts shared by popup, workbench and isolated page tools.
+    put('font-mono', 'ui-monospace, "Cascadia Code", Consolas, monospace');
+    put('surface-hover', `color-mix(in srgb, ${p.fg} 5%, var(--gxt-bg-elev))`);
+    put('surface-selected', 'color-mix(in srgb, var(--gxt-accent) 10%, var(--gxt-bg-elev))');
+    put('control-line', ramp(theme.vars['line-strong'],theme.toward,p.plain,TARGET.nonText));
+    put('field-radius', 'var(--gxt-radius-sm)');
+    put('icon-size', px(18*controlScale));
+    put('sp-7', px(40*spacingScale));
+    put('content-max', '1440px');
+    put('measure', '68ch');
     return lines.join(' ');
   }
 
@@ -895,6 +937,7 @@
       PRESETS,
       APPEARANCE_DEFAULTS,
       APPEARANCE_KEYS,
+      VIDEO_STYLES,
       presetSettings,
       resetSettings,
       settingsKey,

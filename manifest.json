@@ -2,7 +2,7 @@
   "manifest_version": 3,
   "name": "__MSG_extensionName__",
   "short_name": "__MSG_extensionShort__",
-  "version": "3.7.7",
+  "version": "3.8.2",
   "description": "__MSG_extensionDescription__",
   "minimum_chrome_version": "116",
   "icons": {
@@ -145,5 +145,9 @@
       ]
     }
   ],
-  "default_locale": "en"
+  "default_locale": "en",
+  "options_ui": {
+    "page": "popup/popup.html?surface=settings",
+    "open_in_tab": true
+  }
 }

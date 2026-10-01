@@ -46,6 +46,7 @@
     enabled: $('enabled'),
     provider: $('provider'),
     geminiSection: $('geminiSection'),
+    geminiSafety: $('geminiSafety'),
     openaiSection: $('openaiSection'),
     mtSection: $('mtSection'),
     apiKeys: $('apiKeys'),
@@ -179,6 +180,9 @@
     el.textContent = text;
     el.className = `status${kind ? ` ${kind}` : ''}`;
   }
+
+  const operationError = (response) => typeof response?.error === 'string' && response.error.trim()
+    ? response.error : GXTS.i18n.t('popup.operationFailed');
 
   // ------------------------------------------------------------------- fonts
 
@@ -528,18 +532,18 @@
    * ONE key's cap, so twelve keys produced «۱۸۰۰ / ۱۵۰۰» in red while all
    * twelve were happily translating. Three rules now:
    *
-   *   1. The denominator is the sum of the PER-KEY caps.
+   *   1. Multiple keys do not establish independent project quotas.
    *   2. Red means Google actually refused every key — the extension knows
    *      this for certain, because a daily-quota 429 is what parks a key.
-   *   3. Where a cap has been measured it says so, and where it is a guess it
-   *      says that too, instead of presenting both as the same kind of number.
+   *   3. Provider-reported caps and manual estimates are labelled separately;
+   *      an unknown capacity has no progress bar.
    */
   function renderQuota(provider, quota, resetTs, keysInfo) {
     if (provider !== 'gemini') return;
     // Gemini selected but no keys / no known cap: show the shell so the
     // manual-cap control stays reachable.
     ui.quotaCard.classList.remove('hidden');
-    if (!quota || !quota.keyCount || !quota.limit) return;
+    if (!quota || !quota.keyCount) return;
 
     ui.quotaBlock.classList.remove('hidden');
     const { used, limit, pct, keyCount, exhaustedCount, activeCount, state } = quota;
@@ -550,19 +554,20 @@
     // reader; the same number is published on the progressbar role.
     const bar = $('quotaBar');
     if (bar) {
-      bar.setAttribute('aria-valuenow', String(Math.round(pct)));
+      bar.classList.toggle('hidden', !limit);
+      if (limit) bar.setAttribute('aria-valuenow', String(Math.round(pct)));
+      else bar.removeAttribute('aria-valuenow');
       bar.setAttribute('aria-valuetext', globalThis.GXT.i18n.t("background_service_worker_handlers_29", {v0:(faNum(used)), v1:(faNum(limit))}));
     }
-    ui.quotaUsed.textContent = `${faNum(used)} / ${faNum(limit)}`;
-    globalThis.GXT.i18n.bind(ui.quotaLine, "textContent", () => (keyCount > 1
-        ? globalThis.GXT.i18n.t("popup_popup_renderQuota_12", {v0:(faNum(pct)), v1:(faNum(keyCount))})
-        : globalThis.GXT.i18n.t("popup_popup_renderQuota_11", {v0:(faNum(pct))})));
+    ui.quotaUsed.textContent = limit ? `${faNum(used)} / ${faNum(limit)}` : faNum(used);
+    globalThis.GXT.i18n.bind(ui.quotaLine, 'textContent', () => globalThis.GXT.i18n.t('quota.localUsage', {model:quota.model || ''}));
 
     globalThis.GXT.i18n.bind(ui.quotaCapNote, "textContent", () => (quota.limitSource === 'override'
         ? globalThis.GXT.i18n.t("popup_popup_renderQuota_10")
         : quota.limitSource === 'measured'
           ? globalThis.GXT.i18n.t("popup_popup_renderQuota_9", {v0:(faNum(quota.measuredKeys))})
-          : globalThis.GXT.i18n.t("popup_popup_renderQuota_8")));
+          : globalThis.GXT.i18n.t('quota.unknown')));
+    if (quota.sharedProjectRisk) globalThis.GXT.i18n.bind(ui.quotaCapNote, 'textContent', () => globalThis.GXT.i18n.t('quota.sharedProjects'));
 
     // The headline sentence: what is TRUE right now, not a percentage of a
     // guess. "Nothing is exhausted" is the answer to the question the user
@@ -615,7 +620,7 @@
         });
         globalThis.GXT.i18n.bind(num, "textContent", () => (globalThis.GXT.i18n.t("popup_popup_renderKeyList_2", {v0:(at)})));
       } else {
-        num.textContent = `${faNum(entry.calls)} / ${faNum(entry.limit)}`;
+        num.textContent = entry.limit ? `${faNum(entry.calls)} / ${faNum(entry.limit)}` : faNum(entry.calls);
         if (entry.measured) num.classList.add('qmeasured');
       }
       const bar = document.createElement('div');
@@ -648,7 +653,7 @@
   /** One-line status under the app name: which engine is active and whether
    *  it is actually usable. Replaces three separate hint paragraphs. */
   function setBrandStatus(text, warn) {
-    ui.brandSub.textContent = text;
+    GXTS.i18n.bindLabel(ui.brandSub,'textContent',text);
     ui.brandSub.classList.toggle('warn', !!warn);
   }
 
@@ -800,8 +805,13 @@
     const url = contextTab?.url || '';
     const origin = originOf(url);
     let host = '';
+    let restricted = false;
     try {
-      host = new URL(url).hostname;
+      const parsed = new URL(url);
+      host = parsed.hostname;
+      restricted = !['http:', 'https:', 'file:'].includes(parsed.protocol) ||
+        host === 'chromewebstore.google.com' ||
+        (host === 'chrome.google.com' && /^\/webstore(?:\/|$)/.test(parsed.pathname));
     } catch {
       host = '';
     }
@@ -809,11 +819,11 @@
     // Acting only needs a TAB. Reading its URL needs `activeTab`, which Chrome
     // grants when the toolbar icon is clicked — but not necessarily by every
     // other route into this window. Gating the buttons on the URL would make
-    // them silently dead in that case, so they are gated on the tab alone and
-    // the worker reports honestly when a page cannot host a content script.
-    const actionable = contextTab?.id != null;
+    // them silently dead in that case. A URL we CAN read can still identify
+    // a browser-internal or store page where these actions cannot run.
+    const actionable = contextTab?.id != null && !restricted;
     // The auto-site switch genuinely needs the origin: it is what gets granted.
-    const canAutoSite = !!origin && !own;
+    const canAutoSite = !!origin && !own && !restricted;
 
     globalThis.GXT.i18n.bind(ui.ctxHost, "textContent", () => (host || (actionable ? globalThis.GXT.i18n.t("popup_popup_refreshContext_8") : globalThis.GXT.i18n.t("popup_popup_refreshContext_7"))));
     for (const button of [ui.actTranslate, ui.actSummary, ui.actRead, ui.actScreen]) {
@@ -1143,7 +1153,8 @@
     }
     ui.navBack.classList.toggle('hidden', isHome);
     ui.appLogo.classList.toggle('hidden', !isHome);
-    globalThis.GXT.i18n.bind(ui.viewTitle, "textContent", () => (isHome ? globalThis.GXT.i18n.t("popup_popup_renderSheet_1") : target.dataset.title || globalThis.GXT.i18n.t("popup_popup_renderSheet_1")));
+    globalThis.GXT.i18n.bind(ui.viewTitle, "textContent", () => (isHome ? globalThis.GXT.i18n.t("popup_popup_renderSheet_1") : target.querySelector('.view-label')?.textContent || target.dataset.title || globalThis.GXT.i18n.t("popup_popup_renderSheet_1")));
+    GXTS.popupWorkspace?.reflect(target.dataset.view);
     document.querySelector('main').scrollTop = 0;
     if (focus) target.focus({ preventScroll: true });
     void ON_ENTER[target.dataset.view]?.();
@@ -1169,10 +1180,12 @@
     }
     ui.navBack.addEventListener('click', () => {
       const row = originRow;
-      goto('home', { focus: false });
-      (row?.isConnected ? row : document.querySelector('.nav-row'))?.focus();
+      const parent = row?.closest('.view')?.dataset.view;
+      goto(parent || (GXTS.popupWorkspace?.dedicated ? 'settings' : 'home'), { focus: false });
+      (row?.isConnected && row.getClientRects().length ? row : document.querySelector('.shell-tab[aria-current]'))?.focus();
       originRow = null;
     });
+    GXTS.popupWorkspace?.mount({navigate:(name,row)=>{originRow=row;goto(name);},openAppearance:openSheet});
   }
 
   /**
@@ -1186,6 +1199,8 @@
    */
   async function renderSummaries(known) {
     const settings = known || (await GXTS.getSettings());
+    if($('quickProvider'))$('quickProvider').value=settings.provider;
+    globalThis.GXT.i18n.bind($('sumLocale'), 'textContent', () => `${GXTS.i18n.t('language.interface')}: ${GXTS.i18n.t(GXTS.i18n.language(settings)==='fa'?'content_render_LANG_NAMES_1':'content_render_LANG_NAMES_34')} · ${settings.targetLang}`);
     const on = (flag, label) => (flag ? label : null);
     const join = (...parts) => parts.filter(Boolean).join(' · ') || globalThis.GXT.i18n.t("content_youtube_togglePanel_74");
 
@@ -1381,8 +1396,11 @@
 
   /** Reflect the active model's advanced tuning. Hidden for keyless MT engines
    *  (no model); the thinking-level row is hidden for OpenAI (Gemini-only). */
+  let tuningLoad = 0;
   async function loadModelTuning() {
+    const currentLoad = ++tuningLoad;
     const settings = await GXTS.getSettings();
+    if (currentLoad !== tuningLoad) return;
     const model = GXTS.activeModelId(settings);
     const isMT = settings.provider === 'google' || settings.provider === 'bing';
     if (isMT || !model) {
@@ -1393,9 +1411,27 @@
     ui.tuningModelName.textContent = model;
     ui.thinkingRow.classList.toggle('hidden', settings.provider !== 'gemini');
     const tuning = GXTS.resolveModelTuning(settings, model);
+    const levels = GXTS.geminiThinkingCapabilities(model).levels;
+    const labels = {'':'popup_popup_option_5', minimal:'popup_popup_option_6', low:'popup_popup_option_7', medium:'popup_popup_option_8', high:'popup_popup_option_9'};
+    ui.thinkingLevel.replaceChildren(...['', ...levels].map(value => {
+      const option = document.createElement('option');option.value = value;
+      globalThis.GXT.i18n.bind(option, 'textContent', () => globalThis.GXT.i18n.t(labels[value]));
+      return option;
+    }));
     ui.thinkingLevel.value = tuning.thinkingLevel || '';
     ui.temperature.value = tuning.temperature == null ? '' : String(tuning.temperature);
   }
+
+  // Fallbacks and changes from another popup also change the active model.
+  // Rebuild its options so a previously selected, unsupported level cannot linger.
+  let tuningIdentity = '';
+  GXTS.onStorageChanged(({settings}) => {
+    if (!settings) return;
+    const identity = JSON.stringify([settings.provider, GXTS.activeModelId(settings), settings.modelTuning]);
+    if (identity === tuningIdentity) return;
+    tuningIdentity = identity;
+    void loadModelTuning();
+  });
 
   /** Merge one tuning field into the active model's entry (empty value clears
    *  it); prune empty entries so the map never accumulates blanks. Writes are
@@ -1405,11 +1441,13 @@
    *  earlier one. */
   let tuningQueue = Promise.resolve();
   function saveTuningField(field, value) {
+    const selectedModel = ui.tuningModelName.textContent;
     tuningQueue = tuningQueue
       .then(async () => {
         const settings = await GXTS.getSettings();
-        const model = GXTS.activeModelId(settings);
+        const model = selectedModel;
         if (!model) return;
+        if (field === 'thinkingLevel' && value && !GXTS.geminiThinkingCapabilities(model).levels.includes(value)) value = null;
         const map = { ...(settings.modelTuning || {}) };
         const entry = { ...(map[model] || {}) };
         if (value == null || value === '') delete entry[field];
@@ -1450,21 +1488,28 @@
     void loadModelTuning();
     void renderSummaries();
   });
+  ui.geminiSafety.addEventListener('change', () => {
+    void GXTS.setSettings({geminiSafety:ui.geminiSafety.value});
+  });
   for (const radio of document.querySelectorAll('input[name="mode"]')) {
     radio.addEventListener('change', () => {
       if (radio.checked) void GXTS.setSettings({ mode: radio.value }).then(renderSummaries);
     });
   }
 
-  ui.provider.addEventListener('change', async () => {
-    const provider = ui.provider.value;
+  async function selectProvider(provider) {
+    const quick=$('quickProvider');
+    const providerStatus=(text,tone)=>{for(const id of ['quickProviderStatus','providerStatus'])setStatus($(id),text,tone);};
+    ui.provider.disabled=true;if(quick)quick.disabled=true;
+    providerStatus('');
+    try {
     // Machine-translation engines need their host origin before the worker
     // can reach them; ask now and revert the choice if the user declines.
     const origin = MT_ORIGIN[provider];
     if (origin && chrome.permissions?.request) {
       const granted = await chrome.permissions.request({ origins: [origin] }).catch(() => false);
       if (!granted) {
-        ui.provider.value = (await GXTS.getSettings()).provider;
+        providerStatus(GXTS.i18n.t('popup.providerDenied'),'warn');
         return;
       }
     }
@@ -1474,7 +1519,18 @@
     void loadModelTuning();
     void renderSummaries();
     if (statsActive()) void loadStats();
-  });
+    const settings=await GXTS.getSettings();
+    const ready=provider==='gemini'?(await GXTS.getApiKeys()).length>0:provider==='openai'?!!(settings.openaiBaseUrl&&settings.openaiModel):true;
+    ui.setupCard.classList.toggle('hidden',ready);
+    } catch {
+      providerStatus(operationError(null),'err');
+    } finally {
+      try{const stored=await GXTS.getSettings();ui.provider.value=stored.provider;if(quick)quick.value=stored.provider;}
+      finally{if(quick)quick.disabled=false;ui.provider.disabled=false;}
+    }
+  }
+  ui.provider.addEventListener('change',()=>void selectProvider(ui.provider.value));
+  $('quickProvider')?.addEventListener('change',()=>void selectProvider($('quickProvider').value));
 
   // -------------------------------------------------- local bridge (v2.5.0)
 
@@ -1613,7 +1669,7 @@
     const url = chrome.runtime.getURL('pages/subtitles.html');
     if (chrome.tabs?.create) chrome.tabs.create({ url });
     else window.open(url, '_blank');
-    window.close();
+    if(!GXTS.popupWorkspace?.dedicated)window.close();
   });
 
   // ------------------------------------------------------- speech (v2.2.0)
@@ -1708,7 +1764,12 @@
     const note = $('ttsCacheNote');
     if (!note) return;
     const response = await ttsSend({ type: 'TTS_CACHE_STATS' });
-    if (!response?.ok || !response.count) {
+    if (!response?.ok) {
+      setStatus(note, operationError(response), 'warn');
+      return;
+    }
+    note.className = 'note tip';
+    if (!response.count) {
       globalThis.GXT.i18n.bind(note, "textContent", () => (globalThis.GXT.i18n.t("popup_popup_refreshTtsCacheNote_2")));
       return;
     }
@@ -1843,8 +1904,17 @@
     });
 
     $('ttsClearCache')?.addEventListener('click', async () => {
-      await ttsSend({ type: 'TTS_CLEAR_CACHE' });
-      void refreshTtsCacheNote();
+      $('ttsClearCache').disabled = true;
+      try {
+        const res = await ttsSend({ type: 'TTS_CLEAR_CACHE' });
+        if (!res?.ok) {
+          setStatus($('ttsCacheNote'), operationError(res), 'warn');
+          return;
+        }
+        await refreshTtsCacheNote();
+      } finally {
+        $('ttsClearCache').disabled = false;
+      }
     });
   }
 
@@ -1996,22 +2066,35 @@
 
   ui.clearCache.addEventListener('click', async () => {
     ui.clearCache.disabled = true;
+    setStatus($('statsStatus'), '');
     try {
-      await chrome.runtime.sendMessage({ type: 'CLEAR_CACHE' });
+      const res = await send({ type: 'CLEAR_CACHE' });
+      if (!res?.ok) {
+        setStatus($('statsStatus'), operationError(res), 'warn');
+        ui.clearCache.disabled = false;
+        return;
+      }
       globalThis.GXT.i18n.bind(ui.clearCache, "textContent", () => (globalThis.GXT.i18n.t("popup_popup_message_18")));
       setTimeout(() => {
         globalThis.GXT.i18n.bind(ui.clearCache, "textContent", () => (globalThis.GXT.i18n.t("popup_popup_message_17")));
         ui.clearCache.disabled = false;
       }, 1500);
     } catch {
+      setStatus($('statsStatus'), operationError(null), 'warn');
       ui.clearCache.disabled = false;
     }
   });
 
   ui.resetStats.addEventListener('click', async () => {
     ui.resetStats.disabled = true;
+    setStatus($('statsStatus'), '');
     try {
-      await chrome.runtime.sendMessage({ type: 'RESET_STATS' });
+      const res = await send({ type: 'RESET_STATS' });
+      if (!res?.ok) {
+        setStatus($('statsStatus'), operationError(res), 'warn');
+        ui.resetStats.disabled = false;
+        return;
+      }
       await loadStats();
       globalThis.GXT.i18n.bind(ui.resetStats, "textContent", () => (globalThis.GXT.i18n.t("popup_popup_message_16")));
       setTimeout(() => {
@@ -2019,6 +2102,7 @@
         ui.resetStats.disabled = false;
       }, 1500);
     } catch {
+      setStatus($('statsStatus'), operationError(null), 'warn');
       ui.resetStats.disabled = false;
     }
   });
@@ -2047,8 +2131,8 @@
   let appearanceWrites=0;
   let appearanceRevision=0;
   const appearanceFields = [
-    ['uiRadius',globalThis.GXT.i18n.t("popup_popup_appearanceFields_11"),0,26,1,13,'px'],
-    ['uiShadow',globalThis.GXT.i18n.t("popup_popup_appearanceFields_10"),0,1.5,0.1,1,'×'],
+    ['uiRadius',globalThis.GXT.i18n.t("popup_popup_appearanceFields_11"),0,26,1,10,'px'],
+    ['uiShadow',globalThis.GXT.i18n.t("popup_popup_appearanceFields_10"),0,1.5,0.1,0.55,'×'],
     ['uiOpacity',globalThis.GXT.i18n.t("popup_popup_appearanceFields_9"),55,100,1,84,'%'],
     ['uiBlur',globalThis.GXT.i18n.t("popup_popup_appearanceFields_8"),0,28,1,16,'px'],
     ['uiScale',globalThis.GXT.i18n.t("popup_popup_appearanceFields_7"),0.85,1.2,0.05,1,'×'],
@@ -2060,6 +2144,7 @@
     ['uiMotionSpeed',globalThis.GXT.i18n.t("popup_popup_appearanceFields_1"),0.5,2,0.1,1,'×'],
   ];
   const appearanceOptions = [
+    ['uiVideoStyle',globalThis.GXT.i18n.t('ui.video.style'),T.VIDEO_STYLES.map(item=>[item.id,item.label])],
     ['uiButtonShape',globalThis.GXT.i18n.t("popup_popup_appearanceOptions_19"),[['pill',globalThis.GXT.i18n.t("popup_popup_appearanceOptions_18")],['rounded',globalThis.GXT.i18n.t("popup_popup_appearanceOptions_16")],['square',globalThis.GXT.i18n.t("popup_popup_appearanceOptions_15")]]],
     ['uiSwitchShape',globalThis.GXT.i18n.t("popup_popup_appearanceOptions_17"),[['pill',globalThis.GXT.i18n.t("popup_popup_appearanceOptions_16")],['square',globalThis.GXT.i18n.t("popup_popup_appearanceOptions_15")]]],
     ['uiInputStyle',globalThis.GXT.i18n.t("popup_popup_appearanceOptions_14"),[['filled',globalThis.GXT.i18n.t("popup_popup_appearanceOptions_13")],['outline',globalThis.GXT.i18n.t("popup_popup_appearanceOptions_12")]]],
@@ -2104,6 +2189,16 @@
   GXTS.onStorageChanged(({settings})=>{
     if(!settings)return;
     loadWebVideo(settings);
+    // A full settings page can stay open while a popup or in-page tool writes.
+    // Reflect committed choices without replacing text the user is editing.
+    ui.provider.value=settings.provider;showProviderSections(settings.provider);
+    if($('quickProvider'))$('quickProvider').value=settings.provider;
+    ui.enabled.checked=settings.enabled;
+    for(const key of [...BOOL_SETTINGS,'replaceOriginal','translateBios','youtube','uiLanguage','targetLang']){
+      const control=$(key);if(!control||control===document.activeElement)continue;
+      if(control.type==='checkbox')control.checked=!!settings[key];else control.value=settings[key];
+    }
+    void renderSummaries(settings);void syncBrandStatus();
     if(!appearanceWrites && T.settingsKey(settings)!==T.settingsKey(look)) {
       look=Object.fromEntries(T.APPEARANCE_KEYS.map(key=>[key,key==='videoSafeUi'?settings[key]!==false:(settings[key]??T.APPEARANCE_DEFAULTS[key])]));
       applyLook();renderSheet();
@@ -2333,7 +2428,7 @@
    * testing in one attribute (Chrome 102+, and the manifest requires 116), so
    * «مودال» becomes true for every input method rather than for Tab alone.
    */
-  const behindSheet = () => [document.querySelector('.appbar'), document.querySelector('main')];
+  const behindSheet = () => [...document.querySelectorAll('.appbar,.shell-tabs,.searchbar,.workspace-layout,main,.app-footer')];
 
   function openSheet() {
     sheetReturnFocus = document.activeElement;
@@ -2386,7 +2481,7 @@
     if (event.key === 'Escape') {
       if (sheetOpen()) closeSheet();
       else if (ui.search.value) clearSearch();
-      else if (currentView() !== 'home') goto('home');
+      else if (currentView() !== 'home') ui.navBack.click();
       return;
     }
     // Ctrl/⌘+F is the reflex for "find a setting"; honour it instead of
@@ -2547,8 +2642,10 @@
       row.classList.toggle('no-match', !hit);
       if (hit) navHits += 1;
     }
-    document.getElementById('view-home').classList.toggle('searchhit', navHits > 0);
-    document.getElementById('view-home').toggleAttribute('hidden', navHits === 0);
+    document.getElementById('view-home').classList.remove('searchhit');
+    document.getElementById('view-home').setAttribute('hidden','');
+    document.getElementById('view-settings').classList.toggle('searchhit', navHits > 0);
+    document.getElementById('view-settings').toggleAttribute('hidden', navHits === 0);
 
     let hits = navHits;
     for (const card of cards) {
@@ -2586,7 +2683,7 @@
     // Show every section that still has a visible card, under its own name.
     let sections = navHits > 0 ? 1 : 0;
     for (const view of views()) {
-      if (view.id === 'view-home') continue;
+      if (view.id === 'view-home' || view.id === 'view-settings') continue;
       const visible = view.querySelector('.card:not(.no-match)');
       view.classList.toggle('searchhit', !!visible);
       view.toggleAttribute('hidden', !visible);
@@ -2760,6 +2857,11 @@
    *  performs. */
   async function loadMemory() {
     const res = await send({ type: 'GET_MEMORY', limit: 400 });
+    if (!res?.ok) {
+      setStatus($('memStatus'), operationError(res), 'warn');
+      return;
+    }
+    if ($('memStatus')?.classList.contains('warn')) setStatus($('memStatus'), '');
     const list = $('memList');
     const count = $('memCount');
     if (count) count.textContent = faNum(res?.count || 0);
@@ -2772,9 +2874,18 @@
   $('memRefresh')?.addEventListener('click', () => void loadMemory());
 
   $('memClear')?.addEventListener('click', async () => {
-    await send({ type: 'CLEAR_MEMORY' });
-    setStatus($('memStatus'), globalThis.GXT.i18n.t("popup_popup_message_14"), 'ok');
-    void loadMemory();
+    $('memClear').disabled = true;
+    try {
+      const res = await send({ type: 'CLEAR_MEMORY' });
+      if (!res?.ok) {
+        setStatus($('memStatus'), operationError(res), 'warn');
+        return;
+      }
+      setStatus($('memStatus'), globalThis.GXT.i18n.t("popup_popup_message_14"), 'ok');
+      await loadMemory();
+    } finally {
+      $('memClear').disabled = false;
+    }
   });
 
   $('memPin')?.addEventListener('click', async () => {
@@ -2909,7 +3020,15 @@
       if (!box) return;
       box.replaceChildren();
       box.classList.remove('hidden');
-      for (const check of res?.checks || []) {
+      if (!res?.ok || !Array.isArray(res.checks) || !res.checks.length ||
+          res.checks.some(check => !check || typeof check.ok !== 'boolean' || typeof check.label !== 'string')) {
+        const line = document.createElement('div');
+        line.className = 'vsr-line warn';
+        line.textContent = operationError(res);
+        box.appendChild(line);
+        return;
+      }
+      for (const check of res.checks) {
         const line = document.createElement('div');
         line.className = `vsr-line ${check.ok ? 'ok' : 'warn'}`;
         line.textContent = `${check.ok ? '✓' : '✕'} ${check.label}`
@@ -2922,7 +3041,7 @@
           box.appendChild(fix);
         }
       }
-      if (!res?.checks?.some((c) => !c.ok)) {
+      if (!res.checks.some((c) => !c.ok)) {
         const line = document.createElement('div');
         line.className = 'vsr-line ok';
         globalThis.GXT.i18n.bind(line, "textContent", () => (globalThis.GXT.i18n.t("popup_popup_runDiagnose_1")));
@@ -3087,6 +3206,7 @@
     populateFontSelect(settings);
     ui.customFont.value = settings.customFont;
     ui.dailyQuota.value = settings.dailyQuota || '';
+    ui.geminiSafety.value = settings.geminiSafety || '';
     ui.youtube.checked = settings.youtube !== false;
     ui.dwellMode.checked = !!settings.dwellMode;
     // v1.8 toggles + personalization fields.
@@ -3150,6 +3270,7 @@
     // summary reads the same numbers straight out of storage instead, and the
     // full view loads them when it is opened (see ON_ENTER).
     await Promise.all([refreshContext(), renderSummaries(settings)]);
+    if(GXTS.popupWorkspace?.dedicated)goto('settings',{focus:false});
   }
 
   ui.setupGo?.addEventListener('click', () => goto('engine'));

@@ -39,5 +39,20 @@ check('500 seeded permutations preserve every independently spoken cue', () => {
   let seed=37;
   for(let i=0;i<500;i++){seed=(Math.imul(seed,1664525)+1013904223)>>>0;const a=seed%9000;const input=[{start:a,end:a+100,text:'a'},{start:0,end:15000,text:'b'},{start:20000,end:21000,text:'c'}];const result=S.toSpeechSegments(input,{maxGapMs:-1});assert.equal(result.length,3);assert.ok(result.every((s,j)=>j===0||s.start>=result[j-1].start));assert.equal(result.map(s=>s.text).sort().join(','),'a,b,c');}
 });
+check('Korean Hindi Thai Bengali Armenian and supplementary letters are translatable in every file format', () => {
+  for (const text of ['안녕하세요', 'नमस्ते', 'สวัสดี', 'বাংলা', 'Բարև', '𠮷']) {
+    for (const [name, source] of [
+      ['source.srt', `1\n00:00:00,000 --> 00:00:02,000\n${text}\n`],
+      ['source.vtt', `WEBVTT\n\n00:00:00.000 --> 00:00:02.000\n${text}\n`],
+      ['source.ass', `[Events]\nFormat: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text\nDialogue: 0,0:00:00.00,0:00:02.00,Default,,0,0,0,,${text}`],
+    ]) {
+      const doc = S.parse(source, name), result = S.collectTranslatable(doc);
+      assert.equal(result.items.length, 1, `${name}: ${text}`);
+      const output = S.build(doc, result.items, ['ترجمه'], {rtl:false});
+      assert.equal(output.translated, 1, `${name}: ${text}`);
+      assert.ok(output.text.includes('ترجمه'), `${name}: ${text}`);
+    }
+  }
+});
 console.log(`SUBTITLE-REGRESSION SUMMARY ${passed}/${total}`);
 process.exitCode = passed === total ? 0 : 1;

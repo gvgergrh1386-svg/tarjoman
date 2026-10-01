@@ -16,9 +16,16 @@ jobs:
           python-version: '3.11'
       - run: npm ci --ignore-scripts
       - run: python tools/build_i18n.py --check
+      - run: node tools/build_ui.cjs --check
       - run: node tools/check_i18n.cjs
       - run: python tools/test_all.py
       - run: python tools/test_all.py --browser
+        env:
+          CHROME: /usr/bin/google-chrome
+      - run: python dev/ui-redesign-382.py
+        env:
+          CHROME: /usr/bin/google-chrome
+      - run: python dev/ui-surfaces-382.py
         env:
           CHROME: /usr/bin/google-chrome
       - run: python tools/build_release.py

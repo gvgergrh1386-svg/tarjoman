@@ -3,7 +3,7 @@
 // retain their own versions and do not inherit speech-recognition correction.
 (() => {
   const LANGUAGES = { fa: 'Iranian Persian', en: 'English', ar: 'Arabic', tr: 'Turkish', de: 'German', fr: 'French', es: 'Spanish', ja: 'Japanese', ko: 'Korean', zh: 'Chinese' };
-  const VERSION = 1;
+  const VERSION = 2;
   function youtubeSystem(kind, extra, sources) {
     const automatic = kind === 'youtube-auto';
     const target = globalThis.GXT.targetName(extra?.targetLang || 'fa');
@@ -13,8 +13,8 @@
       automatic
         ? 'These captions are automatic speech recognition (ASR). They may contain misheard words or names, repetitions, missing punctuation and wrong sentence boundaries. Silently correct an ASR error during translation ONLY when neighboring dialogue makes the intended reading highly certain. A known name or technical term may be corrected only with strong contextual evidence. If two readings are plausible, preserve the available meaning and uncertainty: never guess confidently, embellish or freely rewrite the source.'
         : 'These captions are manually authored or their origin is unknown. Disable ASR correction: do not presume a name, unusual wording or factual statement is wrong. Translate faithfully; preserve uncertainty.',
-      'Context is evidence only, never output. Keep URLs, code, handles, identifiers, protected tokens and necessary formatting intact. Each input item has a Western-digit N⟫ prefix. Return exactly one translated string with the SAME N⟫ prefix per input. Preserve cue order and internal line breaks, never merge or split output IDs.',
-      'Input JSON: {context:[neighboring source lines],items:[prefixed strings]}. Output JSON only: {"t":[prefixed translations]}. Check fidelity and alignment before responding.',
+      'Context is evidence only, never output. Keep URLs, code, handles, identifiers, protected tokens and necessary formatting intact. Each input item has separate i and text fields. Return exactly one object with the SAME integer i and translation in t. IDs are metadata, never part of translated text. Preserve cue order and internal line breaks, never merge or split output IDs.',
+      'Input JSON: {context:[neighboring source lines],items:[{i:0,text:"source"}]}. Output JSON only: {"t":[{"i":0,"t":"translation"}]}. Check fidelity and alignment before responding.',
     ].join('\n') + globalThis.GXT.prompt.extrasBlock(extra, sources);
   }
   function workshopSystem(extra, sources) {
@@ -77,7 +77,7 @@
     if (budget != null) bad(globalThis.GXT.i18n.t('error.thinkingNumeric'));
     if (level === 'auto') return null;
     if (level === 'off') bad(globalThis.GXT.i18n.t('error.thinkingOff'));
-    if (level === 'minimal' && (/pro/.test(id) || /^gemini-3\.(?:[7-9]|\d{2,})-flash/.test(id))) bad(globalThis.GXT.i18n.t('error.thinkingMinimal'));
+    if (!globalThis.GXT.geminiThinkingCapabilities(id).levels.includes(level)) bad(globalThis.GXT.i18n.t('error.thinkingMinimal'));
     return {thinkingLevel:level};
   }
   globalThis.GXT.subtitlePrompts = { VERSION, LANGUAGES, youtubeSystem, workshopSystem, parseWorkshop, workshopRequest, workshopThinking };

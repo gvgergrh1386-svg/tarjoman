@@ -693,7 +693,8 @@
     + 'font-family: var(--gxt-font, "Vazirmatn", "Segoe UI", Tahoma, sans-serif);'
     + 'font-size: var(--gxt-fs-md, 13.5px);'
     + 'line-height: var(--gxt-lh, 1.75);'
-    + 'color: var(--gxt-fg, #e2e5e8);'
+    + 'color: var(--gxt-fg, #e2e5e8) !important;'
+    + 'color-scheme: var(--gxt-scheme, dark);'
     + 'direction: var(--gxt-ui-dir, rtl);'
     + 'text-align: start;'
     + '-webkit-font-smoothing: antialiased;';
@@ -720,6 +721,7 @@
     //    in-page surface by GXT.ui.configure().
     const UI = globalThis.GXT.ui;
     if (UI?.surface) {
+      UI.configure?.(settings);
       surfaceRoot = UI.surface(player, {
         id: 'yt',
         // The host fills the player and passes clicks through; only the real
@@ -738,6 +740,7 @@
       ownHost.setAttribute('lang', 'fa');
       surfaceRoot = ownHost.attachShadow({ mode: 'open' });
       const style = document.createElement('style');
+      style.className = 'gxt-theme stylus';
       // The @font-face rules too: without them this path asks for "Vazirmatn"
       // and silently gets whatever the system has. ui.js owns the canonical
       // copy; this is the standalone equivalent for when ui.js is absent.
@@ -751,6 +754,7 @@ ${playerCss()}`;
     ownHost.style.cssText = theme
       ? `${HOST_STYLE} ${theme.tokens(settings || {}, { inPage: true })}`
       : HOST_STYLE;
+    ownHost.dataset.gxtVideoStyle = settings?.uiVideoStyle || 'glass';
     return surfaceRoot;
   }
 
@@ -1172,7 +1176,9 @@ ${playerCss()}`;
 
     for (const el of [controls, panel]) {
       if (!el) continue;
-      const hidden = autohidden || collidesWithYouTube(el, rects);
+      // Keep a deliberately opened menu reachable while reading or using the
+      // keyboard. Native YouTube popups still take precedence on collision.
+      const hidden = (autohidden && !panel) || collidesWithYouTube(el, rects);
       el.style.opacity = hidden ? '0' : '';
       el.style.pointerEvents = hidden ? 'none' : '';
       // `opacity:0` still leaves the element in the paint tree. `visibility`
@@ -1383,6 +1389,7 @@ ${playerCss()}`;
     bulkWarnBox = null;
     document.removeEventListener('pointerdown', onOutsidePanel, true);
     document.removeEventListener('keydown', onPanelKey, true);
+    scheduleChromeSync();
   }
 
   /**
@@ -1479,6 +1486,7 @@ ${playerCss()}`;
     panel = document.createElement('div');
     panel.id = 'gxt-yt-panel';
     panel.className = 'yt-panel';
+    panel.style.cssText = globalThis.GXT.theme?.tokens(settings || {}, {inPage:true,videoPanel:true}) || '';
     panel.setAttribute('role', 'dialog');
     globalThis.GXT.i18n.bind(panel,'ariaLabel',()=>(globalThis.GXT.i18n.t("content_youtube_togglePanel_82")));
     panel.addEventListener('click', (e) => e.stopPropagation());
@@ -1516,12 +1524,17 @@ ${playerCss()}`;
     ]) {
       const tab = el('button', 'yt-tab', label);
       tab.type = 'button';
+      tab.id = 'gxt-yt-tab-' + id;
+      tab.dataset.pane = id;
       tab.setAttribute('role', 'tab');
+      tab.setAttribute('aria-controls', 'gxt-yt-pane-' + id);
       tab.addEventListener('click', () => showPane(id));
       tabs.append(tab);
       tabButtons[id] = tab;
       const pane = el('section', 'yt-pane');
+      pane.id = 'gxt-yt-pane-' + id;
       pane.setAttribute('role', 'tabpanel');
+      pane.setAttribute('aria-labelledby', tab.id);
       paneWrap.append(pane);
       panes[id] = pane;
     }
@@ -1537,10 +1550,22 @@ ${playerCss()}`;
         panes[name].hidden = !activePane;
         tabButtons[name].classList.toggle('active', activePane);
         tabButtons[name].setAttribute('aria-selected', activePane ? 'true' : 'false');
+        tabButtons[name].tabIndex = activePane ? 0 : -1;
       }
     }
     const usePane = (id) => { appendTarget = panes[id]; };
     showPane(panelTab);
+    tabs.addEventListener('keydown', event => {
+      const names=Object.keys(panes), current=names.indexOf(panelTab);
+      const rtl=globalThis.GXT.i18n.direction()==='rtl';
+      let next=current;
+      if(event.key==='Home')next=0;
+      else if(event.key==='End')next=names.length-1;
+      else if(event.key==='ArrowRight')next=(current+(rtl?-1:1)+names.length)%names.length;
+      else if(event.key==='ArrowLeft')next=(current+(rtl?1:-1)+names.length)%names.length;
+      else return;
+      event.preventDefault();showPane(names[next]);tabButtons[names[next]].focus();
+    });
 
     const dashboard = el('div', 'yt-dashboard');
     const captionCard = el('div', 'yt-state-card');
@@ -1890,6 +1915,20 @@ ${playerCss()}`;
     // --- section: appearance ---
     usePane('look');
     panel.append(panelHeading(globalThis.GXT.i18n.t("content_youtube_togglePanel_9")));
+
+    const videoStyleSelect = panelSelect(
+      ['glass','solid','inherit'].map(id => [id,globalThis.GXT.i18n.t('ui.video.style.'+id)]),
+      settings?.uiVideoStyle || 'glass',
+      value => void globalThis.GXT.setSettings({ uiVideoStyle: value })
+    );
+    videoStyleSelect.dataset.setting = 'uiVideoStyle';
+    panel.append(panelRow(globalThis.GXT.i18n.t('ui.video.style'), videoStyleSelect));
+    const glassBlur = panelToggle(globalThis.GXT.i18n.t('ui.video.blur'), settings?.videoSafeUi === false,
+      value => void globalThis.GXT.setSettings({videoSafeUi:!value}));
+    glassBlur.querySelector('input').dataset.setting = 'videoSafeUi';
+    glassBlur.querySelector('input').disabled = (settings?.uiVideoStyle || 'glass') !== 'glass';
+    panel.append(glassBlur);
+    panel.append(el('p', 'yt-hint', globalThis.GXT.i18n.t('ui.video.glassHint')));
 
     const fontSelect = panelSelect(
       [
@@ -3605,6 +3644,10 @@ ${playerCss()}`;
       if (!next) return;
       const before = settings;
       settings = next;
+      // Persisting a choice must also repaint the already-mounted host. The
+      // shared layer has no storage listener of its own on YouTube pages.
+      globalThis.GXT.ui?.configure?.(next);
+      if (ownHost) ensureSurface();
       if (!settings.enabled || settings.youtube === false) {
         stop();
         stopDub();
@@ -3658,8 +3701,14 @@ ${playerCss()}`;
       if (before && lookKey(before) !== lookKey(next)) {
         restylePill();
         if (panel) {
+          const activeSetting=panel.getRootNode().activeElement?.dataset?.setting;
+          const scrollTop=panel.querySelector('.yt-panel-body')?.scrollTop||0;
           closePanel();
           togglePanel();
+          if(panel){
+            panel.querySelector('.yt-panel-body').scrollTop=scrollTop;
+            if(['uiVideoStyle','videoSafeUi'].includes(activeSetting))panel.querySelector(`[data-setting="${activeSetting}"]`)?.focus({preventScroll:true});
+          }
         }
       }
       // Bilingual toggle flips from the popup too — repaint the caption.

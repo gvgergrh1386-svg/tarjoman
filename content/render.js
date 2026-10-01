@@ -48,6 +48,14 @@
     return !!(state && (state.box || state.link) && !hasUI(el));
   }
 
+  /** React can remove or move our sibling without changing the source. Keep
+   * the finished text, local hide/show choice, controls and in-flight owner. */
+  function repairUI(el) {
+    const state = stateMap.get(el);
+    const ui = state?.box || state?.link;
+    if(ui && el.isConnected && el.nextElementSibling!==ui) el.insertAdjacentElement('afterend',ui);
+  }
+
   /** True only when the element is showing a finished translation (a box with
    *  translated text) — not a loading skeleton, error, or manual link. Lets a
    *  live view-setting change (replaceOriginal) re-render exactly those. */
@@ -240,6 +248,7 @@
 
   function removeUI(el) {
     const state = getState(el);
+    state.speech?.stop();state.speech=null;
     if (state.box) {
       state.box.remove();
       state.box = null;
@@ -270,7 +279,7 @@
     state.link = row;
   }
 
-  function showLoading(el) {
+  function showLoading(el, onCancel) {
     removeLink(el);
     restoreOriginal(el);
     const box = ensureBox(el);
@@ -283,6 +292,12 @@
     skeletonNarrow.className = 'gxt-skel';
     skeletonNarrow.style.width = '55%';
     box.append(skeletonWide, skeletonNarrow);
+    if(onCancel) {
+      const row=document.createElement('div');row.className='gxt-head';
+      const label=document.createElement('span');label.className='gxt-label';label.setAttribute('role','status');
+      globalThis.GXT.i18n.bind(label,'textContent',()=>globalThis.GXT.i18n.t('x.waiting'));
+      row.append(label,headButton(globalThis.GXT.i18n.t('x.cancel'),onCancel));box.append(row);
+    }
   }
 
   /**
@@ -368,6 +383,7 @@
     head.appendChild(
       headButton(globalThis.GXT.i18n.t("content_render_showTranslation_2"), () => {
         // Detach but keep the built box so re-showing costs nothing.
+        state.speech?.stop();state.speech=null;
         box.remove();
         state.box = null;
         restoreOriginal(el);
@@ -395,7 +411,7 @@
           paint('idle');
           return;
         }
-        globalThis.GXT.ui.speak(body.textContent || '', {
+        state.speech = globalThis.GXT.ui.speak(body.textContent || '', {
           onState: (state, info) => {
             paint(state);
             if (state === 'error') globalThis.GXT.ui.toast(globalThis.GXT.ui.friendly(info));
@@ -541,6 +557,7 @@
   globalThis.GXT.render = {
     hasUI,
     needsRepair,
+    repairUI,
     isTranslated,
     showTranslateLink,
     showLoading,

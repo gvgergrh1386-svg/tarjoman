@@ -1,45 +1,64 @@
-/**
- * Gemini API client.
- *
- * Resilience strategy, in layers:
- *  - Concurrency limiter (2 in-flight requests).
- *  - API-key rotation: multiple keys are tried in round-robin order; a key
- *    that hits its rate limit is put on cooldown (until the Pacific-midnight
- *    quota reset when the failure was a daily quota) and the next key takes
- *    over. Invalid keys are parked. Key state persists in
- *    chrome.storage.session so it survives service-worker restarts.
- *  - Short-blip absorption: when every key is cooling for only a few
- *    seconds (per-minute limits), the batch waits for the soonest key once
- *    instead of failing.
- *  - Thinking-config ladder: the tweet task asks for thinkingLevel "low"
- *    (v1.8.8 — enough budget for its many simultaneous rules on a lite model);
- *    a model that rejects it falls through to the model's own default thinking.
- *    The client walks GXT.prompt.THINKING_LADDER on INVALID_ARGUMENT and
- *    remembers the step that worked per model.
- *  - Model fallback: MODEL_NOT_FOUND walks GXT.FALLBACK_MODELS.
- *  - Bounded retries with jittered backoff for 5xx/network/parse errors.
- *
- * Transparency: every thrown error carries {http, apiStatus, raw, quotaId,
- * retryAfterMs, attempts[]} where attempts logs each key tried — with the
- * key UNMASKED (explicitly requested by the user so failures can be
- * researched), the HTTP status, Google's status string and raw message.
+/** Gemini transport: one retry owner per operation, per-key/model leases,
+ * persisted cooldowns, cancellable waits and measured per-model deadlines.
+ * Temporary transport/quota failures keep the selected model and recover in
+ * the background. Invalid requests, permissions and content blocks terminate.
+ * Raw service diagnostics are scrubbed by the message router before display.
  */
 'use strict';
 (() => {
   globalThis.GXT = globalThis.GXT || {};
 
   const BASE = 'https://generativelanguage.googleapis.com/v1beta';
-  const MAX_RETRIES = 2;
-  const MAX_BACKOFF_MS = 20000;
+  const MAX_BACKOFF_MS = 60000;
   const MIN_KEY_COOLDOWN_MS = 10000;
-  const SHORT_WAIT_MAX_MS = 25000;
   const SESSION_STATE_KEY = 'gxtGeminiKeyState';
-  // Hard ceiling on a single request. Without it a stalled connection never
-  // settles, so the concurrency limiter's slot is never released — two such
-  // stalls permanently deadlock the whole pipeline (the "stuck on Translating
-  // forever" bug). A translation call here is small and normally finishes in a
-  // few seconds; 45s is a generous cap that only ever fires on a real stall.
-  let requestTimeoutMs = 45000;
+  // Conservative starting deadlines adapt to observed successful requests and
+  // actual timeouts, bounded below Chrome's five-minute operation limit.
+  let requestTimeoutMs = 0; // Test override; production uses per-model observations.
+  const latency = new Map();
+  const activeKeys = new Set();
+  const keyWaiters = new Set();
+  const activeOperations = new Set();
+  const wakeKeys = () => { for (const wake of keyWaiters) wake(); keyWaiters.clear(); };
+  function timeoutFor(path) {
+    if (requestTimeoutMs) return requestTimeoutMs;
+    const model = decodeURIComponent(path.match(/\/models\/([^:]+):/)?.[1] || '');
+    if (!model) return 45000;
+    const state = latency.get(model), floor = /lite/.test(model) ? 90000 : 120000;
+    const samples = [...(state?.samples || [])].sort((a,b) => a-b);
+    const p90 = samples[Math.floor((samples.length-1)*0.9)] || 0;
+    return Math.min(240000, Math.max(floor, p90 * 2 + 15000) * (1 + (state?.timeouts || 0) * 0.5));
+  }
+  function observeLatency(path, elapsed, timedOut = false) {
+    const model = decodeURIComponent(path.match(/\/models\/([^:]+):/)?.[1] || '');
+    if (!model) return;
+    const state = latency.get(model) || {samples:[], timeouts:0};
+    if (timedOut) state.timeouts = Math.min(2, state.timeouts+1);
+    else { state.samples.push(elapsed); if (state.samples.length>24) state.samples.shift(); state.timeouts=Math.max(0,state.timeouts-0.25); }
+    boundedPut(latency, model, state);
+  }
+  // Only pending user work owns this timer. It also covers long quota waits;
+  // no persistent/background polling survives completion or cancellation.
+  function keepAlive(signal) {
+    let timer;
+    const pulse = () => {
+      if (signal.aborted) return;
+      try { void chrome.storage.session?.get?.(SESSION_STATE_KEY)?.catch?.(() => {}); } catch {}
+      timer = setTimeout(pulse, 20000);
+    };
+    timer = setTimeout(pulse, 20000);
+    return () => clearTimeout(timer);
+  }
+  chrome.storage?.onChanged?.addListener((changes, area) => {
+    if (area !== 'local') return;
+    const setting = changes.settings;
+    // Output settings are scoped (X, pages, subtitles, speech). Their callers
+    // own cancellation; a global language edit must not cancel an X request
+    // with an unchanged explicit X destination.
+    if (changes.apiKeys || changes.apiKey || setting?.newValue?.enabled === false) {
+      for (const controller of activeOperations) controller.abort();
+    }
+  });
   // Process-local numbers only: no prompts, source text, URLs or credentials.
   const metrics = { generationRequests:0, retries:0, cancelled:0, completed:0, totalMs:0 };
 
@@ -59,10 +78,15 @@
     max: 2,
     active: 0,
     waiters: [],
-    async run(fn) {
+    async run(fn, signal) {
+      globalThis.GXT.abort?.check(signal);
       while (this.active >= this.max) {
-        await new Promise((resolve) => this.waiters.push(resolve));
+        let wake;
+        const queued = new Promise((resolve) => { wake = resolve; this.waiters.push(wake); });
+        try { await (signal ? globalThis.GXT.abort.wait(queued, signal) : queued); }
+        finally { const index = this.waiters.indexOf(wake); if (index >= 0) this.waiters.splice(index, 1); }
       }
+      globalThis.GXT.abort?.check(signal);
       this.active += 1;
       try {
         return await fn();
@@ -74,29 +98,45 @@
     },
   };
 
-  function classifyHttpError(status, body) {
+  function classifyHttpError(status, body, headers) {
     const rawMessage = body?.error?.message || '';
     const apiStatus = body?.error?.status || '';
     const message = rawMessage || `HTTP ${status}`;
     let error;
     let quotaId = '';
+    let quotaScope = '';
+    const retryHeader = headers?.get?.('retry-after');
+    const retrySeconds = Number(retryHeader);
+    const headerDelay = retryHeader ? Math.max(0, Number.isFinite(retrySeconds) ? retrySeconds * 1000 : Date.parse(retryHeader) - Date.now()) : 0;
+    const details = Array.isArray(body?.error?.details) ? body.error.details : [];
+    const retryInfo = details.find(d => String(d['@type'] || '').includes('RetryInfo'));
+    const retryDelay = retryInfo?.retryDelay;
+    const suggestedDelay = typeof retryDelay === 'object'
+      ? Number(retryDelay?.seconds || 0)*1000 + Number(retryDelay?.nanos || 0)/1e6
+      : /^\d+(?:\.\d+)?s$/.test(retryDelay || '') ? parseFloat(retryDelay)*1000 : 0;
     if (status === 429) {
       let delayMs = 15000;
       let dailyLimit = 0;
-      const details = body?.error?.details || [];
-      const retryInfo = details.find((d) => String(d['@type'] || '').includes('RetryInfo'));
       const match = /(\d+(?:\.\d+)?)s/.exec(retryInfo?.retryDelay || '');
-      if (match) delayMs = Math.min(120000, Math.ceil(parseFloat(match[1]) * 1000));
+      if (match) delayMs = Math.ceil(parseFloat(match[1]) * 1000);
+      if (headerDelay > 0) delayMs = Math.max(delayMs, headerDelay);
       for (const detail of details) {
         if (!String(detail['@type'] || '').includes('QuotaFailure')) continue;
         for (const violation of detail.violations || []) {
+          if (String(violation.quotaValue) === '0') {
+            const unavailable = new GeminiError(message, 'QUOTA_UNAVAILABLE');
+            Object.assign(unavailable,{http:status,apiStatus,raw:rawMessage,quotaId:violation.quotaId||violation.quotaMetric||''});
+            return unavailable;
+          }
           const id = `${violation.quotaId || ''} ${violation.quotaMetric || ''}`;
           if (!quotaId) quotaId = (violation.quotaId || violation.quotaMetric || '').trim();
           if (/day|daily/i.test(id)) {
+            quotaScope = 'day';
             const n = parseInt(violation.quotaValue, 10);
-            if (n > 0) dailyLimit = n;
+            if (n > 0 && /request/i.test(id) && !/token/i.test(id)) dailyLimit = n;
             quotaId = (violation.quotaId || violation.quotaMetric || quotaId).trim();
           }
+          else if (!quotaScope && /minute/i.test(id)) quotaScope = 'minute';
         }
       }
       error = new GeminiError(globalThis.GXT.i18n.t("background_gemini_callWithKeys_1"), 'RATE_LIMIT', {
@@ -106,13 +146,19 @@
       if (dailyLimit) error.dailyLimit = dailyLimit;
     } else if (status === 400 && /api.?key/i.test(message)) {
       error = new GeminiError(globalThis.GXT.i18n.t("content_youtube_friendly_1"), 'BAD_KEY');
-    } else if (status === 401 || status === 403) {
+    } else if (status === 401) {
       error = new GeminiError(globalThis.GXT.i18n.t("background_gemini_classifyHttpError_3"), 'BAD_KEY');
+    } else if (status === 403 && /api.?key.*(?:invalid|expired|leaked|revoked)|(?:invalid|expired|leaked|revoked).*api.?key/i.test(message)) {
+      error = new GeminiError(globalThis.GXT.i18n.t('content_youtube_friendly_1'), 'BAD_KEY');
+    } else if (status === 403) {
+      error = new GeminiError(globalThis.GXT.i18n.t('error.permissionDenied'), 'PERMISSION_DENIED');
     } else if (status === 404) {
       error = new GeminiError(globalThis.GXT.i18n.t("background_gemini_classifyHttpError_2"), 'MODEL_NOT_FOUND');
     } else if (status === 400) {
       error = new GeminiError(message, 'INVALID_ARGUMENT');
-    } else if (status >= 500) {
+    } else if (status === 408 || status === 504 || apiStatus === 'DEADLINE_EXCEEDED') {
+      error = new GeminiError(globalThis.GXT.i18n.t('background_gemini_error_2'), 'TIMEOUT', {retriable:true, retryAfterMs:2000});
+    } else if (status >= 500 && status !== 501 && status !== 505) {
       error = new GeminiError(globalThis.GXT.i18n.t("background_gemini_classifyHttpError_1"), 'SERVER', {
         retriable: true,
         retryAfterMs: 2000,
@@ -124,19 +170,21 @@
     error.apiStatus = apiStatus;
     error.raw = rawMessage;
     if (quotaId) error.quotaId = quotaId;
+    if (quotaScope) error.quotaScope = quotaScope;
+    if (error.retriable && headerDelay > 0) error.retryAfterMs = Math.max(error.retryAfterMs, headerDelay);
+    if (error.retriable && Number.isFinite(suggestedDelay)) error.retryAfterMs = Math.max(error.retryAfterMs, suggestedDelay);
     return error;
   }
 
-  /** A network/timeout error. A timeout is NOT retried internally (each retry
-   *  would cost another full timeout); it surfaces at once so the user sees a
-   *  retry control in seconds instead of the pipeline hanging. */
+  /** Fetch cannot distinguish a user's connection from DNS, TLS, proxy or
+   * service routing failures. Preserve its evidence without guessing blame. */
   function networkError(timedOut, cause) {
     const error = new GeminiError(
       timedOut
         ? globalThis.GXT.i18n.t("background_gemini_error_2")
         : globalThis.GXT.i18n.t("background_gemini_error_1"),
       timedOut ? 'TIMEOUT' : 'NETWORK',
-      { retriable: !timedOut, retryAfterMs: timedOut ? 0 : 3000 }
+      { retriable: true, retryAfterMs: timedOut ? 2000 : 3000 }
     );
     // Keep the underlying reason visible in «جزئیات فنی» — a bare "network
     // error" hides DNS/TLS/blocked-host failures the user could act on.
@@ -145,11 +193,12 @@
   }
 
   async function apiFetch(path, key, { method = 'GET', body, signal } = {}) {
+    globalThis.GXT.abort?.check(signal);
     const measured = /:(?:generateContent|streamGenerateContent)/.test(path);
     const startedAt = Date.now();if(measured)metrics.generationRequests++;
     const controller = new AbortController();
     const unlinkAbort = globalThis.GXT.abort?.link(signal, controller);
-    const timer = setTimeout(() => controller.abort(), requestTimeoutMs);
+    const timer = setTimeout(() => controller.abort(), timeoutFor(path));
     try {
       let response;
       try {
@@ -164,6 +213,7 @@
         });
       } catch (error) {
         globalThis.GXT.abort?.check(signal);
+        if (controller.signal.aborted) observeLatency(path, Date.now()-startedAt, true);
         throw networkError(controller.signal.aborted, error);
       }
       let json = null;
@@ -173,11 +223,15 @@
         // A body the timeout aborted mid-read must surface as a timeout, not a
         // silent null (a 200 with null would look like an empty-but-OK reply).
         globalThis.GXT.abort?.check(signal);
-        if (controller.signal.aborted) throw networkError(true, error);
+        if (controller.signal.aborted) { observeLatency(path, Date.now()-startedAt, true); throw networkError(true, error); }
+        if(response.ok && error?.name!=='SyntaxError')throw networkError(false,error);
         /* non-JSON body; classified below by status */
       }
-      if (!response.ok) throw classifyHttpError(response.status, json);
+      if (!response.ok) throw classifyHttpError(response.status, json, response.headers);
+      if (json?.error?.code) throw classifyHttpError(Number(json.error.code), json, response.headers);
+      if (!json || typeof json !== 'object') throw new GeminiError(globalThis.GXT.i18n.t('error.invalidResponse'), 'INVALID_RESPONSE', {retriable:true, retryAfterMs:2000});
       globalThis.GXT.abort?.check(signal);
+      if (measured) observeLatency(path, Date.now()-startedAt);
       return json;
     } finally {
       if(measured){metrics.completed++;metrics.totalMs+=Date.now()-startedAt;if(signal?.aborted)metrics.cancelled++;}
@@ -211,16 +265,18 @@
    * on the two surfaces where the wait is long enough to feel broken (a page
    * summary, a long page unit), not a different data path.
    */
-  async function apiStream(path, key, body, onDelta) {
+  async function apiStream(path, key, body, onDelta, signal) {
+    globalThis.GXT.abort?.check(signal);
     const startedAt=Date.now();metrics.generationRequests++;
     const controller = new AbortController();
+    const unlinkAbort = globalThis.GXT.abort?.link(signal, controller);
     let reader;
     // The idle guard, not a total-time guard: a long answer legitimately takes
     // longer than one request timeout, but a stream that goes silent is dead.
-    let timer = setTimeout(() => controller.abort(), requestTimeoutMs);
+    let timer = setTimeout(() => controller.abort(), timeoutFor(path));
     const bump = () => {
       clearTimeout(timer);
-      timer = setTimeout(() => controller.abort(), requestTimeoutMs);
+      timer = setTimeout(() => controller.abort(), timeoutFor(path));
     };
     try {
       let response;
@@ -232,16 +288,19 @@
           signal: controller.signal,
         });
       } catch (error) {
+        globalThis.GXT.abort?.check(signal);
+        if (controller.signal.aborted) observeLatency(path, Date.now()-startedAt, true);
         throw networkError(controller.signal.aborted, error);
       }
       if (!response.ok) {
         let json = null;
         try {
           json = await response.json();
-        } catch {
-          /* non-JSON error body */
+        } catch (error) {
+          globalThis.GXT.abort.check(signal);
+          if(controller.signal.aborted){observeLatency(path,Date.now()-startedAt,true);throw networkError(true,error);}
         }
-        throw classifyHttpError(response.status, json);
+        throw classifyHttpError(response.status, json, response.headers);
       }
       if (!response.body) throw new GeminiError(globalThis.GXT.i18n.t("background_gemini_apiStream_1"), 'NO_STREAM');
 
@@ -251,16 +310,20 @@
       let text = '';
       let finishReason = '';
       let blockReason = '';
+      let safetyRatings = [], finishMessage = '';
+      let malformed = false;
       for (;;) {
         let chunk;
         try {
           chunk = await reader.read();
         } catch (error) {
+          globalThis.GXT.abort?.check(signal);
+          if (controller.signal.aborted) observeLatency(path, Date.now()-startedAt, true);
           throw networkError(controller.signal.aborted, error);
         }
-        if (chunk.done) break;
+        if (chunk.done && !buffer.trim()) break;
         bump();
-        buffer += decoder.decode(chunk.value, { stream: true });
+        buffer += chunk.done ? decoder.decode()+'\n\n' : decoder.decode(chunk.value, { stream: true });
         // SSE frames are separated by a blank line; a partial frame stays in
         // the buffer until the rest of it arrives.
         let boundary;
@@ -275,11 +338,14 @@
             try {
               data = JSON.parse(payload);
             } catch {
-              continue; // a frame we cannot read is skipped, never fatal
+              malformed = true; continue;
             }
+            if(data?.error?.code)throw classifyHttpError(Number(data.error.code),data,response.headers);
             const part = extractText(data);
             if (part.blockReason) blockReason = part.blockReason;
             if (part.finishReason) finishReason = part.finishReason;
+            if (part.safetyRatings?.length) safetyRatings = part.safetyRatings;
+            if (part.finishMessage) finishMessage = part.finishMessage;
             if (part.text) {
               text += part.text;
               try {
@@ -290,10 +356,14 @@
             }
           }
         }
+        if(chunk.done)break;
       }
-      return { text, finishReason, blockReason };
+      if (malformed || !finishReason && !blockReason) throw new GeminiError(globalThis.GXT.i18n.t('error.invalidResponse'), 'INVALID_RESPONSE', {retriable:true, retryAfterMs:2000});
+      observeLatency(path, Date.now()-startedAt);
+      return { text, finishReason, blockReason, safetyRatings, finishMessage };
     } finally {
-      metrics.completed++;metrics.totalMs+=Date.now()-startedAt;
+      metrics.completed++;metrics.totalMs+=Date.now()-startedAt;if(signal?.aborted)metrics.cancelled++;
+      unlinkAbort?.();
       clearTimeout(timer);
       if (reader) {
         void reader.cancel().catch(() => {});
@@ -619,13 +689,11 @@
 
   function coolKey(key, error, model = '') {
     let coolMs;
-    if (error.dailyLimit || error.retryAfterMs > 10 * 60 * 1000) {
+    if (error.quotaScope === 'day' || error.dailyLimit) {
       // Daily quota exhausted: park the key until the Pacific-midnight reset.
-      coolMs = Math.max(MIN_KEY_COOLDOWN_MS, GXT.pacificDayAndReset().resetTs - Date.now());
-      // GROUND TRUTH, and the only kind the quota display can fully trust:
-      // Google has refused THIS key for the rest of the day, and `dailyLimit`
-      // (parsed out of the QuotaFailure details) is that key's real ceiling —
-      // worth more than any table of published caps shipped in this extension.
+      coolMs = Math.max(MIN_KEY_COOLDOWN_MS, error.retryAfterMs || 0, GXT.pacificDayAndReset().resetTs - Date.now());
+      // Daily exhaustion is observed for this credential and model. A numeric
+      // request cap is optional and belongs to its (possibly shared) project.
       reportUsage({ key, model, kind: 'exhausted', limit: error.dailyLimit || 0 });
     } else {
       coolMs = Math.max(MIN_KEY_COOLDOWN_MS, error.retryAfterMs || 15000);
@@ -676,6 +744,8 @@
         .join(''),
       finishReason: candidate?.finishReason || '',
       blockReason: data?.promptFeedback?.blockReason || '',
+      safetyRatings: candidate?.safetyRatings || data?.promptFeedback?.safetyRatings || [],
+      finishMessage: candidate?.finishMessage || data?.promptFeedback?.blockReasonMessage || '',
     };
   }
 
@@ -695,6 +765,8 @@
       text: audio ? `${audio.inlineData.mimeType || 'audio/L16;rate=24000'}|${audio.inlineData.data}` : '',
       finishReason: candidate?.finishReason || '',
       blockReason: data?.promptFeedback?.blockReason || '',
+      safetyRatings: candidate?.safetyRatings || data?.promptFeedback?.safetyRatings || [],
+      finishMessage: candidate?.finishMessage || data?.promptFeedback?.blockReasonMessage || '',
     };
   }
 
@@ -725,14 +797,23 @@
   }
 
   async function callModel(items, key, model, buildBody, parse, ladder, extract, opts = {}) {
-    const useLadder = ladder || globalThis.GXT.prompt.THINKING_LADDER;
+    const requestedLadder = ladder || globalThis.GXT.prompt.THINKING_LADDER;
+    const capability = globalThis.GXT.geminiThinkingCapabilities?.(model);
+    const useLadder = capability ? requestedLadder.map(config => {
+      if (!config?.thinkingLevel) return config;
+      return capability.levels.includes(config.thinkingLevel) ? config : null;
+    }).filter((config, index, all) => index === all.findIndex(value => JSON.stringify(value) === JSON.stringify(config))) : requestedLadder;
     const stepKey = ladderKey(model, useLadder);
     let step = thinkingStep.get(stepKey) ?? 0;
-    let retries = 0;
     let bypassCachedContent = false;
     for (;;) {
       globalThis.GXT.abort?.check(opts.signal);
       const body = buildBody(useLadder[step]);
+      const threshold = opts.safety;
+      if (['BLOCK_LOW_AND_ABOVE','BLOCK_MEDIUM_AND_ABOVE','BLOCK_ONLY_HIGH','BLOCK_NONE','OFF'].includes(threshold)) {
+        body.safetySettings = ['HATE_SPEECH','HARASSMENT','SEXUALLY_EXPLICIT','DANGEROUS_CONTENT']
+          .map(category => ({category:`HARM_CATEGORY_${category}`,threshold}));
+      }
       const cap = outputCap.get(model);
       if (cap && body.generationConfig?.maxOutputTokens > cap) {
         body.generationConfig.maxOutputTokens = cap;
@@ -756,12 +837,12 @@
         const streaming = opts.onDelta && supports(model, 'stream');
         const data = await limiter.run(() =>
           streaming
-            ? apiStream(`/models/${encodeURIComponent(model)}:streamGenerateContent?`, key, body, opts.onDelta)
+            ? apiStream(`/models/${encodeURIComponent(model)}:streamGenerateContent?`, key, body, opts.onDelta, opts.signal)
             : apiFetch(`/models/${encodeURIComponent(model)}:generateContent`, key, {
                 method: 'POST',
                 body,
                 signal: opts.signal,
-              })
+              }), opts.signal
         );
         // Counted HERE, per HTTP request, not once per logical translation:
         // a ladder step-down and a retry are each a separate billed request
@@ -771,23 +852,22 @@
         thinkingStep.set(stepKey, step);
         // apiStream already returns the extracted shape (it has to, to emit
         // deltas as they arrive); apiFetch returns the raw envelope.
-        const { text, finishReason, blockReason } = opts.onDelta && supports(model, 'stream')
+        const { text, finishReason, blockReason, safetyRatings, finishMessage } = opts.onDelta && supports(model, 'stream')
           ? data
           : (extract || extractText)(data);
-        if (blockReason) {
-          throw new GeminiError(globalThis.GXT.i18n.t("background_gemini_callModel_3"), 'BLOCKED');
+        if (blockReason || ['SAFETY','RECITATION','BLOCKLIST','PROHIBITED_CONTENT','SPII','IMAGE_SAFETY','IMAGE_PROHIBITED_CONTENT','IMAGE_RECITATION','LANGUAGE','ESCALATION','PUP_LIMITED_DISABLED'].includes(finishReason)) {
+          const error = new GeminiError(globalThis.GXT.i18n.t('error.contentBlocked', {reason:blockReason || finishReason}), 'BLOCKED');
+          Object.assign(error, {blockReason:blockReason || finishReason, finishReason, safetyRatings,
+            raw:JSON.stringify({blockReason,finishReason,safetyRatings,finishMessage})});
+          throw error;
+        }
+        if(finishReason==='MAX_TOKENS')throw new GeminiError(globalThis.GXT.i18n.t('background_gemini_callModel_2'),'MAX_TOKENS');
+        if(finishReason&&!['STOP','FINISH_REASON_UNSPECIFIED'].includes(finishReason)) {
+          const invalid=finishReason==='MISSING_THOUGHT_SIGNATURE';
+          const error=new GeminiError(globalThis.GXT.i18n.t('error.generationStopped',{reason:finishReason}),invalid?'INVALID_ARGUMENT':'BAD_RESPONSE',{retriable:!invalid});
+          Object.assign(error,{finishReason,raw:JSON.stringify({finishReason,finishMessage})});throw error;
         }
         if (!text) {
-          // MAX_TOKENS with no text = the reply hit the output ceiling before
-          // producing anything. On a thinking model the thinking tokens share
-          // that budget, so the cure is LESS thinking (step down the ladder),
-          // not a retry at the same level.
-          if (finishReason === 'MAX_TOKENS') {
-            throw new GeminiError(
-              globalThis.GXT.i18n.t("background_gemini_callModel_2"),
-              'MAX_TOKENS'
-            );
-          }
           throw new GeminiError(
             globalThis.GXT.i18n.t("background_gemini_callModel_1", {v0:(finishReason ? ` (${finishReason})` : '')}),
             'EMPTY',
@@ -818,6 +898,7 @@
           throw parseError;
         }
       } catch (error) {
+        globalThis.GXT.abort?.check(opts.signal);
         // A request Google ANSWERED spent a slot, even when the answer was an
         // error. The exception is 429: that is the quota system declining to
         // serve the request, so counting it would inflate usage precisely when
@@ -849,166 +930,109 @@
         // thinking surfaces as MAX_TOKENS. Both are cured by the next ladder
         // step (less thinking, more room for the answer).
         if (
-          (error.code === 'INVALID_ARGUMENT' || error.code === 'MAX_TOKENS') &&
+          ((error.code === 'INVALID_ARGUMENT' && /thinking|thinkingLevel|thinkingBudget/i.test(`${error.raw || ''} ${error.message || ''}`)) || error.code === 'MAX_TOKENS') &&
           useLadder[step] !== null &&
           step < useLadder.length - 1
         ) {
           step += 1;
           continue;
         }
-        // Rate limits are handled one level up by rotating to the next key.
-        if (error.code === 'RATE_LIMIT') throw error;
-        if (error.retriable && retries < MAX_RETRIES) {
-          retries += 1;
-          metrics.retries += 1;
-          const backoff = Math.min(
-            MAX_BACKOFF_MS,
-            (error.retryAfterMs || 1500 * retries) + Math.random() * 400
-          );
-          if (opts.signal) await globalThis.GXT.abort.sleep(backoff, opts.signal);
-          else await sleep(backoff);
-          continue;
-        }
         throw error;
       }
     }
   }
 
-  /**
-   * Try the batch across all usable keys, rotating on quota/key errors.
-   * Round 2 runs after a short wait when every key is merely on a brief
-   * per-minute cooldown. Every failure path attaches the attempts log.
-   */
+  /** One retry owner for the logical operation. Sleeping never holds a network
+   * slot, and a key/model lease prevents concurrent retries using the same key. */
   async function callWithKeys(items, keys, model, buildBody, parse, ladder, extract, opts = {}) {
-    globalThis.GXT.abort?.check(opts.signal);
+    globalThis.GXT.abort.check(opts.signal);
     await loadKeyState();
+    keys = [...new Set(keys.filter(Boolean))];
     if (!keys.length) throw new GeminiError(globalThis.GXT.i18n.t("background_gemini_callWithKeys_3"), 'NO_KEY');
-    const attempts = [];
-    for (let round = 0; round < 2; round += 1) {
-      let lastError = null;
-      const start = keyCursor % keys.length;
-      for (let offset = 0; offset < keys.length; offset += 1) {
-        const index = (start + offset) % keys.length;
-        const key = keys[index];
-        if (!isUsable(key, Date.now(), model)) {
-          const state = keyState.get(key);
-          attempts.push({
-            key,
-            code: state?.invalid ? 'INVALID' : 'COOLING',
-            coolUntil: cooldownFor(state, model),
-          });
-          continue;
-        }
-        try {
-          const map = await callModel(items, key, model, buildBody, parse, ladder, extract, opts);
-          keyCursor = index; // stick with the key that worked
-          saveKeyState();
-          return map;
-        } catch (error) {
-          if (error.code === 'RATE_LIMIT') {
-            coolKey(key, error, model);
-            attempts.push(attemptOf(key, error));
-            lastError = error;
-            continue;
+    const controller = new AbortController();
+    const unlink = globalThis.GXT.abort.link(opts.signal, controller);
+    const stopHeartbeat = keepAlive(controller.signal);
+    activeOperations.add(controller);
+    opts = {...opts, signal:controller.signal};
+    const attempts = [], inspected = new Set(), tried = new Set(), denied = new Set();
+    let lastError, malformedCount = 0;
+    const describe = error => {
+      error.attempts = attempts.slice();
+      error.keySummary = {total:keys.length, inspected:inspected.size, tried:tried.size,
+        skipped:inspected.size-tried.size, unvisited:keys.length-inspected.size};
+      return error;
+    };
+    const record = (key, error) => {
+      inspected.add(key); attempts.push(attemptOf(key,error));
+      if (attempts.length>64) attempts.shift();
+    };
+    try {
+      for (;;) {
+        globalThis.GXT.abort.check(opts.signal);
+        let attempted = false;
+        const start = keyCursor % keys.length;
+        for (let offset=0;offset<keys.length;offset++) {
+          globalThis.GXT.abort.check(opts.signal);
+          const index=(start+offset)%keys.length, key=keys[index], lease=JSON.stringify([key,model]);
+          if (denied.has(key) || !isUsable(key,Date.now(),model)) {
+            inspected.add(key); continue;
           }
-          if (error.code === 'BAD_KEY') {
-            keyState.set(key, { invalid: true });
-            saveKeyState();
-            attempts.push(attemptOf(key, error));
-            lastError = error;
-            continue;
-          }
-          error.attempts = [...attempts, attemptOf(key, error)];
-          throw error;
+          if (activeKeys.has(lease)) continue;
+          activeKeys.add(lease); attempted=true; tried.add(key); inspected.add(key);
+          keyCursor=(index+1)%keys.length;
+          try {
+            const result=await callModel(items,key,model,buildBody,parse,ladder,extract,opts);
+            const current=keyState.get(key);
+            if (current?.failures) { delete current.failures[model]; saveKeyState(); }
+            return result;
+          } catch (error) {
+            globalThis.GXT.abort.check(opts.signal);
+            record(key,error); lastError=error;
+            if (error.code==='BAD_KEY') {
+              keyState.set(key,{invalid:true}); saveKeyState(); continue;
+            }
+            if (['PERMISSION_DENIED','QUOTA_UNAVAILABLE'].includes(error.code)) { denied.add(key); continue; }
+            if (!error.retriable) throw describe(error);
+            // A valid service envelope with repeatedly unusable model output
+            // needs an actionable error. An unreadable/truncated HTTP body or
+            // SSE stream is a transport failure and keeps recovering.
+            if (['BAD_RESPONSE','PARSE'].includes(error.code) && ++malformedCount>3) {
+              error.retriable=false;throw describe(error);
+            }
+            const current=keyState.get(key)||{}, failures=Math.min(16,(current.failures?.[model]||0)+1);
+            keyState.set(key,{...current,failures:{...current.failures,[model]:failures}});
+            error.retryAfterMs=Math.max(error.retryAfterMs||0,Math.min(MAX_BACKOFF_MS,1500*2**(failures-1)))+Math.ceil(Math.random()*750);
+            coolKey(key,error,model);
+            metrics.retries++;
+            try { opts.onRetry?.({code:error.code,retryAfterMs:error.retryAfterMs}); opts.onDelta?.('', ''); } catch {}
+            // Service-wide back pressure applies before rotating keys as well.
+            // Quota is per project; rotation never resets a project's quota.
+            if (error.code==='SERVER' || error.code==='NETWORK') await globalThis.GXT.abort.sleep(error.retryAfterMs,opts.signal);
+          } finally { activeKeys.delete(lease); wakeKeys(); }
         }
+        const usable=keys.filter(key=>!keyState.get(key)?.invalid&&!denied.has(key));
+        if (!usable.length) throw describe(lastError || new GeminiError(globalThis.GXT.i18n.t("background_gemini_bad_1"),'BAD_KEY'));
+        const now=Date.now();
+        const free=usable.filter(key=>!activeKeys.has(JSON.stringify([key,model])));
+        const soonest=Math.min(...free.map(key=>cooldownFor(keyState.get(key),model)||now));
+        if (free.length && soonest<=now && attempted) continue;
+        let wake;
+        const changed=new Promise(resolve=>{wake=resolve;keyWaiters.add(wake);});
+        const delay=Number.isFinite(soonest)?Math.max(100,soonest-now):20000;
+        // Bound timer size and re-read persisted deadlines, including daily reset.
+        // A lease release wakes us early; the next loop still checks its cooldown.
+        const waitController=new AbortController(), unlinkWait=globalThis.GXT.abort.link(opts.signal,waitController);
+        try { await globalThis.GXT.abort.wait(Promise.race([changed,globalThis.GXT.abort.sleep(Math.min(delay,20000),waitController.signal)]),opts.signal); }
+        finally { keyWaiters.delete(wake); waitController.abort(); unlinkWait(); }
       }
-      // Nothing succeeded this round. If the only obstacle is a short
-      // cooldown, absorb it once by waiting for the soonest key.
-      const now = Date.now();
-      const soonest = Math.min(
-        ...keys.map((k) => {
-          const state = keyState.get(k);
-          return state?.invalid ? Infinity : cooldownFor(state, model) || now;
-        })
-      );
-      const waitMs = soonest - now;
-      if (round === 0 && Number.isFinite(waitMs) && waitMs > 0 && waitMs <= SHORT_WAIT_MAX_MS) {
-        if (opts.signal) await globalThis.GXT.abort.sleep(waitMs + 250, opts.signal);
-        else await sleep(waitMs + 250);
-        continue;
-      }
-      if (keys.every((k) => keyState.get(k)?.invalid)) {
-        const bad = new GeminiError(globalThis.GXT.i18n.t("background_gemini_bad_1"), 'BAD_KEY');
-        bad.attempts = attempts;
-        throw bad;
-      }
-      const error =
-        lastError ||
-        new GeminiError(globalThis.GXT.i18n.t("background_gemini_callWithKeys_1"), 'RATE_LIMIT', {
-          retriable: true,
-          retryAfterMs: Math.max(1000, Number.isFinite(waitMs) ? waitMs : 15000),
-        });
-      if (error.code === 'RATE_LIMIT' && keys.length > 1) {
-        error.message = globalThis.GXT.i18n.t("background_gemini_callWithKeys_2");
-      }
-      error.attempts = attempts;
-      throw error;
-    }
-    throw new GeminiError(globalThis.GXT.i18n.t("background_gemini_callWithKeys_1"), 'RATE_LIMIT', { retriable: true });
+    } finally { activeOperations.delete(controller); stopHeartbeat(); unlink(); }
   }
 
-  // Models that recently accepted a request but never answered (TIMEOUT).
-  // Benched for a short window so we don't re-spend the full timeout on every
-  // request. Unlike a 404 (the model doesn't exist → permanent, saved-model
-  // switch), this is transient: the user's chosen model is NEVER changed, just
-  // routed around until the window passes, then retried automatically.
-  const modelCooldown = new Map(); // model id -> coolUntil ts
-  const MODEL_COOLDOWN_MS = 5 * 60 * 1000;
-  // A timeout costs a full request timeout, so cap how many models one request
-  // will spend timeouts on (a 404 is instant, so those are uncapped).
-  const MAX_TIMEOUT_FALLBACKS = 1;
-  const modelUsable = (m, now = Date.now()) => (modelCooldown.get(m) || 0) <= now;
-
-  /**
-   * Try the chosen model, then the fallback chain. Falls through on:
-   *  - MODEL_NOT_FOUND (404): the model doesn't exist — a HARD switch the
-   *    caller persists as the new saved model.
-   *  - TIMEOUT: the model accepted the request but never answered — a SOFT,
-   *    transient switch (benched briefly, saved model kept) so the user still
-   *    gets a translation instead of an error.
-   * @returns {{result, model, softFallback}} softFallback=true ⇒ do NOT persist.
-   */
-  async function withModelFallback(keys, model, run, chain) {
-    const list = chain || globalThis.GXT.FALLBACK_MODELS;
-    const all = [model, ...list.filter((m) => m !== model)];
-    // Prefer models not benched for unresponsiveness; if every one is benched,
-    // try them all rather than give up.
-    const fresh = all.filter((m) => modelUsable(m));
-    const candidates = fresh.length ? fresh : all;
-    let lastError = null;
-    let userModelHardFailed = false; // the user's own model returned 404
-    let timeoutFallbacks = 0;
-    for (const candidate of candidates) {
-      try {
-        const result = await run(candidate);
-        return { result, model: candidate, softFallback: candidate !== model && !userModelHardFailed };
-      } catch (error) {
-        if (error.code === 'MODEL_NOT_FOUND') {
-          if (candidate === model) userModelHardFailed = true;
-          lastError = error;
-          continue;
-        }
-        if (error.code === 'TIMEOUT') {
-          modelCooldown.set(candidate, Date.now() + MODEL_COOLDOWN_MS);
-          lastError = error;
-          timeoutFallbacks += 1;
-          if (timeoutFallbacks > MAX_TIMEOUT_FALLBACKS) break; // bound total wait
-          continue;
-        }
-        throw error;
-      }
-    }
-    throw lastError || new GeminiError(globalThis.GXT.i18n.t("background_gemini_withModelFallback_1"), 'MODEL_NOT_FOUND');
+  // The selected model is an invariant. Missing/unauthorized models are
+  // actionable failures; recovery never silently changes quality or settings.
+  const modelCooldown = new Map(); // Retained diagnostics compatibility only.
+  async function withSelectedModel(keys, model, run) {
+    return {result:await run(model), model, softFallback:false};
   }
 
   /**
@@ -1017,10 +1041,10 @@
    * @param {{keys: string[], model: string}} cfg
    * @returns {Promise<{map: Map<number,{t:string,sl:string}>, model: string}>}
    */
-  async function translateBatch(items, { keys, model, extra }) {
+  async function translateBatch(items, { keys, model, extra, signal }) {
     const prompt = globalThis.GXT.prompt;
     const ladder = ladderFor(extra);
-    const { result, model: usedModel, softFallback } = await withModelFallback(keys, model, (candidate) =>
+    const { result, model: usedModel, softFallback } = await withSelectedModel(keys, model, (candidate) =>
       callWithKeys(
         items,
         keys,
@@ -1032,7 +1056,7 @@
         // The tweet prompt is ~6.6k characters and every batch re-sent it.
         // This is the single largest repeated cost in the product, so it is
         // the one path that asks for the context cache by default.
-        { cache: extra?.contextCache !== false }
+        { cache: extra?.contextCache !== false, signal, safety:extra?.geminiSafety }
       )
     );
     return { map: result, model: usedModel, softFallback };
@@ -1045,17 +1069,17 @@
    * @param {{keys: string[], model: string, kind?: string}} cfg
    * @returns {Promise<{list: string[], model: string}>}
    */
-  async function translateTexts(texts, { keys, model, kind, context, extra }) {
+  async function translateTexts(texts, { keys, model, kind, context, extra, signal }) {
     const prompt = globalThis.GXT.prompt;
     const ladder = ladderFor(extra);
-    const { result, model: usedModel, softFallback } = await withModelFallback(keys, model, (candidate) =>
+    const { result, model: usedModel, softFallback } = await withSelectedModel(keys, model, (candidate) =>
       callWithKeys(
         texts,
         keys,
         candidate,
         (thinking) => prompt.buildGenericRequest(texts, kind, thinking, context, extra),
         (text) => prompt.parseGenericTranslations(text, texts.length, texts, kind),
-        ladder
+        ladder, null, {signal, safety:extra?.geminiSafety}
       )
     );
     return { list: result, model: usedModel, softFallback };
@@ -1067,25 +1091,25 @@
       const thinking = prompt.workshopThinking(candidate, extra);
       const scoped = {...extra, temperature:typeof extra?.temperature === 'number' ? extra.temperature : /^gemini-[3-9]/.test(candidate) ? 1 : 0.25};
       return callWithKeys(payload.cues, keys, candidate, () => prompt.workshopRequest(payload, thinking, scoped),
-        raw => prompt.parseWorkshop(raw, payload.cues), [thinking], null, {signal});
+        raw => prompt.parseWorkshop(raw, payload.cues), [thinking], null, {signal, safety:extra?.geminiSafety});
     };
     const { result, model: usedModel, softFallback } = exactModel
-      ? {result:await run(model), model, softFallback:false} : await withModelFallback(keys, model, run);
+      ? {result:await run(model), model, softFallback:false} : await withSelectedModel(keys, model, run);
     return { ...result, model: usedModel, softFallback };
   }
 
   /** Optional quality-mode pass: edit a whole translated batch in one call. */
-  async function reviewTexts(texts, sources, { keys, model, kind, extra }) {
+  async function reviewTexts(texts, sources, { keys, model, kind, extra, signal }) {
     const prompt = globalThis.GXT.prompt;
     const ladder = ladderFor(extra);
-    const { result, model: usedModel, softFallback } = await withModelFallback(keys, model, (candidate) =>
+    const { result, model: usedModel, softFallback } = await withSelectedModel(keys, model, (candidate) =>
       callWithKeys(
         texts,
         keys,
         candidate,
         (thinking) => prompt.buildReviewTextsRequest(texts, sources, kind, thinking, extra),
         (text) => prompt.parseGenericTranslations(text, texts.length, sources, kind),
-        ladder
+        ladder, null, {signal, safety:extra?.geminiSafety}
       )
     );
     return { list: result, model: usedModel, softFallback };
@@ -1100,29 +1124,29 @@
    */
   async function runPlain(keys, model, buildBody, ladder, opts = {}) {
     const prompt = globalThis.GXT.prompt;
-    const { result, model: usedModel, softFallback } = await withModelFallback(keys, model, (candidate) =>
+    const { result, model: usedModel, softFallback } = await withSelectedModel(keys, model, (candidate) =>
       callWithKeys(null, keys, candidate, buildBody, (text) => prompt.parsePlainText(text), ladder, null, opts)
     );
     return { text: result, model: usedModel, softFallback };
   }
 
   /** Translate every non-Persian text found in an image (v1.8). */
-  function translateImage({ keys, model, mime, data, extra }) {
+  function translateImage({ keys, model, mime, data, extra, signal }) {
     const prompt = globalThis.GXT.prompt;
     return runPlain(keys, model, (thinking) =>
-      prompt.buildImageRequest(mime, data, thinking, extra), ladderFor(extra)
+      prompt.buildImageRequest(mime, data, thinking, extra), ladderFor(extra), {signal, safety:extra?.geminiSafety}
     );
   }
 
   /** Persian bullet summary of arbitrary text (v1.8). Streams when the caller
    *  can paint partial text (v3.0.0) — the longest wait in the product. */
-  function summarize({ keys, model, text, extra, onDelta }) {
+  function summarize({ keys, model, text, extra, onDelta, signal }) {
     const prompt = globalThis.GXT.prompt;
     return runPlain(
       keys, model,
       (thinking) => prompt.buildSummaryRequest(text, thinking, extra),
       ladderFor(extra),
-      { onDelta }
+      { onDelta, signal, safety:extra?.geminiSafety }
     );
   }
 
@@ -1133,20 +1157,20 @@
    * watching a paragraph improve is a far better experience than watching a
    * spinner and then having the text swap underneath you.
    */
-  function reviewText({ keys, model, text, source, extra, onDelta }) {
+  function reviewText({ keys, model, text, source, extra, onDelta, signal }) {
     const prompt = globalThis.GXT.prompt;
     return runPlain(
       keys, model,
       (thinking) => prompt.buildReviewRequest(text, source, thinking, extra),
       ladderFor(extra),
-      { onDelta }
+      { onDelta, signal, safety:extra?.geminiSafety }
     );
   }
 
   /** Persian draft → natural English X post (v1.8). */
-  function composeEnglish({ keys, model, text, extra }) {
+  function composeEnglish({ keys, model, text, extra, signal }) {
     const prompt = globalThis.GXT.prompt;
-    return runPlain(keys, model, (thinking) => prompt.buildComposeRequest(text, thinking, extra), ladderFor(extra));
+    return runPlain(keys, model, (thinking) => prompt.buildComposeRequest(text, thinking, extra), ladderFor(extra), {signal, safety:extra?.geminiSafety});
   }
 
   /**
@@ -1157,34 +1181,26 @@
    * line "concisely" would cost the whole video's tokens and would make the
    * SUBTITLE worse to read in order to help the audio.
    */
-  function compressForDub({ keys, model, text, budget, extra }) {
+  function compressForDub({ keys, model, text, budget, extra, signal }) {
     const prompt = globalThis.GXT.prompt;
     return runPlain(
       keys, model,
       (thinking) => prompt.buildDubCompressRequest(text, budget, thinking, extra),
-      ladderFor(extra)
+      ladderFor(extra), {signal, safety:extra?.geminiSafety}
     );
   }
 
   /**
    * Speech synthesis (v2.2.0) — the premium TTS engine.
    *
-   * Reuses every resilience layer above: key rotation, cooldowns, bounded
-   * retries and model fallback all work unchanged, because the only thing
-   * that differs is which part of the response is the answer (`extractAudio`).
-   *
-   * Two deliberate differences from the text calls:
-   *  - the ladder is `[null]`: speech models take no thinkingConfig at all, so
-   *    there is nothing to step down and a rejected step would waste a request;
-   *  - the fallback chain is TTS-only (`TTS_FALLBACK_MODELS`). Falling through
-   *    to a text model would 400 on `responseModalities: ["AUDIO"]`, turning a
-   *    recoverable 404 into a confusing hard failure.
+   * Reuses cancellable key rotation and cooldowns on the selected speech
+   * model. The ladder is `[null]`: speech models take no thinkingConfig.
    *
    * @returns {Promise<{mime: string, data: string, model: string, softFallback: boolean}>}
    */
-  async function synthesize({ keys, model, text, voice, style }) {
+  async function synthesize({ keys, model, text, voice, style, signal }) {
     const prompt = globalThis.GXT.prompt;
-    const { result, model: usedModel, softFallback } = await withModelFallback(
+    const { result, model: usedModel, softFallback } = await withSelectedModel(
       keys,
       model,
       (candidate) =>
@@ -1198,15 +1214,15 @@
             return { mime: payload.slice(0, cut), data: payload.slice(cut + 1) };
           },
           [null],
-          extractAudio
-        ),
-      globalThis.GXT.TTS_FALLBACK_MODELS
+          extractAudio,
+          {signal}
+        )
     );
     return { ...result, model: usedModel, softFallback };
   }
 
   globalThis.GXT.gemini = {
-    diagnostics:()=>({...metrics,averageMs:metrics.completed?Math.round(metrics.totalMs/metrics.completed):0}),
+    diagnostics:()=>({...metrics,averageMs:metrics.completed?Math.round(metrics.totalMs/metrics.completed):0, deadlines:Object.fromEntries([...latency.keys()].map(model=>[model,timeoutFor(`/models/${model}:generateContent`)]))}),
     GeminiError,
     listModels,
     testKey,
@@ -1227,7 +1243,7 @@
     submitBatch,
     pollBatch,
     _internal: {
-      apiStream,
+      apiStream, timeoutFor, latency, activeKeys, activeOperations,
       ensureCachedContent,
       cacheHandles,
       cacheSeen,

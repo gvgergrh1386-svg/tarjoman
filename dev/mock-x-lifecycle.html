@@ -32,6 +32,7 @@ const sent = [], routes = new Map();
 let composeRoute = null, imageRoute = null;
 globalThis.GXT_SHIM_HANDLER = async (message) => {
   sent.push(message);
+  if(message.type==='TTS_SPLIT')return{ok:true,parts:[message.text]};
   if (message.type === 'TRANSLATE_COMPOSE') return composeRoute ? composeRoute(message) : { ok: true, t: 'Translated draft' };
   if (message.type === 'TRANSLATE_IMAGE') return imageRoute ? imageRoute(message) : { ok: true, t: 'ترجمهٔ تصویر' };
   if (message.type !== 'TRANSLATE_BATCH') return { ok: false, code: 'DEV' };
@@ -101,6 +102,170 @@ async function media() {
   return { article, img, btn: article.querySelector('.gxt-imgbtn') };
 }
 const tests = [
+  ['a reconnect resends only unfinished posts and keeps the delivered cached box',async()=>{
+    const original=globalThis.GXT_SHIM_CONNECT,requests=[];let reconnectResult;
+    globalThis.GXT_SHIM_CONNECT=name=>{
+      const listeners=[],disconnected=[];let closed=false;
+      const close=()=>{if(closed)return;closed=true;disconnected.forEach(f=>f());};
+      return {name,onMessage:{addListener:f=>listeners.push(f)},onDisconnect:{addListener:f=>disconnected.push(f)},disconnect:close,
+        postMessage(message){if(!message.items)return;requests.push(message.items);const emit=m=>{if(!closed)listeners.forEach(f=>f(m));};
+          if(requests.length===1) {
+            const cached=message.items.find(i=>i.text.startsWith('Cached before reconnect'));
+            setTimeout(()=>{emit({t:'result',id:cached.id,result:{ok:true,t:'ترجمهٔ کش',sl:'en',cached:true}});close();},20);
+          } else reconnectResult=()=>{for(const item of message.items)emit({t:'result',id:item.id,result:{ok:true,t:'ترجمهٔ پس از اتصال',sl:'en'}});};
+        }};
+    };
+    try {
+      await settings({enabled:true,batchSize:8,batchDelayMs:30});const old=tweet('Cached before reconnect example.'),fresh=tweet('Unfinished after reconnect example.');
+      await until(()=>body(old));const box=old.nextElementSibling;
+      await until(()=>reconnectResult,'unfinished post was not reconnected',5000);
+      assert(requests[1].length===1&&requests[1][0].text===fresh.textContent,'reconnect resubmitted a completed post');
+      assert(old.nextElementSibling===box&&body(old),'reconnect destroyed the cached box');reconnectResult();await until(()=>body(fresh));
+    } finally {reconnectResult?.();globalThis.GXT_SHIM_CONNECT=original;await settings({batchSize:1,batchDelayMs:1});}
+  }],
+  ['a recycled known card waits for its new header and never uses the previous post identity',async()=>{
+    await settings({enabled:true});const old=tweet('Known source before card reuse.'),article=old.closest('article');
+    const header=document.createElement('header');header.innerHTML='<div data-testid="User-Name">Alice @alice</div><a href="/alice/status/99002"><time>then</time></a>';
+    article.prepend(header);await until(()=>body(old));header.replaceChildren();old.textContent='A different source during card reuse.';
+    await sleep(400);assert(!body(old),'old translation survived a changed source');assert(!sentText(old.textContent),'unresolved recycled source reached the provider');
+    header.innerHTML='<div data-testid="User-Name">Bob @bob</div><a href="/bob/status/99003"><time>now</time></a>';
+    await until(()=>body(old));const requests=sent.flatMap(m=>m.items||[]).filter(i=>i.text===old.textContent);
+    assert(requests.length===1&&requests[0].contentId.includes('x:99003'),'new post used a fallback or stale identity');
+  }],
+  ['an unchanged translated post keeps its identity while the whole author header is rebuilt',async()=>{
+    await settings({enabled:true});const text='A stable source while every header child is replaced.',el=tweet(text);
+    const header=document.createElement('header');header.innerHTML='<div data-testid="User-Name">Alice @alice</div><a href="/alice/status/99001"><time>then</time></a>';
+    el.closest('article').prepend(header);await until(()=>body(el));const box=el.nextElementSibling,count=sent.length;
+    header.replaceChildren();await sleep(400);
+    assert(el.nextElementSibling===box&&body(el),'header hydration discarded the completed translation');
+    assert(sent.length===count,'missing author and time changed the source identity');
+    header.innerHTML='<div data-testid="User-Name">Alice @alice</div><a href="/alice/status/99001"><time>now</time></a>';
+    await sleep(120);assert(sent.length===count,'restored header resubmitted the post');
+  }],
+  ['disk cache delivery paints an old post before its slow new batch neighbor, without loading',async()=>{
+    const factory=globalThis.GXT_SHIM_CONNECT, loading=GXT.render.showLoading,loads=[];
+    const oldText='A disk-cached post on a freshly opened profile.',newText='A new profile post with a slow response.';
+    let release;
+    GXT.render.showLoading=(el,...args)=>{loads.push(el.textContent);return loading(el,...args);};
+    globalThis.GXT_SHIM_CONNECT=name=>{
+      const listeners=[],closed=[];let stopped=false;
+      return {name,onMessage:{addListener:f=>listeners.push(f)},onDisconnect:{addListener:f=>closed.push(f)},
+        disconnect(){stopped=true;closed.forEach(f=>f());},postMessage(message){
+          if(!message.items)return;
+          const emit=m=>{if(!stopped)listeners.forEach(f=>f(m));};
+          for(const item of message.items) {
+            if(item.text===oldText)setTimeout(()=>emit({t:'result',id:item.id,result:{ok:true,t:'ترجمهٔ قبلی',sl:'en',cached:true}}),30);
+            else {emit({t:'pending',id:item.id});release=()=>emit({t:'result',id:item.id,result:{ok:true,t:'ترجمهٔ تازه',sl:'en'}});}
+          }
+        }};
+    };
+    try {
+      await settings({enabled:true,batchSize:8,batchDelayMs:30});const old=tweet(oldText),fresh=tweet(newText);
+      await until(()=>release&&body(old),'cached post waited for the new post');
+      assert(!body(fresh),'slow new post already completed');assert(!loads.includes(oldText),'cached post showed a loading state');
+      assert(body(old).textContent==='ترجمهٔ قبلی','wrong cached response');release();await until(()=>body(fresh));
+    } finally {release?.();GXT.render.showLoading=loading;globalThis.GXT_SHIM_CONNECT=factory;await settings({batchSize:1,batchDelayMs:1});}
+  }],
+  ['an unchanged post retains its actual translation node when React removes the box',async()=>{
+    await settings({enabled:true});const el=tweet('Completed translation survives a rebuilt sibling list.');
+    await until(()=>body(el));const box=el.nextElementSibling,count=sent.length;
+    box.remove();await sleep(150);
+    assert(el.nextElementSibling===box,'repair destroyed and recreated a completed translation');
+    assert(sent.length===count,'repair submitted another translation');
+  }],
+  ['repairing the layout of a pending post preserves its request and cancellation control',async()=>{
+    await settings({enabled:true});const text='A pending translation survives a rebuilt sibling list.';
+    const finish=deferText(text),el=tweet(text);await until(()=>sentText(text)&&el.nextElementSibling?.querySelector('.gxt-skel'));
+    const box=el.nextElementSibling,count=sent.length;box.remove();await sleep(150);
+    try {assert(el.nextElementSibling===box,'layout repair replaced the pending UI');assert(sent.length===count,'layout repair restarted translation');}
+    finally {finish({ok:true,t:'ترجمهٔ آماده',sl:'en'});}
+    await until(()=>body(el));
+  }],
+  ['a cloned source marker is not mistaken for a live translated element',async()=>{
+    await settings({enabled:true});const first=tweet('A cloned post retains its valid cache.');await until(()=>body(first));
+    const count=sent.length,clone=first.cloneNode(true);first.closest('article').remove();
+    const article=document.createElement('article');article.append(clone);fixture.append(article);
+    await until(()=>body(clone),'a copied signature suppressed the translation');assert(sent.length===count,'cloned source missed the cache');
+  }],
+  ['cold profile hydration waits for the post identity before requesting translation',async()=>{
+    await settings({enabled:true});const el=tweet('Cold timestamp hydration source.');
+    el.closest('article').insertAdjacentHTML('afterbegin','<a><time>now</time></a>');
+    await sleep(400);assert(!sentText(el.textContent),'incomplete identity reached provider');
+    el.closest('article').querySelector('a').href='/alice/status/9300';await until(()=>body(el));
+    assert(sent.filter(m=>m.items?.some(i=>i.text===el.textContent)).length===1,'hydration translated twice');
+  }],
+  ['remounting a pending pinned post with a new neighbor shares the original request',async()=>{
+    await settings({enabled:true});const text='Pending pinned post and a newly published neighbor.',finish=deferText(text);
+    const old=tweet(text);old.closest('article').insertAdjacentHTML('afterbegin','<a href="/alice/status/9301"><time>then</time></a>');
+    await until(()=>sentText(text));old.closest('article').remove();
+    const fresh=tweet('A new neighbor during the pending translation.');
+    const next=tweet(text);next.closest('article').insertAdjacentHTML('afterbegin','<a href="/alice/status/9301"><time>then</time></a>');
+    await sleep(200);finish({ok:true,t:'ترجمهٔ مشترک',sl:'en'});await until(()=>body(next)&&body(fresh));
+    assert(sent.filter(m=>m.items?.some(i=>i.text===text)).length===1,'pending pin was submitted twice');
+  }],
+  ['duplicate cards share a pending translation and one cancellation preserves the other',async()=>{
+    await settings({enabled:true});const text='Two visible copies share one request.',finish=deferText(text);
+    const a=tweet(text),b=tweet(text);await until(()=>sentText(text));await sleep(100);
+    a.nextElementSibling.querySelector('[role="button"]').click();
+    finish({ok:true,t:'ترجمهٔ دوم',sl:'en'});await until(()=>body(b));
+    assert(!body(a),'cancelled card was repainted');assert(sent.filter(m=>m.items?.some(i=>i.text===text)).length===1,'duplicate paid request');
+  }],
+  ['removing the first duplicate before batch flush preserves its queued follower',async()=>{
+    await settings({enabled:true,batchSize:8,batchDelayMs:300});const text='Queued duplicates survive owner replacement.';
+    try {
+      const a=tweet(text),b=tweet(text);await until(()=>a.dataset.gxtSig&&b.dataset.gxtSig);await sleep(50);
+      assert(!sentText(text),'fixture removed the owner after flush');
+      a.closest('article').remove();await until(()=>body(b));assert(sent.filter(m=>m.items?.some(i=>i.text===text)).length===1,'queued follower lost its owner');
+    } finally {await settings({batchSize:1,batchDelayMs:1});}
+  }],
+  ['cancellation stays stopped across unrelated timeline mutations',async()=>{
+    await settings({enabled:true});const text='A cancelled card stays cancelled.',finish=deferText(text),el=tweet(text);await until(()=>sentText(text));
+    el.nextElementSibling.querySelector('[role="button"]').dispatchEvent(new KeyboardEvent('keydown',{key:'Enter',bubbles:true}));
+    tweet('New content after the explicit cancellation.');finish({ok:true,t:'پاسخ دیرهنگام',sl:'en'});await sleep(300);
+    assert(!body(el),'cancelled late result painted');assert(sent.filter(m=>m.items?.some(i=>i.text===text)).length===1,'timeline restarted cancelled work');
+  }],
+  ['recycling tweetText into a different X element removes UI and retires pending output',async()=>{
+    await settings({enabled:true});const text='Recycled testid source.',finish=deferText(text),el=tweet(text);await until(()=>sentText(text));
+    el.dataset.testid='unrelated-control';await sleep(150);finish({ok:true,t:'دیرهنگام',sl:'en'});await sleep(100);
+    assert(!el.nextElementSibling?.classList.contains('gxt-box'),'UI remained on a non-post element');
+  }],
+  ['bio identity is independent of new posts on the profile',async()=>{
+    await settings({enabled:true});const bio=tweet('A stable biography on a busy profile.','UserDescription');await until(()=>body(bio));const count=sent.length;
+    const fresh=tweet('A profile update containing a new post.');fresh.closest('article').insertAdjacentHTML('afterbegin','<div data-testid="User-Name">Changed @new</div>');await until(()=>body(fresh));
+    const biography=bio.closest('article');fixture.append(biography);await sleep(150);assert(sent.length===count+1,'new author invalidated a biography');
+  }],
+  ['only output settings invalidate the pinned translation',async()=>{
+    const saved={model:config.model,targetLang:config.targetLang,glossary:config.glossary,font:config.font};
+    try {
+      await settings({enabled:true});const el=tweet('Pinned settings identity example.');el.closest('article').insertAdjacentHTML('afterbegin','<a href="/alice/status/9400"><time>then</time></a>');await until(()=>body(el));let count=sent.length;
+      await settings({font:'x-default'});await sleep(100);assert(sent.length===count,'font invalidated translation');
+      for(const patch of [{model:'gemini-other-selected'},{targetLang:'de'},{glossary:'example = Beispiel'}]){
+        await settings(patch);await until(()=>sent.length>count&&body(el));assert(sent.length===++count,'output setting did not produce exactly one request');
+      }
+    } finally {await settings({enabled:false,...saved});}
+  }],
+  ['pinned post survives new posts and a partially rebuilt permalink',async()=>{
+    await settings({enabled:true});
+    const text='An unchanged pinned post during profile hydration.';
+    const original=tweet(text);original.closest('article').insertAdjacentHTML('afterbegin','<div data-testid="User-Name">Alice @alice</div><a href="/alice/status/9001"><time>yesterday</time></a>');
+    await until(()=>body(original));const initial=sent.filter(m=>m.items?.some(i=>i.text===text)).length;
+    for(let n=0;n<3;n++){
+      fixture.querySelectorAll('article').forEach(a=>a.remove());
+      const fresh=tweet('A genuinely new post '+n);fresh.closest('article').insertAdjacentHTML('afterbegin',`<div data-testid="User-Name">Alice @alice</div><a href="/alice/status/${9100+n}"><time>now</time></a>`);
+      const pin=tweet(text);pin.closest('article').insertAdjacentHTML('afterbegin','<div data-testid="User-Name">Alice @alice</div><a><time>yesterday</time></a>');
+      await sleep(300);pin.closest('article').querySelector('a').href='/alice/status/9001';
+      await until(()=>body(pin)&&body(fresh));
+      assert(sent.filter(m=>m.items?.some(i=>i.text===text)).length===initial,'pinned post was submitted again during hydration');
+    }
+  }],
+  ['changing only a status permalink retires the old in-flight result',async()=>{
+    await settings({enabled:true});const text='A recycled source with a late response.';
+    const finish=deferText(text),el=tweet(text);el.closest('article').insertAdjacentHTML('afterbegin','<a href="/alice/status/9200"><time>now</time></a>');
+    await until(()=>sentText(text));el.closest('article').querySelector('a').href='/alice/status/9201';
+    await sleep(150);finish({ok:true,t:'ترجمه',sl:'en'});
+    await until(()=>body(el),'permalink-only recycling left the card loading');
+    assert(el.dataset.gxtSig.includes('9201'),'sibling permalink mutation was not observed');
+  }],
   ['stable permalink keeps translation on SPA conversation remount with changed author label',async()=>{
     await settings({enabled:true});const first=tweet('Stable route identity 376.');first.closest('article').insertAdjacentHTML('afterbegin','<div data-testid="User-Name">Alice @alice</div><a href="/alice/status/1234567890"><time>today</time></a>');await until(()=>body(first));const count=sent.length;first.closest('article').remove();history.pushState({},'', '/alice/status/1234567890');
     const next=tweet('Stable route identity 376.');next.closest('article').insertAdjacentHTML('afterbegin','<div data-testid="User-Name">New label @alice</div><a href="https://x.com/alice/status/1234567890"><time>today</time></a>');next.removeAttribute('lang');await until(()=>body(next));assert(sent.length===count,'view metadata triggered another translation');history.replaceState({},'', '/dev/mock-x-lifecycle.html');
@@ -334,6 +499,47 @@ const tests = [
   }],
 ];
 (async () => {
+  tests.push(['stopping X read-aloud aborts pending synthesis without a late error',async()=>{
+    const original=GXT.requestXAction,states=[];let signal;
+    GXT.requestXAction=(message,owner)=>{signal=owner;return new Promise(resolve=>owner.addEventListener('abort',()=>resolve({ok:false,code:'CANCELLED'}),{once:true}));};
+    try {
+      const speech=GXT.ui.speak('A source waiting for speech.',{onState:state=>states.push(state)});
+      await until(()=>signal,'speech did not start');speech.stop();await sleep(30);
+      assert(signal.aborted,'speech owner did not cancel');assert(states.at(-1)==='idle'&&!states.includes('error'),'cancel was rendered as failure');
+    } finally {GXT.ui.stopSpeech();GXT.requestXAction=original;}
+  }]);
+  tests.push(['removing a speaking X post stops only its own speech session',async()=>{
+    await settings({enabled:true,ttsEnabled:true});const el=tweet('A speaking post removed by timeline virtualization.');await until(()=>body(el));
+    const original=GXT.ui.speak;let stopped=0;
+    GXT.ui.speak=()=>({stop:()=>stopped++});
+    try {
+      const speaker=[...el.nextElementSibling.querySelectorAll('[role=button]')].find(button=>button.textContent==='🔊');
+      assert(speaker,'read-aloud button missing');speaker.click();el.closest('article').remove();await until(()=>stopped===1,'removed post kept speaking');
+    } finally {GXT.ui.speak=original;}
+  }]);
+  tests.push(['warm remounted pinned post bypasses dwell delay without a new request',async()=>{
+    await settings({enabled:true,dwellMode:false});
+    const el=tweet('A pinned post remains warm across profile navigation.');
+    await until(()=>body(el),'initial translation missing');const count=sent.length;
+    el.closest('article').remove();await sleep(90);await settings({dwellMode:true});
+    const replacement=tweet('A pinned post remains warm across profile navigation.');
+    await until(()=>body(replacement),'warm post waited for dwell',500);
+    assert(sent.length===count,'warm post created a provider request');
+  }]);
+  tests.push(['React moving an existing card retains its translation and request identity',async()=>{
+    await settings({enabled:true,dwellMode:false});const el=tweet('A card moved within one React commit.');
+    await until(()=>body(el),'translation missing');const box=el.nextElementSibling,count=sent.length;
+    fixture.append(el.closest('article'));await sleep(150);
+    assert(el.nextElementSibling===box,'moving a card tore down its UI');assert(sent.length===count,'moving caused a new request');
+    assert(el.textContent==='A card moved within one React commit.','source post mutated');
+  }]);
+  tests.push(['a detached post response warms the next mount without painting a different post',async()=>{
+    await settings({enabled:true,dwellMode:false});const text='A detached original completes while another profile is visible.';
+    const finish=deferText(text),el=tweet(text);await until(()=>sentText(text),'initial request missing');
+    el.closest('article').remove();await sleep(80);finish({ok:true,t:'ترجمهٔ ذخیره‌شده',sl:'en'});await sleep(100);
+    const count=sent.length;const mounted=tweet(text);await until(()=>body(mounted),'returning post not rendered');
+    assert(body(mounted).textContent==='ترجمهٔ ذخیره‌شده','cached result missing');assert(sent.length===count,'detached result was discarded');
+  }]);
   await sleep(50); let passed = 0; const lines = [];
   for (const [name, fn] of tests) {
     let ok = false, detail = '';

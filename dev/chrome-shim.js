@@ -79,6 +79,24 @@
         const name = typeof info === 'string' ? info : info?.name || '';
         const factory = globalThis.GXT_SHIM_CONNECT;
         if (typeof factory === 'function') return factory(name);
+        if (name === 'gxt-page-translation' || name === 'gxt-x-translation' || name === 'gxt-x-action' || name === 'gxt-screen-translation') {
+          const listeners = new Set(), disconnected = new Set();let closed = false;
+          return {name,
+            postMessage(message) {
+              if(message.t==='ping'||message.t==='cancel')return;
+              if(name==='gxt-x-translation'&&message.stream) {
+                // The default fixture models provider misses. Cache-aware
+                // tests supply a port factory and emit only real misses.
+                for(const item of message.items || [])for(const fn of listeners)fn({t:'pending',id:item.id});
+              }
+              Promise.resolve(globalThis.GXT_SHIM_HANDLER?.({type:name==='gxt-x-translation'?'TRANSLATE_BATCH':'TRANSLATE_TEXTS',...message}))
+                .then(result => {if(!closed)for(const fn of listeners)fn(result);});
+            },
+            disconnect() {if(closed)return;closed=true;for(const fn of disconnected)fn();},
+            onMessage:{addListener:fn=>listeners.add(fn),removeListener:fn=>listeners.delete(fn)},
+            onDisconnect:{addListener:fn=>disconnected.add(fn),removeListener:fn=>disconnected.delete(fn)},
+          };
+        }
         return {
           name,
           postMessage() {},

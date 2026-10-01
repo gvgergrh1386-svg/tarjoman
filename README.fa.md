@@ -1,10 +1,10 @@
-# ترجمان ۳.۷.۷
+# ترجمان ۳.۸.۲
 
 [English](README.md) · [راهنمای کامل](docs/guide.fa.md) · [حریم خصوصی](docs/privacy.fa.md)
 
-[دانلود نسخهٔ ۳.۷.۷](https://github.com/gvgergrh1386-svg/tarjoman/releases/tag/v3.7.7) · [گزارش اشکال](https://github.com/gvgergrh1386-svg/tarjoman/issues) · [آزمون‌های خودکار](https://github.com/gvgergrh1386-svg/tarjoman/actions)
-
 ترجمان افزونهٔ Manifest V3 کروم برای ترجمهٔ پست، صفحه، تصویر و زیرنویس است. رابط فارسی و انگلیسی دارد؛ زبان رابط، زبان مقصد ترجمه و قالب‌های منطقه‌ای را جداگانه انتخاب می‌کنید.
+
+در ۳.۸.۲، پنجرهٔ اصلی، صفحهٔ کامل تنظیمات، کارگاه زیرنویس و ابزارهای داخل سایت‌ها یکپارچه بازطراحی شده‌اند. کنترل‌های ویدیو حالت شیشه‌ای، مات و پیروی از تم دارند. [گزارش تغییرات و آزمون‌ها](docs/release-3.8.2.fa.md).
 
 ## قابلیت‌ها
 
@@ -19,7 +19,7 @@
 
 ## نصب
 
-۱. فایل [Tarjoman-3.7.7-Chrome.zip](https://github.com/gvgergrh1386-svg/tarjoman/releases/download/v3.7.7/Tarjoman-3.7.7-Chrome.zip) را دانلود و در پوشه‌ای دائمی استخراج کنید.
+۱. فایل `Tarjoman-3.8.2-Chrome.zip` را در پوشه‌ای دائمی استخراج کنید.
 
 ۲. در `chrome://extensions` حالت **Developer mode** را روشن کنید، **Load unpacked** را بزنید و پوشهٔ دارای `manifest.json` را انتخاب کنید.
 
@@ -49,7 +49,7 @@ python tools/build_release.py
 python tools/verify_release.py
 ```
 
-ساخت با فهرست صریح فایل‌ها، مشخصات ثابت ZIP و هش SHA-256 انجام می‌شود. [راهنمای مشارکت فارسی](docs/contributing.fa.md)، [معماری](docs/architecture.md)، [تغییرات](CHANGELOG.md)، [گزارش انتشار](docs/release-3.7.7.fa.md).
+ساخت با فهرست صریح فایل‌ها، مشخصات ثابت ZIP و هش SHA-256 انجام می‌شود. [راهنمای مشارکت فارسی](docs/contributing.fa.md)، [معماری](docs/architecture.md)، [تغییرات](CHANGELOG.md)، [گزارش انتشار](docs/release-3.8.2.fa.md).
 
 ## حریم خصوصی و مجوز
 

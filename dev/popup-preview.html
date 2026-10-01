@@ -39,7 +39,7 @@
     runtime: {
       id: 'preview',
       getURL: (p) => `../${p}`,
-      getManifest: () => ({ version: '3.2.3' }),
+      getManifest: () => ({ version: '3.8.2' }),
       async sendMessage(message) {
         if (message.type === 'GET_STATS') {
           // Built through the REAL summariser, so the preview shows exactly
@@ -181,6 +181,7 @@
   for (const src of [
     '../shared/settings.js',
     '../shared/theme.js',
+    '../popup/workspace.js',
     '../popup/popup.js',
   ]) {
     await load(src);

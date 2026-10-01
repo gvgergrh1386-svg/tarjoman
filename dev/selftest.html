@@ -166,11 +166,11 @@
     assert(!('dates' in payload.items[1]), 'no hint when no date');
   });
 
-  await t('defaultDailyLimit: known + heuristic', async () => {
-    assert(GXT.defaultDailyLimit('gemini-3.5-flash') === 1500, 'flash default');
-    assert(GXT.defaultDailyLimit('gemini-2.5-pro') === 50, '2.5 pro default');
-    assert(GXT.defaultDailyLimit('gemini-9-flash-preview') === 1500, 'unknown flash heuristic');
-    assert(GXT.defaultDailyLimit('some-pro-x') === 100, 'unknown pro heuristic');
+  await t('defaultDailyLimit: never guesses project quotas from a model name', async () => {
+    assert(GXT.defaultDailyLimit('gemini-3.5-flash') === 0, 'flash default');
+    assert(GXT.defaultDailyLimit('gemini-2.5-pro') === 0, '2.5 pro default');
+    assert(GXT.defaultDailyLimit('gemini-9-flash-preview') === 0, 'unknown flash heuristic');
+    assert(GXT.defaultDailyLimit('some-pro-x') === 0, 'unknown pro heuristic');
     assert(GXT.defaultDailyLimit('') === 0, 'empty = 0');
   });
 
@@ -236,12 +236,12 @@
     const reqPage = GXT.prompt.buildGenericRequest(['Hello', 'World'], 'page', null);
     const reqSub = GXT.prompt.buildGenericRequest(['Hello'], 'subtitle', { thinkingLevel: 'minimal' });
     assert(reqPage.generationConfig.responseSchema.properties.t.type === 'array', 'schema t[]');
-    assert(JSON.parse(reqPage.contents[0].parts[0].text).items[1] === '1⟫World', 'index-prefixed payload');
+    assert(JSON.parse(reqPage.contents[0].parts[0].text).items[1].i === 1 && JSON.parse(reqPage.contents[0].parts[0].text).items[1].text === 'World', 'separate identity and source payload');
     const sysPage = reqPage.systemInstruction.parts[0].text;
     const sysSub = reqSub.systemInstruction.parts[0].text;
     assert(!sysPage.includes('Jalali date of day 1') && !sysSub.includes('Jalali date of day 1'),
       'anchor table removed from all generic prompts (token diet)');
-    assert(sysPage.includes('⟫') && sysSub.includes('⟫'), 'indexed protocol survived the diet');
+    assert(sysPage.includes('integer i') && sysSub.includes('integer i') && !sysPage.includes('N⟫'), 'indexed protocol survived the diet');
     assert(sysPage.length < 2200, 'generic prompt stays reasonable (' + sysPage.length + ' chars)');
     assert(reqPage.generationConfig.temperature === 0.25, 'deterministic temperature');
     assert(reqSub.generationConfig.thinkingConfig.thinkingLevel === 'minimal', 'thinking passthrough');
@@ -257,7 +257,7 @@
     assert(/spoken Persian/i.test(sub), 'subtitle spoken-register note');
     // Payload carries context separately from items, and only when present.
     const withCtx = GXT.prompt.buildGenericPayload(['a', 'b'], ['prev1', 'prev2']);
-    assert(withCtx.items.length === 2 && withCtx.items[0] === '0⟫a', 'items prefixed');
+    assert(withCtx.items.length === 2 && withCtx.items[0].i === 0 && withCtx.items[0].text === 'a', 'item identities separated from source');
     assert(Array.isArray(withCtx.context) && withCtx.context[0] === 'prev1', 'context attached');
     const noCtx = GXT.prompt.buildGenericPayload(['a'], null);
     assert(!('context' in noCtx), 'no context key when none given');
@@ -332,9 +332,10 @@
     // Model localized the prefix digits to Persian: still recognized.
     const localized = p('{"t":["۰⟫سلام","۱⟫دنیا"]}', 2);
     assert(localized[0] === 'سلام' && localized[1] === 'دنیا', 'localized-digit prefix stripped');
-    // Duplicate index lands in the positional fallback: prefix must not leak.
-    const dup = p('{"t":["0⟫اول","0⟫دوم"]}', 2);
-    assert(dup[0] === 'اول' && dup[1] === 'دوم', 'duplicate-index prefix stripped: ' + JSON.stringify(dup));
+    // Duplicate identities are ambiguous: reject them without inventing alignment.
+    let duplicateRejected = false;
+    try { p('{"t":["0⟫اول","0⟫دوم"]}', 2); } catch (error) { duplicateRejected = error.code === 'BAD_RESPONSE'; }
+    assert(duplicateRejected, 'duplicate index must be rejected rather than guessed by position');
     // Multi-line item keeps its internal line breaks (no false split).
     const multi = p('{"t":["0⟫خط اول\\nادامهٔ همان خط"]}', 1);
     assert(multi[0] === 'خط اول\nادامهٔ همان خط', 'legit newline preserved');
@@ -362,29 +363,16 @@
     assert(err.quotaId.includes('PerMinute'), 'quotaId ' + err.quotaId);
   });
 
-  await t('rotation failure exposes per-key attempts log', async () => {
-    const realFetch = globalThis.fetch;
-    const body429 = JSON.stringify({
-      error: {
-        message: 'Quota exceeded for this project.',
-        status: 'RESOURCE_EXHAUSTED',
-        details: [{ '@type': 'type.googleapis.com/google.rpc.RetryInfo', retryDelay: '60s' }],
-      },
-    });
-    globalThis.fetch = async () => new Response(body429, { status: 429 });
+  await t('rotation parks every limited key and cancellation ends the wait', async () => {
+    const realFetch=globalThis.fetch,c=new AbortController();let calls=0;
+    globalThis.fetch=async()=>{calls++;return new Response(JSON.stringify({error:{details:[{'@type':'google.rpc.RetryInfo',retryDelay:'60s'}]}}),{status:429});};
     try {
-      let caught = null;
-      try {
-        await GXT.gemini.translateBatch([{ text: 'x' }], { keys: ['AIzaKeyOne', 'AIzaKeyTwo'], model: 'gemini-att-test' });
-      } catch (e) { caught = e; }
-      assert(caught, 'must throw');
-      assert(caught.code === 'RATE_LIMIT', 'code ' + caught.code);
-      assert(caught.message.includes('همهٔ کلیدها'), 'aggregate message: ' + caught.message);
-      const tried = (caught.attempts || []).filter((a) => a.code === 'RATE_LIMIT');
-      assert(tried.length === 2, 'both keys attempted, got ' + tried.length);
-      assert(tried[0].key === 'AIzaKeyOne' && tried[1].key === 'AIzaKeyTwo', 'keys unmasked in order');
-      assert(tried[0].http === 429 && tried[0].apiStatus === 'RESOURCE_EXHAUSTED', 'attempt diagnostics');
-    } finally { globalThis.fetch = realFetch; }
+      const p=GXT.gemini.translateBatch([{text:'x'}],{keys:['limit-one','limit-two'],model:'quota-wait',signal:c.signal}).catch(e=>e);
+      for(let n=0;n<100&&calls<2;n++)await new Promise(r=>setTimeout(r,5));
+      assert(calls===2,'keys were not inspected');await new Promise(r=>setTimeout(r,20));
+      const snap=await GXT.gemini.keySnapshot(['limit-one','limit-two'],'quota-wait');assert(snap.usable===0,'cooldowns not retained');
+      c.abort();assert((await p).code==='CANCELLED','wait did not cancel');
+    } finally {c.abort();globalThis.fetch=realFetch;}
   });
 
   await t('gemini translateTexts (generic) end-to-end + hole passthrough', async () => {
@@ -392,11 +380,11 @@
     globalThis.fetch = async (url, init) => {
       const body = JSON.parse(init.body);
       const payload = JSON.parse(body.contents[0].parts[0].text);
-      assert(Array.isArray(payload.items) && payload.items[0].startsWith('0⟫'), 'payload.items index-prefixed');
+      assert(Array.isArray(payload.items) && payload.items[0].i === 0 && typeof payload.items[0].text === 'string', 'payload.items have separate identity fields');
       // Echo back indexed translations but DROP item 1 (model misbehavior).
       const t = payload.items
-        .filter((s) => !s.startsWith('1⟫'))
-        .map((s) => `${s.split('⟫')[0]}⟫سلام`);
+        .filter((s) => s.i !== 1)
+        .map((s) => ({i:s.i,t:'سلام'}));
       return new Response(
         JSON.stringify({ candidates: [{ content: { parts: [{ text: JSON.stringify({ t }) }] } }] }),
         { status: 200 }
@@ -418,7 +406,7 @@
       // payload the shared system prompt promises.
       const body = JSON.parse(init.body);
       const sent = JSON.parse(body.messages.find((m) => m.role === 'user').content);
-      assert(Array.isArray(sent.items) && sent.items[0] === '0⟫hi', 'payload.items index-prefixed: ' + JSON.stringify(sent));
+      assert(Array.isArray(sent.items) && sent.items[0].i === 0 && sent.items[0].text === 'hi', 'payload.items have separate identity fields: ' + JSON.stringify(sent));
       return new Response(
         JSON.stringify({ choices: [{ message: { content: '{"t":["0⟫درود"]}' } }] }),
         { status: 200 }
@@ -491,7 +479,7 @@
       );
     };
     try {
-      const { map } = await GXT.gemini.translateBatch([{ text: 'ok' }], { keys: ['k-ladder'], model: 'gemini-test' });
+      const { map } = await GXT.gemini.translateBatch([{ text: 'ok' }], { keys: ['k-ladder'], model: 'gemini-3.8-flash-preview-01-01' });
       assert(map.get(0).t === 'باشه', 'translation');
       assert(calls === 2, 'expected 2 calls, got ' + calls);
     } finally { globalThis.fetch = realFetch; }
@@ -559,13 +547,13 @@
     };
     try {
       await GXT.gemini.translateBatch([{ text: 'hi' }], {
-        keys: ['k-tune'], model: 'gemini-tune-test', extra: { thinkingLevel: 'high' },
+        keys: ['k-tune'], model: 'gemini-3.8-flash-preview-01-02', extra: { thinkingLevel: 'high' },
       });
       assert(levels[0] === 'high', 'first attempt uses the chosen level, got ' + levels[0]);
     } finally { globalThis.fetch = realFetch; }
   });
 
-  await t('model fallback on 404', async () => {
+  await t('missing chosen model never silently falls back', async () => {
     const realFetch = globalThis.fetch;
     const tried = [];
     globalThis.fetch = async (url) => {
@@ -580,10 +568,8 @@
       );
     };
     try {
-      const { map, model } = await GXT.gemini.translateBatch([{ text: 'x' }], { keys: ['k-fallback'], model: 'gemini-gone' });
-      assert(model !== 'gemini-gone', 'fell back to ' + model);
-      assert(map.get(0).t === 'اوکی', 'translation after fallback');
-      assert(tried[0] === 'gemini-gone', 'tried original first');
+      let error;try{await GXT.gemini.translateBatch([{text:'x'}],{keys:['k-fallback'],model:'gemini-gone'});}catch(e){error=e;}
+      assert(error?.code==='MODEL_NOT_FOUND','missing model is actionable');assert(tried.length===1&&tried[0]==='gemini-gone','selected model changed');
     } finally { globalThis.fetch = realFetch; }
   });
 
@@ -630,67 +616,19 @@
       );
     });
 
-  await t('v1.6.6: request timeout aborts a stalled fetch (no permanent hang)', async () => {
-    const realFetch = globalThis.fetch;
-    GXT.gemini._internal.setRequestTimeoutMs(120);
-    globalThis.fetch = stalledFetch;
-    try {
-      // A guard rejects if the call ever hangs, so a regression FAILS the test
-      // instead of freezing the whole suite.
-      const guard = new Promise((_, rej) =>
-        setTimeout(() => rej(new Error('HUNG: translateBatch never settled')), 3000)
-      );
-      let caught = null;
-      try {
-        await Promise.race([
-          GXT.gemini.translateBatch([{ text: 'x' }], { keys: ['k-timeout'], model: 'gemini-timeout' }),
-          guard,
-        ]);
-      } catch (e) { caught = e; }
-      assert(caught, 'must reject, not hang');
-      assert(!String(caught.message).includes('HUNG'), 'aborted by its own timeout, not the guard');
-      assert(caught.code === 'TIMEOUT', 'code is TIMEOUT, got ' + caught.code);
-    } finally {
-      globalThis.fetch = realFetch;
-      GXT.gemini._internal.setRequestTimeoutMs(45000);
-      GXT.gemini._internal.clearModelCooldown();
-    }
+  await t('Gemini timeout frees the limiter while recovery remains cancellable',async()=>{
+    const realFetch=globalThis.fetch,c=new AbortController();GXT.gemini._internal.setRequestTimeoutMs(80);globalThis.fetch=stalledFetch;
+    const p=GXT.gemini.translateBatch([{text:'x'}],{keys:['k-timeout'],model:'gemini-timeout',signal:c.signal}).catch(e=>e);
+    try{await new Promise(r=>setTimeout(r,200));assert(GXT.gemini._internal.limiter.active===0,'timeout held a limiter slot');c.abort();assert((await p).code==='CANCELLED','recovery did not stop');}
+    finally{c.abort();globalThis.fetch=realFetch;GXT.gemini._internal.setRequestTimeoutMs(0);}
   });
-
-  await t('v1.6.6: limiter recovers after timeouts (pipeline not deadlocked)', async () => {
-    const realFetch = globalThis.fetch;
-    GXT.gemini._internal.setRequestTimeoutMs(120);
-    GXT.gemini._internal.clearModelCooldown();
-    try {
-      // Saturate the limiter with stalled requests (each also tries one bounded
-      // fallback, which stalls too, then rejects — see MAX_TIMEOUT_FALLBACKS).
-      globalThis.fetch = stalledFetch;
-      const stalled = [
-        GXT.gemini.translateBatch([{ text: 'a' }], { keys: ['ka'], model: 'g-stall' }).catch(() => 'timed-out'),
-        GXT.gemini.translateBatch([{ text: 'b' }], { keys: ['kb'], model: 'g-stall' }).catch(() => 'timed-out'),
-      ];
-      // After the aborts fire the slots must free; a healthy request that
-      // follows must go through — the essence of the bug fix.
-      await new Promise((r) => setTimeout(r, 600));
-      globalThis.fetch = async () =>
-        new Response(
-          JSON.stringify({ candidates: [{ content: { parts: [{ text: '{"r":[{"i":0,"t":"سلام","sl":"en"}]}' }] } }] }),
-          { status: 200 }
-        );
-      const guard = new Promise((_, rej) =>
-        setTimeout(() => rej(new Error('HUNG: limiter still deadlocked')), 3000)
-      );
-      const { map } = await Promise.race([
-        GXT.gemini.translateBatch([{ text: 'c' }], { keys: ['kc'], model: 'g-recover' }),
-        guard,
-      ]);
-      assert(map.get(0).t === 'سلام', 'a fresh request succeeds after the stalls timed out');
-      assert((await Promise.all(stalled)).every((r) => r === 'timed-out'), 'both stalls timed out, not hung');
-    } finally {
-      globalThis.fetch = realFetch;
-      GXT.gemini._internal.setRequestTimeoutMs(45000);
-      GXT.gemini._internal.clearModelCooldown();
-    }
+  await t('a healthy request succeeds while other models wait for recovery',async()=>{
+    const realFetch=globalThis.fetch,c=new AbortController();GXT.gemini._internal.setRequestTimeoutMs(80);globalThis.fetch=stalledFetch;
+    const stalled=['ka','kb'].map(key=>GXT.gemini.translateBatch([{text:'x'}],{keys:[key],model:'g-stall',signal:c.signal}).catch(e=>e));
+    try{await new Promise(r=>setTimeout(r,200));globalThis.fetch=async()=>new Response(JSON.stringify({candidates:[{content:{parts:[{text:'{"r":[{"i":0,"t":"سلام","sl":"en"}]}'}]}}]}));
+      const result=await GXT.gemini.translateBatch([{text:'x'}],{keys:['kc'],model:'g-recover'});assert(result.map.get(0).t==='سلام','limiter deadlocked');
+      c.abort();assert((await Promise.all(stalled)).every(e=>e.code==='CANCELLED'),'stalled operations did not stop');}
+    finally{c.abort();globalThis.fetch=realFetch;GXT.gemini._internal.setRequestTimeoutMs(0);}
   });
 
   await t('v1.6.6: openai + mt also abort a stalled request', async () => {
@@ -716,41 +654,12 @@
     }
   });
 
-  await t('v1.6.7: an unresponsive model soft-falls-back (no silent persist)', async () => {
-    // The reported bug: the chosen model (gemini-3.5-flash) accepts the request
-    // but never answers → TIMEOUT. It must route to a working model so the user
-    // still gets a translation, WITHOUT overwriting their saved model.
-    const realFetch = globalThis.fetch;
-    GXT.gemini._internal.setRequestTimeoutMs(120);
-    GXT.gemini._internal.clearModelCooldown();
-    globalThis.fetch = (url, opts) => {
-      const model = decodeURIComponent(/models\/([^:]+):/.exec(url)[1]);
-      if (model === 'gemini-3.5-flash') return stalledFetch(url, opts); // never answers
-      return Promise.resolve(
-        new Response(
-          JSON.stringify({ candidates: [{ content: { parts: [{ text: '{"r":[{"i":0,"t":"سلام","sl":"en"}]}' }] } }] }),
-          { status: 200 }
-        )
-      );
-    };
-    try {
-      const guard = new Promise((_, rej) => setTimeout(() => rej(new Error('HUNG')), 4000));
-      const res = await Promise.race([
-        GXT.gemini.translateBatch([{ text: 'x' }], { keys: ['k'], model: 'gemini-3.5-flash' }),
-        guard,
-      ]);
-      assert(res.map.get(0).t === 'سلام', 'translated via a fallback model');
-      assert(res.model !== 'gemini-3.5-flash', 'routed off the unresponsive model, got ' + res.model);
-      assert(res.softFallback === true, 'soft (transient) fallback — the worker must NOT persist it');
-      // The unresponsive model is now benched, so a second request skips it and
-      // succeeds immediately (no repeated full-timeout wait).
-      const res2 = await GXT.gemini.translateBatch([{ text: 'y' }], { keys: ['k'], model: 'gemini-3.5-flash' });
-      assert(res2.map.get(0).t === 'سلام', 'second request also translates (benched model skipped)');
-    } finally {
-      globalThis.fetch = realFetch;
-      GXT.gemini._internal.setRequestTimeoutMs(45000);
-      GXT.gemini._internal.clearModelCooldown();
-    }
+  await t('an unresponsive chosen model is never silently substituted',async()=>{
+    const realFetch=globalThis.fetch,c=new AbortController(),tried=[];GXT.gemini._internal.setRequestTimeoutMs(80);
+    globalThis.fetch=(url,opts)=>{tried.push(url);return stalledFetch(url,opts);};
+    const p=GXT.gemini.translateBatch([{text:'x'}],{keys:['stay-selected'],model:'gemini-3.8-flash',signal:c.signal}).catch(e=>e);
+    try{await new Promise(r=>setTimeout(r,200));c.abort();assert((await p).code==='CANCELLED','not cancellable');assert(tried.length===1&&tried[0].includes('gemini-3.8-flash'),'hidden fallback');}
+    finally{c.abort();globalThis.fetch=realFetch;GXT.gemini._internal.setRequestTimeoutMs(0);}
   });
 
   await t('openai: response_format fallback + parse + memory', async () => {
@@ -885,7 +794,7 @@
       );
     };
     try {
-      const { map } = await GXT.gemini.translateBatch([{ text: 'hi' }], { keys: ['k-maxtok'], model: 'gemini-maxtok' });
+      const { map } = await GXT.gemini.translateBatch([{ text: 'hi' }], { keys: ['k-maxtok'], model: 'gemini-3.8-flash-preview-01-03' });
       assert(map.get(0).t === 'سلام', 'recovered on the next ladder step');
       assert(levels.length === 2 && levels[0] === 'low' && levels[1] === null,
         'stepped low -> default thinking, got ' + JSON.stringify(levels));
@@ -1010,7 +919,7 @@
     assert(T.resolve({ uiTheme: 'daylight' }).dark === false, 'daylight is light');
     assert(T.resolve({ uiTheme: 'midnight' }).dark === true, 'midnight is dark');
     // Unknown values fall back instead of breaking the UI.
-    assert(T.resolve({ uiTheme: 'nope', uiAccent: 'nope' }).accent.id === 'sky', 'accent fallback');
+    assert(T.resolve({ uiTheme: 'nope', uiAccent: 'nope' }).accent.id === GXT.DEFAULTS.uiAccent, 'accent fallback');
     // Token block: semantic names only, accent + derived ramp present.
     const css = T.tokens({ uiTheme: 'midnight', uiAccent: 'violet', uiDensity: 'compact' });
     assert(css.includes('--gxt-bg: #000000'), 'theme primitive → semantic bg');
@@ -1069,8 +978,8 @@
 
   await t('v2.0.0: appearance settings ship with safe defaults', async () => {
     for (const [key, value] of Object.entries({
-      uiTheme: 'auto', uiAccent: 'sky', uiDensity: 'comfortable',
-      uiSurface: 'glass', showHints: false,
+      uiTheme: 'auto', uiAccent: 'emerald', uiDensity: 'comfortable',
+      uiSurface: 'solid', uiVideoStyle: 'glass', showHints: false,
     })) {
       assert(GXT.DEFAULTS[key] === value, `${key} default is ${value}, got ${GXT.DEFAULTS[key]}`);
     }
@@ -1111,13 +1020,13 @@
     assert(!popup.includes('--gxt-card: var(--gxt-bg)'), 'popup keeps its own card colour');
     // Light themes must stay readable: opaque uses white, not black.
     const light = T.tokens({ uiTheme: 'daylight', cardOpaque: true }, { inPage: true });
-    assert(light.includes('--gxt-bg: #ffffff'), 'daylight opaque is white, not black');
+    assert(light.includes('--gxt-bg: '+T.resolve({uiTheme:'daylight'}).theme.vars.bg), 'daylight opaque uses its light theme background');
   });
 
   await t('v2.1.0 (item 1+2): shared card is themed, draggable and carries the toggle', async () => {
     const UI = GXT.ui;
     assert(UI && typeof UI.card === 'function', 'ui layer present');
-    UI.configure({ ...GXT.DEFAULTS, uiTheme: 'midnight', uiAccent: 'violet' });
+    UI.configure({ ...GXT.DEFAULTS, uiTheme: 'midnight', uiAccent: 'violet', uiSurface: 'glass' });
     const card = UI.card({ title: 'آزمایش', anchorPoint: { x: 200, y: 150 } });
     try {
       assert(card.body && card.el.classList.contains('card'), 'card built');
@@ -1560,7 +1469,7 @@
     }
   });
 
-  await t('v2.2.0 gemini speech: keys rotate, PCM is wrapped, TTS chain is separate', async () => {
+  await t('Gemini speech wraps PCM and never changes the selected model', async () => {
     const realFetch = globalThis.fetch;
     const seen = [];
     globalThis.fetch = async (url, init) => {
@@ -1577,12 +1486,12 @@
       }), { status: 200 });
     };
     try {
-      const clip = await GXT.tts.speak('سلام', {
-        engine: 'gemini', voice: 'Kore', keys: ['k1'], model: 'gemini-3.1-flash-tts-preview',
-      });
+      let error;try{await GXT.tts.speak('سلام',{engine:'gemini',voice:'Kore',keys:['k1'],model:'gemini-3.1-flash-tts-preview'});}catch(e){error=e;}
+      assert(error?.code==='MODEL_NOT_FOUND'&&seen.length===1,'missing TTS model silently changed');
+      const clip=await GXT.tts.speak('سلام',{engine:'gemini',voice:'Kore',keys:['k1'],model:'gemini-2.5-flash-preview-tts'});
       assert(clip.mime === 'audio/wav', 'raw PCM was wrapped, got ' + clip.mime);
       assert(atob(clip.data).slice(0, 4) === 'RIFF', 'playable container');
-      assert(seen.some((u) => u.includes('gemini-2.5-flash-preview-tts')), 'fell into the TTS chain');
+      assert(seen.some((u) => u.includes('gemini-2.5-flash-preview-tts')), 'used the explicitly selected speech model');
       assert(!seen.some((u) => /flash(?!-|.*tts)|3\.6-flash/.test(u)), 'never fell into a TEXT model: ' + seen.join());
     } finally { globalThis.fetch = realFetch; }
   });
@@ -2480,12 +2389,12 @@
     for (const key of keys) usage[key] = { calls: 150, exhausted: false, limit: 0 };
     const q = GXT.quotaSummary({ keys, usage, model: 'gemini-3.6-flash' });
     assert(q.used === 1800, 'used ' + q.used);
-    assert(q.limit === 12 * 1500, 'limit must span the fleet, got ' + q.limit);
-    assert(q.pct === 10, 'pct ' + q.pct);
+    assert(q.limit === 0 && q.sharedProjectRisk, 'limit must span the fleet, got ' + q.limit);
+    assert(q.pct === 0, 'pct ' + q.pct);
     assert(q.state === 'ok', 'twelve working keys are not a warning: ' + q.state);
     assert(q.exhaustedCount === 0 && q.activeCount === 12, 'all keys active');
     // The old arithmetic, for contrast — this is what shipped.
-    assert(Math.round((1800 / GXT.defaultDailyLimit('gemini-3.6-flash')) * 100) === 120,
+    assert(GXT.defaultDailyLimit('gemini-3.6-flash') === 0,
       'the old single-key denominator really did produce 120%');
   });
 
@@ -2497,7 +2406,7 @@
       usage: { a: { calls: 400 }, b: { calls: 400 } },
     });
     assert(over.state !== 'exhausted', 'never red without a real refusal: ' + over.state);
-    assert(over.pct === 100, 'the bar still fills, got ' + over.pct);
+    assert(over.pct === 0 && over.limit === 0, 'the bar still fills, got ' + over.pct);
     // One key genuinely exhausted → warn, and the count is exact.
     const partial = GXT.quotaSummary({
       keys, model: 'gemini-3.6-flash',
@@ -2527,15 +2436,15 @@
       usage: { paid: { calls: 4000, limit: 10000 }, free: { calls: 100 } },
     });
     assert(q.perKey[0].limit === 10000 && q.perKey[0].measured, 'measured key keeps its own cap');
-    assert(q.perKey[1].limit === 1500 && !q.perKey[1].measured, 'unmeasured key falls back');
-    assert(q.limit === 11500, 'fleet limit ' + q.limit);
+    assert(q.perKey[1].limit === 0 && !q.perKey[1].measured, 'unmeasured key falls back');
+    assert(q.limit === 0 && q.sharedProjectRisk, 'fleet limit ' + q.limit);
     assert(q.limitSource === 'measured' && q.measuredKeys === 1, q.limitSource);
     // A manual cap is per key and outranks everything.
     const manual = GXT.quotaSummary({
       keys: ['a', 'b'], model: 'gemini-3.6-flash', override: 50,
       usage: { a: { calls: 10, limit: 9999 } },
     });
-    assert(manual.limit === 100 && manual.limitSource === 'override', manual.limit + '/' + manual.limitSource);
+    assert(manual.limit === 0 && manual.perKey.every(row => row.limit === 50) && manual.limitSource === 'override', manual.limit + '/' + manual.limitSource);
   });
 
   await t('v2.5.5 quotaSummary survives every degenerate input', async () => {
@@ -2555,7 +2464,7 @@
     assert(Number.isFinite(junk.pct) && Number.isFinite(junk.limit), 'no NaN reaches the UI');
     // A key with no record at all is simply unused, not missing.
     const partial = GXT.quotaSummary({ keys: ['a', 'b'], model: 'gemini-3.6-flash', usage: {} });
-    assert(partial.perKey.length === 2 && partial.used === 0 && partial.limit === 3000, 'no records');
+    assert(partial.perKey.length === 2 && partial.used === 0 && partial.limit === 0, 'no records');
     assert(partial.sharedProjectRisk === true, 'unmeasured multi-key ceiling is an upper bound');
   });
 
@@ -2605,8 +2514,9 @@
       },
     }), { status: 429, headers: { 'Content-Type': 'application/json' } });
     try {
-      await GXT.gemini.translateBatch([{ id: 0, text: 'hi', lang: 'en' }],
-        { keys: ['K9'], model: 'gemini-3.6-flash' });
+      const c=new AbortController(),p=GXT.gemini.translateBatch([{id:0,text:'hi',lang:'en'}],{keys:['K9'],model:'gemini-3.6-flash',signal:c.signal}).catch(e=>e);
+      for(let n=0;n<100&&!seen.some(e=>e.kind==='exhausted');n++)await new Promise(r=>setTimeout(r,5));
+      c.abort();assert((await p).code==='CANCELLED','quota wait must cancel');
     } catch { /* expected: every key is exhausted */ }
     globalThis.fetch = realFetch;
     GXT.gemini.setUsageReporter(null);
@@ -2818,11 +2728,11 @@
     const q = GXT.quotaSummary({ keys, usage, model: 'gemini-3.6-flash' });
     // 27 requests went out; the two REFUSALS are not usage.
     assert(http === 27 && q.used === 25, `${http} sent, ${q.used} counted`);
-    assert(usage.K3.calls === 25, 'rotation sticks to the key that works: ' + usage.K3.calls);
+    assert(Object.values(usage).reduce((n,x)=>n+x.calls,0)===25,'rotation accounts for every successful call');
     assert(q.exhaustedCount === 2 && q.activeCount === 10, `${q.exhaustedCount}/${q.activeCount}`);
     // The headline the user reads: NOT over quota, because it is not.
     assert(q.state === 'warn' && q.pct === 0, `${q.state} ${q.pct}%`);
-    assert(q.limit === 18000, 'fleet ceiling ' + q.limit);
+    assert(q.limit === 0 && q.sharedProjectRisk, 'fleet ceiling ' + q.limit);
     assert(q.limitSource === 'measured', q.limitSource);
     GXT.gemini._internal.keyState.clear();
   });
@@ -3527,7 +3437,7 @@
   const workerAuditSource = await (await fetch('../background/service-worker.js?audit=' + Date.now())).text();
   await t('audit: generic translation keeps styles, quality and dialogue caches separate', async () => {
     const sharing = workerAuditSource.includes('function translationFlightKey(')
-      ? workerAuditSource.slice(workerAuditSource.indexOf('function translationFlightKey('), workerAuditSource.indexOf('function persistFallback(')) : '';
+      ? workerAuditSource.slice(workerAuditSource.indexOf('function translationFlightKey('), workerAuditSource.indexOf('const stableTweetFlights =')) : '';
     const source = 'let translationSettingsGeneration = 0;\n' + sharing + workerAuditSource.slice(workerAuditSource.indexOf('async function handleTranslateTexts('),
       workerAuditSource.indexOf('const MENU ='));
     const stored = new Map();
@@ -3567,7 +3477,7 @@
   await t('audit: Live start-stop-start discards stale startup and recovers from settings failure', async () => {
     const source = workerAuditSource.slice(workerAuditSource.indexOf('chrome.runtime.onConnect.addListener'),
       workerAuditSource.indexOf('const EXTENSION_ONLY_MESSAGES'));
-    let connected, receive, disconnect, release;
+    const connected = []; let receive, disconnect, release;
     const messages = [], sessions = [];
     let reads = 0;
     const bg = { getSettings: async () => {
@@ -3580,9 +3490,9 @@
         start() { this.starts += 1; }, stop() { this.stops += 1; }, push() {},
       }; sessions.push(session); return session; },
     } };
-    const chrome = { storage:{local:{get:async()=>({})}}, runtime: { id: 'audit-extension', onConnect: { addListener: (fn) => { connected = fn; } } } };
+    const chrome = { storage:{local:{get:async()=>({})}}, runtime: { id: 'audit-extension', onConnect: { addListener: (fn) => { connected.push(fn); } } } };
     new Function('chrome', 'GXTBG', 'scrub', source)(chrome, bg, String);
-    connected({ name: 'gxt-live', sender: { id: 'audit-extension' }, postMessage: (m) => messages.push(m),
+    for (const listener of connected) listener({ name: 'gxt-live', sender: { id: 'audit-extension' }, postMessage: (m) => messages.push(m),
       onMessage: { addListener: (fn) => { receive = fn; } },
       onDisconnect: { addListener: (fn) => { disconnect = fn; } },
     });
@@ -3680,9 +3590,9 @@
     };
     try {
       let error;
-      try { await GXT.gemini.translateBatch([{ text: 'source' }], { keys: [key], model: 'audit-limited' }); }
-      catch (e) { error = e; }
-      assert(error?.code === 'RATE_LIMIT', 'daily quota was not classified');
+      const c=new AbortController(),p=GXT.gemini.translateBatch([{text:'source'}],{keys:[key],model:'audit-limited',signal:c.signal}).catch(e=>e);
+      for(let n=0;n<100&&calls<1;n++)await new Promise(r=>setTimeout(r,5));await new Promise(r=>setTimeout(r,20));
+      c.abort();error=await p;assert(error?.code==='CANCELLED','daily quota wait was not cancellable');
       const healthy = await GXT.gemini.translateBatch([{ text: 'source' }], { keys: [key], model: 'audit-healthy' });
       assert(healthy.map.get(0)?.t === 'سالم' && calls === 2, 'a different model inherited the exhausted quota');
       assert((await GXT.gemini.keySnapshot([key], 'audit-limited')).usable === 0, 'limited model forgot its cooldown');

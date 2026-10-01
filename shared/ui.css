@@ -1,0 +1,46 @@
+@import url('ui-tokens.css');
+
+/* Shared, low-specificity primitives for extension-owned pages only.
+   Content scripts consume the same tokens inside their isolated roots. */
+@font-face {
+  font-family: 'Vazirmatn'; font-style: normal; font-weight: 400;
+  src: url('../fonts/Vazirmatn-Regular.woff2') format('woff2'); font-display: swap;
+}
+@font-face {
+  font-family: 'Vazirmatn'; font-style: normal; font-weight: 600 900;
+  src: url('../fonts/Vazirmatn-Bold.woff2') format('woff2'); font-display: swap;
+}
+:where(html) { color-scheme: var(--gxt-scheme); accent-color: var(--gxt-accent-solid); }
+:where(*, *::before, *::after) { box-sizing: border-box; }
+:where(body) { margin: 0; color: var(--gxt-fg); background: var(--gxt-bg); font: var(--gxt-fs-md)/var(--gxt-lh) var(--gxt-font); }
+:where(button, input, select, textarea) { font: inherit; color: inherit; }
+:where(button, select, input, textarea, summary, a) { -webkit-tap-highlight-color: transparent; }
+:where(button, select, summary) { touch-action: manipulation; }
+:where(button) { min-block-size: var(--gxt-ctl-h); border-radius: var(--gxt-radius-pill); cursor: pointer; }
+:where(button:disabled, select:disabled, input:disabled, textarea:disabled) { cursor: not-allowed; }
+:where(input:not([type='checkbox']):not([type='radio']):not([type='range']):not([type='color']), select, textarea) {
+  min-inline-size: 0; min-block-size: var(--gxt-ctl-h); max-inline-size: 100%;
+  background: var(--gxt-input-bg); border: 1px solid var(--gxt-input-line);
+  border-radius: var(--gxt-field-radius); padding-inline: var(--gxt-sp-3);
+}
+:where(textarea) { resize: vertical; line-height: var(--gxt-lh-loose); }
+:where(input[type='checkbox'], input[type='radio']) { accent-color: var(--gxt-accent-solid); }
+:where(input::placeholder, textarea::placeholder) { color: var(--gxt-fg-faint); opacity: 1; }
+:where(input:invalid:not(:placeholder-shown), textarea:invalid) { border-color: var(--gxt-err-edge); }
+:where(button, a, input, select, textarea, summary, [tabindex]):focus-visible { outline: 2px solid var(--gxt-accent); outline-offset: 3px; }
+:where(summary) { cursor: pointer; min-block-size: var(--gxt-ctl-h-sm); }
+:where(summary)::marker { color: var(--gxt-fg-faint); }
+:where([hidden], .hidden) { display: none !important; }
+:where([dir='ltr'], bdi, code, kbd, time) { unicode-bidi: isolate; }
+:where(code, kbd) { font-family: var(--gxt-font-mono); }
+:where(button, input, select, textarea, summary, [tabindex]) { scroll-margin-block: 84px 72px; }
+:where(p, label, h1, h2, h3, .status) { overflow-wrap: anywhere; }
+:where(svg) { flex-shrink: 0; }
+::selection { color: var(--gxt-accent-fg); background: var(--gxt-accent-solid); }
+@media (prefers-reduced-motion: reduce) {
+  *, *::before, *::after { scroll-behavior: auto !important; animation-duration: .01ms !important; animation-iteration-count: 1 !important; transition-duration: 0s !important; }
+}
+@media (forced-colors: active) {
+  :where(button, input, select, textarea) { border-color: ButtonText; }
+  :where(button, a, input, select, textarea, summary, [tabindex]):focus-visible { outline-color: Highlight; }
+}

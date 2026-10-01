@@ -63,8 +63,11 @@
    * interface can explain, because "TypeError: Failed to fetch" tells the user
    * nothing about a program they simply have not started.
    */
-  async function call(settings, path, payload, { timeout = 15000, raw = false } = {}) {
+  async function call(settings, path, payload, { timeout = 15000, raw = false, signal } = {}) {
     const controller = new AbortController();
+    const cancelled = () => controller.abort();
+    signal?.addEventListener('abort', cancelled, {once: true});
+    if (signal?.aborted) cancelled();
     const timer = setTimeout(() => controller.abort(), timeout);
     try {
       const response = await fetch(baseUrl(settings) + path, {
@@ -108,6 +111,7 @@
       }
       return await response.json();
     } catch (error) {
+      if (signal?.aborted) return {ok: false, code: 'CANCELLED'};
       if (controller.signal.aborted || error?.name === 'AbortError') {
         return { ok: false, code: 'TIMEOUT', get error() { return globalThis.GXT.i18n.t("background_bridge_call_2"); } };
       }
@@ -121,6 +125,7 @@
       };
     } finally {
       clearTimeout(timer);
+      signal?.removeEventListener('abort', cancelled);
     }
   }
 
@@ -186,8 +191,8 @@
    * cache is seconds, and a user who has just dragged a box over a game is
    * willing to wait for that once.
    */
-  function ocr(settings, { image }) {
-    return call(settings, '/ocr', { image }, { timeout: TIMEOUT_MS.asr });
+  function ocr(settings, { image, signal }) {
+    return call(settings, '/ocr', { image }, { timeout: TIMEOUT_MS.asr, signal });
   }
 
   function updates(settings) {

@@ -81,6 +81,22 @@ await test('snapshots restore exact manual revisions and reject different source
  const p=W.createProject(makeDoc(['Hello.']),'a');W.edit(p,p.rows[0].id,'دستی');const snap=W.snapshot(p);const restored=W.restore(snap);
  assert.equal(restored.rows[0].translation,'دستی');assert.equal(restored.rows[0].locked,true);snap.rows[0].id='wrong';assert.throws(()=>W.restore(snap));
 });
+await test('projects saved before Unicode script support recover edits and add skipped cues as pending',()=>{
+ const p=W.createProject(makeDoc(['Hello.','안녕하세요','नमस्ते','สวัสดี']),'legacy.srt');
+ W.edit(p,p.rows[0].id,'دستی');
+ const legacy=W.snapshot(p);delete legacy.textCoverage;legacy.rows=legacy.rows.slice(0,1);
+ const restored=W.restore(legacy);
+ assert.equal(restored.rows.length,4);assert.equal(restored.rows[0].translation,'دستی');assert.equal(restored.rows[0].locked,true);
+ assert.ok(restored.rows.slice(1).every(row=>row.translation===null&&row.status==='pending'));
+});
+await test('restoration still rejects missing previously supported cues duplicate IDs and reordered edits',()=>{
+ const p=W.createProject(makeDoc(['Hello.','World.']),'valid.srt');
+ for(const rows of [W.snapshot(p).rows.slice(0,1),[W.snapshot(p).rows[0],W.snapshot(p).rows[0]],W.snapshot(p).rows.reverse()]){
+   const snap=W.snapshot(p);snap.rows=rows;assert.throws(()=>W.restore(snap));
+ }
+ const unicode=W.createProject(makeDoc(['안녕하세요','नमस्ते']),'unicode.srt');
+ const saved=W.snapshot(unicode);saved.rows.pop();assert.throws(()=>W.restore(saved),'new Unicode projects must not silently lose edited rows');
+});
 await test('ASS dialogue preserves layer style speaker timing Comment drawing and tags',()=>{
  const source='[Events]\nFormat: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text\nComment: 1,0:00:00.00,0:00:02.00,Sign,Editor,0,0,0,,Note\nDialogue: 2,0:00:00.00,0:00:02.00,Sign,,0,0,0,,{\\p1}m 0 0 l 1 1\nDialogue: 3,0:00:02.00,0:00:04.00,Hero,Alice,0,0,0,,{\\i1}Hello{\\i0}';
  const d=S.parse(source),items=S.collectTranslatable(d).items;const out=S.build(d,items,['⟦0⟧سلام⟦1⟧'],{rtl:false}).text;

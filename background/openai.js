@@ -38,10 +38,15 @@
     max: 2,
     active: 0,
     waiters: [],
-    async run(fn) {
+    async run(fn, signal) {
+      globalThis.GXT.abort?.check(signal);
       while (this.active >= this.max) {
-        await new Promise((resolve) => this.waiters.push(resolve));
+        let wake;
+        const queued = new Promise(resolve => { wake = resolve; this.waiters.push(wake); });
+        try { await (signal ? globalThis.GXT.abort.wait(queued, signal) : queued); }
+        finally { const index = this.waiters.indexOf(wake); if (index >= 0) this.waiters.splice(index, 1); }
       }
+      globalThis.GXT.abort?.check(signal);
       this.active += 1;
       try {
         return await fn();
@@ -111,6 +116,7 @@
   }
 
   async function apiFetch(baseUrl, path, key, { method = 'GET', body, signal } = {}) {
+    globalThis.GXT.abort?.check(signal);
     const controller = new AbortController();
     const unlinkAbort = globalThis.GXT.abort?.link(signal, controller);
     const timer = setTimeout(() => controller.abort(), requestTimeoutMs);
@@ -204,22 +210,21 @@
       if (useJsonMode) body.response_format = { type: 'json_object' };
       try {
         const data = await limiter.run(() =>
-          apiFetch(cfg.baseUrl, '/chat/completions', cfg.key, { method: 'POST', body, signal: cfg.signal })
+          apiFetch(cfg.baseUrl, '/chat/completions', cfg.key, { method: 'POST', body, signal: cfg.signal }), cfg.signal
         );
         jsonModeSupported.set(cfgKey, useJsonMode);
         const choice = data?.choices?.[0];
         const text = choice?.message?.content || '';
+        const reason = choice?.finish_reason || '';
+        // A provider can return useful-looking partial content with either
+        // failure. Do not publish or cache it as a complete translation.
+        if (reason === 'length') {
+          throw new ProviderError(globalThis.GXT.i18n.t("background_openai_call_1"), 'MAX_TOKENS');
+        }
+        if (reason === 'content_filter') {
+          throw Object.assign(new ProviderError(globalThis.GXT.i18n.t('error.contentBlocked', {reason}), 'BLOCKED'), {finishReason:reason});
+        }
         if (!text) {
-          const reason = choice?.finish_reason || '';
-          // `length` = the server cut the answer off at its own token ceiling;
-          // say so instead of an opaque "empty response", and don't retry it
-          // (an identical request would be truncated identically).
-          if (reason === 'length') {
-            throw new ProviderError(
-              globalThis.GXT.i18n.t("background_openai_call_1"),
-              'MAX_TOKENS'
-            );
-          }
           throw new ProviderError(globalThis.GXT.i18n.t("background_gemini_callModel_1", {v0:(reason ? ` (${reason})` : '')}), 'EMPTY', {
             retriable: true,
             retryAfterMs: 1000,
@@ -299,8 +304,7 @@
    */
   function translateTexts(texts, cfg) {
     const prompt = globalThis.GXT.prompt;
-    // Same index-prefixed protocol + context element as the Gemini path — the
-    // shared system prompt promises them, and alignment lands by index.
+    // Same structured IDs and separate context as Gemini; IDs never enter prose.
     return withFallback(cfg, async (model) => {
       const list = await call(
         { ...cfg, model },
